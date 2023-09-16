@@ -1,11 +1,10 @@
-#![allow(dead_code)]
-
-use divrem::DivCeil;
+use nom::error::ParseError;
 use nom_locate::LocatedSpan;
+use std::fmt::Debug;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct ByteVec(Vec<u8>);
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Name(String);
 
 type Span<'a> = LocatedSpan<&'a [u8]>;
@@ -13,13 +12,15 @@ type Span<'a> = LocatedSpan<&'a [u8]>;
 // A TODO struct that borrows from journalism [1]
 // [1]: https://en.wikipedia.org/wiki/To_come_(publishing)
 #[allow(clippy::upper_case_acronyms)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct TKTK;
 
 macro_rules! impl_parse_for_newtype {
     ($type:ident, $innertype:ident) => {
         impl ParseWasmBinary for $type {
-            fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+            fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+                input: Span<'a>,
+            ) -> nom::IResult<Span<'a>, Self, E> {
                 use nom::combinator::map;
                 map($innertype::from_wasm_bytes, $type)(input)
             }
@@ -28,11 +29,15 @@ macro_rules! impl_parse_for_newtype {
 }
 
 trait ParseWasmBinary: Sized {
-    fn from_wasm_bytes(b: Span<'_>) -> nom::IResult<Span<'_>, Self>;
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        b: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E>;
 }
 
 impl<T: ParseWasmBinary> ParseWasmBinary for Vec<T> {
-    fn from_wasm_bytes(b: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        b: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         let (mut rest, sz) = <u32 as ParseWasmBinary>::from_wasm_bytes(b)?;
         let mut v = Vec::with_capacity(sz as usize);
         for _ in 0..sz {
@@ -45,7 +50,9 @@ impl<T: ParseWasmBinary> ParseWasmBinary for Vec<T> {
 }
 
 impl ParseWasmBinary for ByteVec {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::take;
         let (input, sz) = <u32 as ParseWasmBinary>::from_wasm_bytes(input)?;
         let (input, span) = take(sz as usize)(input)?;
@@ -54,7 +61,9 @@ impl ParseWasmBinary for ByteVec {
 }
 
 impl ParseWasmBinary for String {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::take;
         let (input, sz) = <u32 as ParseWasmBinary>::from_wasm_bytes(input)?;
         let (input, span) = take(sz as usize)(input)?;
@@ -67,7 +76,9 @@ impl ParseWasmBinary for String {
 }
 
 impl ParseWasmBinary for Name {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         let (input, sz) = String::from_wasm_bytes(input)?;
 
         Ok((input, Name(sz)))
@@ -77,14 +88,19 @@ impl ParseWasmBinary for Name {
 macro_rules! parse_leb128 {
     ($type:ident, signed) => {
         impl ParseWasmBinary for $type {
-            fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
-                use nom::{ combinator::fail, bytes::complete::{take, take_till} };
+            fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+                input: Span<'a>,
+            ) -> nom::IResult<Span<'a>, Self, E> {
+                use nom::{
+                    bytes::complete::{take, take_till},
+                    combinator::fail,
+                };
 
                 let (input, leb_bytes) = take_till(|xs| xs & 0x80 == 0)(input)?;
                 let (input, last) = take(1usize)(input)?;
 
-                if leb_bytes.len() + 1 > $type::BITS.div_ceil(7) as usize {
-                    return fail::<_, Self, _>(input)
+                if leb_bytes.len() + 1 > divrem::DivCeil::div_ceil($type::BITS, 7) as usize {
+                    return fail::<_, Self, _>(input);
                 }
 
                 let mut result: $type = 0;
@@ -106,14 +122,19 @@ macro_rules! parse_leb128 {
 
     ($type:ident, unsigned) => {
         impl ParseWasmBinary for $type {
-            fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
-                use nom::{ combinator::fail, bytes::complete::{take, take_till} };
+            fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+                input: Span<'a>,
+            ) -> nom::IResult<Span<'a>, Self, E> {
+                use nom::{
+                    bytes::complete::{take, take_till},
+                    combinator::fail,
+                };
 
                 let (input, leb_bytes) = take_till(|xs| xs & 0x80 == 0)(input)?;
                 let (input, last) = take(1usize)(input)?;
 
-                if leb_bytes.len() + 1 > $type::BITS.div_ceil(7) as usize {
-                    return fail::<_, Self, _>(input)
+                if leb_bytes.len() + 1 > divrem::DivCeil::div_ceil($type::BITS, 7) as usize {
+                    return fail::<_, Self, _>(input);
                 }
 
                 let mut result: $type = 0;
@@ -136,20 +157,24 @@ parse_leb128!(u32, unsigned);
 parse_leb128!(u64, unsigned);
 
 impl ParseWasmBinary for f32 {
-    fn from_wasm_bytes(b: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        b: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::number::complete::le_f32;
         le_f32(b)
     }
 }
 
 impl ParseWasmBinary for f64 {
-    fn from_wasm_bytes(b: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        b: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::number::complete::le_f64;
         le_f64(b)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum NumType {
     I32,
     I64,
@@ -158,7 +183,9 @@ enum NumType {
 }
 
 impl ParseWasmBinary for NumType {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::take;
 
         let (input, byte) = take(1usize)(input)?;
@@ -181,13 +208,15 @@ impl ParseWasmBinary for NumType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum VecType {
     V128,
 }
 
 impl ParseWasmBinary for VecType {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::take;
 
         let (input, byte) = take(1usize)(input)?;
@@ -207,14 +236,16 @@ impl ParseWasmBinary for VecType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum RefType {
     FuncRef,
     ExternRef,
 }
 
 impl ParseWasmBinary for RefType {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::take;
 
         let (input, byte) = take(1usize)(input)?;
@@ -236,7 +267,7 @@ impl ParseWasmBinary for RefType {
 }
 
 #[allow(clippy::enum_variant_names)]
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum ValType {
     NumType(NumType),
     VecType(VecType),
@@ -244,7 +275,9 @@ enum ValType {
 }
 
 impl ParseWasmBinary for ValType {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{branch::alt, combinator::map};
 
         alt((
@@ -255,21 +288,25 @@ impl ParseWasmBinary for ValType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct ResultType(Vec<ValType>);
 
 impl ParseWasmBinary for ResultType {
-    fn from_wasm_bytes(b: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        b: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::combinator::map;
         map(Vec::<ValType>::from_wasm_bytes, ResultType)(b)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct FuncType(ResultType, ResultType);
 
 impl ParseWasmBinary for FuncType {
-    fn from_wasm_bytes(b: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        b: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{
             bytes::complete::tag,
             combinator::map,
@@ -285,14 +322,16 @@ impl ParseWasmBinary for FuncType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Limits {
     Min(u32),
     Range(u32, u32),
 }
 
 impl ParseWasmBinary for Limits {
-    fn from_wasm_bytes(b: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        b: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{
             branch::alt,
             bytes::complete::tag,
@@ -313,21 +352,25 @@ impl ParseWasmBinary for Limits {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct MemType(Limits);
 
 impl ParseWasmBinary for MemType {
-    fn from_wasm_bytes(b: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        b: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::combinator::map;
         map(Limits::from_wasm_bytes, MemType)(b)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct TableType(RefType, Limits);
 
 impl ParseWasmBinary for TableType {
-    fn from_wasm_bytes(b: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        b: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{combinator::map, sequence::tuple};
         map(
             tuple((RefType::from_wasm_bytes, Limits::from_wasm_bytes)),
@@ -336,14 +379,16 @@ impl ParseWasmBinary for TableType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Mutability {
     Const,
     Variable,
 }
 
 impl ParseWasmBinary for Mutability {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::take;
 
         let (input, byte) = take(1usize)(input)?;
@@ -364,11 +409,13 @@ impl ParseWasmBinary for Mutability {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct GlobalType(ValType, Mutability);
 
 impl ParseWasmBinary for GlobalType {
-    fn from_wasm_bytes(b: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        b: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{combinator::map, sequence::tuple};
         map(
             tuple((ValType::from_wasm_bytes, Mutability::from_wasm_bytes)),
@@ -377,7 +424,7 @@ impl ParseWasmBinary for GlobalType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum BlockType {
     Empty,
     Val(ValType),
@@ -385,7 +432,9 @@ enum BlockType {
 }
 
 impl ParseWasmBinary for BlockType {
-    fn from_wasm_bytes(b: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        b: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{branch::alt, bytes::complete::tag, combinator::map};
 
         alt((
@@ -402,11 +451,13 @@ impl ParseWasmBinary for BlockType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct MemArg(u32, u32);
 
 impl ParseWasmBinary for MemArg {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{combinator::map, sequence::tuple};
 
         map(
@@ -416,7 +467,7 @@ impl ParseWasmBinary for MemArg {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Instr {
     // Control Instructions
     Unreachable,
@@ -532,6 +583,10 @@ enum Instr {
     I32Clz,
     I32Ctz,
     I32Popcnt,
+    I32Add,
+    I32Sub,
+    I32Mul,
+
     I32DivS,
     I32DivU,
     I32RemS,
@@ -547,6 +602,10 @@ enum Instr {
     I64Clz,
     I64Ctz,
     I64Popcnt,
+    I64Add,
+    I64Sub,
+    I64Mul,
+
     I64DivS,
     I64DivU,
     I64RemS,
@@ -620,7 +679,9 @@ enum Instr {
     // Vector Instructions
 }
 
-fn control_instrs(b: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
+fn control_instrs<'a, E: Debug + ParseError<Span<'a>>>(
+    b: Span<'a>,
+) -> nom::IResult<Span<'a>, Instr, E> {
     use nom::{
         branch::alt,
         bytes::complete::tag,
@@ -691,7 +752,9 @@ fn control_instrs(b: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
     ))(b)
 }
 
-fn ref_instrs(b: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
+fn ref_instrs<'a, E: Debug + ParseError<Span<'a>>>(
+    b: Span<'a>,
+) -> nom::IResult<Span<'a>, Instr, E> {
     use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::preceded};
     alt((
         map(
@@ -706,7 +769,9 @@ fn ref_instrs(b: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
     ))(b)
 }
 
-fn parametric_instrs(b: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
+fn parametric_instrs<'a, E: Debug + ParseError<Span<'a>>>(
+    b: Span<'a>,
+) -> nom::IResult<Span<'a>, Instr, E> {
     use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::preceded};
     alt((
         map(tag([0x1a]), |_| Instr::Drop),
@@ -718,7 +783,9 @@ fn parametric_instrs(b: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
     ))(b)
 }
 
-fn variable_instrs(b: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
+fn variable_instrs<'a, E: Debug + ParseError<Span<'a>>>(
+    b: Span<'a>,
+) -> nom::IResult<Span<'a>, Instr, E> {
     use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::preceded};
     alt((
         map(
@@ -744,7 +811,9 @@ fn variable_instrs(b: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
     ))(b)
 }
 
-fn table_instrs(b: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
+fn table_instrs<'a, E: Debug + ParseError<Span<'a>>>(
+    b: Span<'a>,
+) -> nom::IResult<Span<'a>, Instr, E> {
     use nom::{
         branch::alt,
         bytes::complete::tag,
@@ -759,7 +828,7 @@ fn table_instrs(b: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
         ),
         map(
             preceded(tag([0x26]), TableIdx::from_wasm_bytes),
-            Instr::TableGet,
+            Instr::TableSet,
         ),
         // TODO: these should be encoded as u32s, but instead I'm just... pulling
         // them in as byte literals, since they're all <2 bytes long in LEB128.
@@ -796,7 +865,9 @@ fn table_instrs(b: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
     ))(b)
 }
 
-fn memory_instrs(input: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
+fn memory_instrs<'a, E: Debug + ParseError<Span<'a>>>(
+    input: Span<'a>,
+) -> nom::IResult<Span<'a>, Instr, E> {
     use nom::{
         branch::alt,
         bytes::complete::tag,
@@ -936,7 +1007,9 @@ fn memory_instrs(input: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
     ))(input)
 }
 
-fn numeric_instrs(input: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
+fn numeric_instrs<'a, E: Debug + ParseError<Span<'a>>>(
+    input: Span<'a>,
+) -> nom::IResult<Span<'a>, Instr, E> {
     use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::preceded};
 
     alt((
@@ -988,6 +1061,9 @@ fn numeric_instrs(input: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
             map(tag([0x67]), |_| Instr::I32Clz),
             map(tag([0x68]), |_| Instr::I32Ctz),
             map(tag([0x69]), |_| Instr::I32Popcnt),
+            map(tag([0x6a]), |_| Instr::I32Add),
+            map(tag([0x6b]), |_| Instr::I32Sub),
+            map(tag([0x6c]), |_| Instr::I32Mul),
             map(tag([0x6d]), |_| Instr::I32DivS),
             map(tag([0x6e]), |_| Instr::I32DivU),
             map(tag([0x6f]), |_| Instr::I32RemS),
@@ -1005,6 +1081,9 @@ fn numeric_instrs(input: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
         )),
         alt((
             map(tag([0x7b]), |_| Instr::I64Popcnt),
+            map(tag([0x7c]), |_| Instr::I64Add),
+            map(tag([0x7d]), |_| Instr::I64Sub),
+            map(tag([0x7e]), |_| Instr::I64Mul),
             map(tag([0x7f]), |_| Instr::I64DivS),
             map(tag([0x80]), |_| Instr::I64DivU),
             map(tag([0x81]), |_| Instr::I64RemS),
@@ -1088,7 +1167,9 @@ fn numeric_instrs(input: Span<'_>) -> nom::IResult<Span<'_>, Instr> {
 }
 
 impl ParseWasmBinary for Instr {
-    fn from_wasm_bytes(b: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        b: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::branch::alt;
 
         alt((
@@ -1097,41 +1178,42 @@ impl ParseWasmBinary for Instr {
             parametric_instrs,
             variable_instrs,
             table_instrs,
+            memory_instrs,
+            numeric_instrs,
         ))(b)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Expr(Vec<Instr>);
 
 impl ParseWasmBinary for Expr {
-    fn from_wasm_bytes(b: Span<'_>) -> nom::IResult<Span<'_>, Self> {
-        use nom::{ sequence::terminated, combinator::map, bytes::complete::tag, multi::many0 };
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        b: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
+        use nom::{bytes::complete::tag, combinator::map, multi::many1, sequence::terminated};
 
-        map(
-            terminated(many0(Instr::from_wasm_bytes), tag([0x0b])),
-            Expr
-        )(b)
+        map(terminated(many1(Instr::from_wasm_bytes), tag([0x0b])), Expr)(b)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct TypeIdx(u32);
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct FuncIdx(u32);
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct TableIdx(u32);
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct MemIdx(u32);
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct GlobalIdx(u32);
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct ElemIdx(u32);
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct DataIdx(u32);
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct LocalIdx(u32);
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct LabelIdx(u32);
 
 impl_parse_for_newtype!(TypeIdx, u32);
@@ -1144,94 +1226,122 @@ impl_parse_for_newtype!(DataIdx, u32);
 impl_parse_for_newtype!(LocalIdx, u32);
 impl_parse_for_newtype!(LabelIdx, u32);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Import {
     r#mod: Name,
     nm: Name,
-    desc: ImportDesc
+    desc: ImportDesc,
 }
 
 impl ParseWasmBinary for Import {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
-        use nom::{ combinator::map, sequence::tuple, };
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
+        use nom::{combinator::map, sequence::tuple};
 
-        map(tuple((
-            Name::from_wasm_bytes,
-            Name::from_wasm_bytes,
-            ImportDesc::from_wasm_bytes
-        )), |(r#mod, nm, desc)| Import {
-            r#mod,
-            nm,
-            desc
-        })(input)
+        map(
+            tuple((
+                Name::from_wasm_bytes,
+                Name::from_wasm_bytes,
+                ImportDesc::from_wasm_bytes,
+            )),
+            |(r#mod, nm, desc)| Import { r#mod, nm, desc },
+        )(input)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum ImportDesc {
     Func(TypeIdx),
     Table(TableType),
     Mem(MemType),
-    Global(GlobalType)
+    Global(GlobalType),
 }
 
 impl ParseWasmBinary for ImportDesc {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
-        use nom::{ combinator::map, branch::alt, bytes::complete::tag, sequence::preceded, };
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
+        use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::preceded};
 
         alt((
-            map(preceded(tag([0x00]), TypeIdx::from_wasm_bytes), ImportDesc::Func),
-            map(preceded(tag([0x01]), TableType::from_wasm_bytes), ImportDesc::Table),
-            map(preceded(tag([0x02]), MemType::from_wasm_bytes), ImportDesc::Mem),
-            map(preceded(tag([0x03]), GlobalType::from_wasm_bytes), ImportDesc::Global),
+            map(
+                preceded(tag([0x00]), TypeIdx::from_wasm_bytes),
+                ImportDesc::Func,
+            ),
+            map(
+                preceded(tag([0x01]), TableType::from_wasm_bytes),
+                ImportDesc::Table,
+            ),
+            map(
+                preceded(tag([0x02]), MemType::from_wasm_bytes),
+                ImportDesc::Mem,
+            ),
+            map(
+                preceded(tag([0x03]), GlobalType::from_wasm_bytes),
+                ImportDesc::Global,
+            ),
         ))(input)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Export {
     nm: Name,
-    desc: ExportDesc
+    desc: ExportDesc,
 }
 
 impl ParseWasmBinary for Export {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
-        use nom::{ combinator::map, sequence::tuple, };
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
+        use nom::{combinator::map, sequence::tuple};
 
-        map(tuple((
-            Name::from_wasm_bytes,
-            ExportDesc::from_wasm_bytes
-        )), |(nm, desc)| Export {
-            nm,
-            desc
-        })(input)
+        map(
+            tuple((Name::from_wasm_bytes, ExportDesc::from_wasm_bytes)),
+            |(nm, desc)| Export { nm, desc },
+        )(input)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum ExportDesc {
     Func(TypeIdx),
     Table(TableType),
     Mem(MemType),
-    Global(GlobalType)
+    Global(GlobalType),
 }
 
 impl ParseWasmBinary for ExportDesc {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
-        use nom::{ combinator::map, branch::alt, bytes::complete::tag, sequence::preceded, };
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
+        use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::preceded};
 
         alt((
-            map(preceded(tag([0x00]), TypeIdx::from_wasm_bytes), ExportDesc::Func),
-            map(preceded(tag([0x01]), TableType::from_wasm_bytes), ExportDesc::Table),
-            map(preceded(tag([0x02]), MemType::from_wasm_bytes), ExportDesc::Mem),
-            map(preceded(tag([0x03]), GlobalType::from_wasm_bytes), ExportDesc::Global),
+            map(
+                preceded(tag([0x00]), TypeIdx::from_wasm_bytes),
+                ExportDesc::Func,
+            ),
+            map(
+                preceded(tag([0x01]), TableType::from_wasm_bytes),
+                ExportDesc::Table,
+            ),
+            map(
+                preceded(tag([0x02]), MemType::from_wasm_bytes),
+                ExportDesc::Mem,
+            ),
+            map(
+                preceded(tag([0x03]), GlobalType::from_wasm_bytes),
+                ExportDesc::Global,
+            ),
         ))(input)
     }
 }
 
 // TODO: Woof, this is a bad type. Parsed elements are much more straightforward than their
 // bit-flagged binary representation.
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Elem {
     ActiveSegmentFuncs(Expr, Vec<FuncIdx>),
     PassiveSegment(u32, Vec<FuncIdx>),
@@ -1241,16 +1351,18 @@ enum Elem {
     ActiveSegmentExpr(Expr, Vec<Expr>),
     PassiveSegmentExpr(RefType, Vec<Expr>),
     ActiveSegmentTableAndExpr(TableIdx, Expr, RefType, Vec<Expr>),
-    DeclarativeSegmentExpr(RefType, Vec<Expr>)
+    DeclarativeSegmentExpr(RefType, Vec<Expr>),
 }
 
 impl ParseWasmBinary for Elem {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
-        use nom::{ combinator::map, sequence::tuple };
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
+        use nom::{combinator::map, sequence::tuple};
 
         let (input, flags) = u32::from_wasm_bytes(input)?;
 
-        /* 
+        /*
         ┌─── element type+exprs vs element kind + element idx
         │┌── explicit table index (or distinguishes passive from declarative)
         ││┌─ Passive or Declarative
@@ -1266,85 +1378,154 @@ impl ParseWasmBinary for Elem {
         */
 
         match flags & 3 {
-            0b000 => map(tuple((Expr::from_wasm_bytes, Vec::<FuncIdx>::from_wasm_bytes)), |(ex, fs)| Elem::ActiveSegmentFuncs(ex, fs))(input),
-            0b001 => map(tuple((u32::from_wasm_bytes, Vec::<FuncIdx>::from_wasm_bytes)), |(el, fs)| Elem::PassiveSegment(el, fs))(input),
-            0b010 => map(tuple((TableIdx::from_wasm_bytes, Expr::from_wasm_bytes, u32::from_wasm_bytes, Vec::<FuncIdx>::from_wasm_bytes)), |(a, b, c, d)| Elem::ActiveSegment(a, b, c, d))(input),
-            0b011 => map(tuple((u32::from_wasm_bytes, Vec::<FuncIdx>::from_wasm_bytes)), |(el, fs)| Elem::DeclarativeSegment(el, fs))(input),
-            0b100 => map(tuple((Expr::from_wasm_bytes, Vec::<Expr>::from_wasm_bytes)), |(ex, es)| Elem::ActiveSegmentExpr(ex, es))(input),
-            0b101 => map(tuple((RefType::from_wasm_bytes, Vec::<Expr>::from_wasm_bytes)), |(rt, es)| Elem::PassiveSegmentExpr(rt, es))(input),
-            0b110 => map(tuple((TableIdx::from_wasm_bytes, Expr::from_wasm_bytes, RefType::from_wasm_bytes, Vec::<Expr>::from_wasm_bytes)), |(a, b, c, d)| Elem::ActiveSegmentTableAndExpr(a, b, c, d))(input),
-            0b111 => map(tuple((RefType::from_wasm_bytes, Vec::<Expr>::from_wasm_bytes)), |(rt, es)| Elem::DeclarativeSegmentExpr(rt, es))(input),
-            _ => unreachable!()
+            0b000 => map(
+                tuple((Expr::from_wasm_bytes, Vec::<FuncIdx>::from_wasm_bytes)),
+                |(ex, fs)| Elem::ActiveSegmentFuncs(ex, fs),
+            )(input),
+            0b001 => map(
+                tuple((u32::from_wasm_bytes, Vec::<FuncIdx>::from_wasm_bytes)),
+                |(el, fs)| Elem::PassiveSegment(el, fs),
+            )(input),
+            0b010 => map(
+                tuple((
+                    TableIdx::from_wasm_bytes,
+                    Expr::from_wasm_bytes,
+                    u32::from_wasm_bytes,
+                    Vec::<FuncIdx>::from_wasm_bytes,
+                )),
+                |(a, b, c, d)| Elem::ActiveSegment(a, b, c, d),
+            )(input),
+            0b011 => map(
+                tuple((u32::from_wasm_bytes, Vec::<FuncIdx>::from_wasm_bytes)),
+                |(el, fs)| Elem::DeclarativeSegment(el, fs),
+            )(input),
+            0b100 => map(
+                tuple((Expr::from_wasm_bytes, Vec::<Expr>::from_wasm_bytes)),
+                |(ex, es)| Elem::ActiveSegmentExpr(ex, es),
+            )(input),
+            0b101 => map(
+                tuple((RefType::from_wasm_bytes, Vec::<Expr>::from_wasm_bytes)),
+                |(rt, es)| Elem::PassiveSegmentExpr(rt, es),
+            )(input),
+            0b110 => map(
+                tuple((
+                    TableIdx::from_wasm_bytes,
+                    Expr::from_wasm_bytes,
+                    RefType::from_wasm_bytes,
+                    Vec::<Expr>::from_wasm_bytes,
+                )),
+                |(a, b, c, d)| Elem::ActiveSegmentTableAndExpr(a, b, c, d),
+            )(input),
+            0b111 => map(
+                tuple((RefType::from_wasm_bytes, Vec::<Expr>::from_wasm_bytes)),
+                |(rt, es)| Elem::DeclarativeSegmentExpr(rt, es),
+            )(input),
+            _ => unreachable!(),
         }
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Local(u32, ValType);
 
 impl ParseWasmBinary for Local {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
-        use nom::{ sequence::{ pair, tuple }, combinator::{ fail, map }, bytes::complete::take, multi::many0 };
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
+        use nom::{combinator::map, sequence::tuple};
 
-        map(tuple((u32::from_wasm_bytes, ValType::from_wasm_bytes)), |(x, y)| Local(x, y))(input)
+        map(
+            tuple((u32::from_wasm_bytes, ValType::from_wasm_bytes)),
+            |(x, y)| Local(x, y),
+        )(input)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Func {
     locals: Vec<Local>,
     expr: Expr,
 }
 
 impl ParseWasmBinary for Func {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
-        use nom::{ sequence::{ pair, tuple }, combinator::{ fail, map }, bytes::complete::take, multi::many0 };
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
+        use nom::{combinator::map, sequence::tuple};
 
-        map(tuple((Vec::<Local>::from_wasm_bytes, Expr::from_wasm_bytes)), |(locals, expr)| Func {
-            locals,
-            expr
-        })(input)
+        map(
+            tuple((Vec::<Local>::from_wasm_bytes, Expr::from_wasm_bytes)),
+            |(locals, expr)| Func { locals, expr },
+        )(input)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Code(Func);
 
 impl ParseWasmBinary for Code {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
-        use nom::{ sequence::{ pair, tuple }, combinator::{ fail, map }, bytes::complete::take, multi::many0 };
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
+        use nom::{bytes::complete::take, combinator::fail};
 
         let (input, size) = u32::from_wasm_bytes(input)?;
         let (input, section) = take(size as usize)(input)?;
 
         let (remaining, func) = Func::from_wasm_bytes(section)?;
         if !remaining.is_empty() {
-            return fail::<_, Self, _>(input)
+            return fail::<_, Self, _>(input);
         }
 
         Ok((input, Code(func)))
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Data {
     Active(ByteVec, MemIdx, Expr),
     Passive(ByteVec),
 }
 
 impl ParseWasmBinary for Data {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
-        use nom::{ combinator::map, branch::alt, bytes::complete::tag, sequence::{ preceded, tuple }, };
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
+        use nom::{
+            branch::alt,
+            bytes::complete::tag,
+            combinator::map,
+            sequence::{preceded, tuple},
+        };
 
         alt((
-            map(preceded(tag([0x00]), tuple(( Expr::from_wasm_bytes, ByteVec::from_wasm_bytes))), |(expr, bvec)| Data::Active(bvec, MemIdx(0), expr)),
-            map(preceded(tag([0x01]), ByteVec::from_wasm_bytes), Data::Passive),
-            map(preceded(tag([0x02]), tuple(( MemIdx::from_wasm_bytes, Expr::from_wasm_bytes, ByteVec::from_wasm_bytes))), |(memidx, expr, bvec)| Data::Active(bvec, memidx, expr)),
+            map(
+                preceded(
+                    tag([0x00]),
+                    tuple((Expr::from_wasm_bytes, ByteVec::from_wasm_bytes)),
+                ),
+                |(expr, bvec)| Data::Active(bvec, MemIdx(0), expr),
+            ),
+            map(
+                preceded(tag([0x01]), ByteVec::from_wasm_bytes),
+                Data::Passive,
+            ),
+            map(
+                preceded(
+                    tag([0x02]),
+                    tuple((
+                        MemIdx::from_wasm_bytes,
+                        Expr::from_wasm_bytes,
+                        ByteVec::from_wasm_bytes,
+                    )),
+                ),
+                |(memidx, expr, bvec)| Data::Active(bvec, memidx, expr),
+            ),
         ))(input)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum Section {
     Custom(Vec<u8>),
     Type(Vec<FuncType>),
@@ -1362,8 +1543,14 @@ enum Section {
 }
 
 impl ParseWasmBinary for Section {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
-        use nom::{ sequence::{ pair, tuple }, combinator::{ fail, map }, bytes::complete::take, multi::many0 };
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
+        use nom::{
+            bytes::complete::take,
+            combinator::{fail, map},
+            sequence::{pair, tuple},
+        };
 
         let (input, (section_id, size)) = pair(take(1usize), u32::from_wasm_bytes)(input)?;
         let (input, section) = take(size as usize)(input)?;
@@ -1375,27 +1562,35 @@ impl ParseWasmBinary for Section {
             0x3 => Section::Function(Vec::<TypeIdx>::from_wasm_bytes(section)?.1),
             0x4 => Section::Table(Vec::<TableType>::from_wasm_bytes(section)?.1),
             0x5 => Section::Memory(Vec::<MemType>::from_wasm_bytes(section)?.1),
-            0x6 => map(tuple((GlobalType::from_wasm_bytes, Expr::from_wasm_bytes)), |(x, y)| Section::Global(x, y))(section)?.1,
+            0x6 => {
+                map(
+                    tuple((GlobalType::from_wasm_bytes, Expr::from_wasm_bytes)),
+                    |(x, y)| Section::Global(x, y),
+                )(section)?
+                .1
+            }
             0x7 => Section::Export(Vec::<Export>::from_wasm_bytes(section)?.1),
             0x8 => Section::Start(FuncIdx::from_wasm_bytes(section)?.1),
             0x9 => Section::Element(Vec::<Elem>::from_wasm_bytes(section)?.1),
             0xa => Section::Code(Vec::<Code>::from_wasm_bytes(section)?.1),
             0xb => Section::Data(Vec::<Data>::from_wasm_bytes(section)?.1),
             0xc => Section::DataCount(u32::from_wasm_bytes(section)?.1),
-            _ => return fail::<_, Self, _>(section)
+            _ => return fail::<_, Self, _>(section),
         };
 
         Ok((input, section))
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Module {
-    sections: Vec<Section>
+    sections: Vec<Section>,
 }
 
 impl ParseWasmBinary for Module {
-    fn from_wasm_bytes(input: Span<'_>) -> nom::IResult<Span<'_>, Self> {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::tag;
 
         let (mut input, _) = tag([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x0, 0x0])(input)?;
@@ -1422,25 +1617,25 @@ mod test {
         use leb128;
         let mut v = Vec::new();
         leb128::write::unsigned(&mut v, 8082008).unwrap();
-        let (rest, v) = u32::from_wasm_bytes(Span::new(&v[..])).unwrap();
+        let (rest, v) = u32::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
         assert_eq!(v, 8082008);
         assert_eq!(&rest[..], b"");
 
         let mut v = Vec::new();
         leb128::write::unsigned(&mut v, u32::MAX as u64).unwrap();
-        let (rest, v) = u32::from_wasm_bytes(Span::new(&v[..])).unwrap();
+        let (rest, v) = u32::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
         assert_eq!(v, u32::MAX);
         assert_eq!(&rest[..], b"");
 
         let mut v = Vec::new();
         leb128::write::unsigned(&mut v, u32::MIN as u64).unwrap();
-        let (rest, v) = u32::from_wasm_bytes(Span::new(&v[..])).unwrap();
+        let (rest, v) = u32::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
         assert_eq!(v, u32::MIN);
         assert_eq!(&rest[..], b"");
 
         let mut v = Vec::new();
         leb128::write::unsigned(&mut v, 0).unwrap();
-        let (rest, v) = u32::from_wasm_bytes(Span::new(&v[..])).unwrap();
+        let (rest, v) = u32::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
         assert_eq!(v, 0);
         assert_eq!(&rest[..], b"");
     }
@@ -1450,31 +1645,31 @@ mod test {
         use leb128;
         let mut v = Vec::new();
         leb128::write::signed(&mut v, 8082008).unwrap();
-        let (rest, v) = i32::from_wasm_bytes(Span::new(&v[..])).unwrap();
+        let (rest, v) = i32::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
         assert_eq!(v, 8082008);
         assert_eq!(&rest[..], b"");
 
         let mut v = Vec::new();
         leb128::write::signed(&mut v, -45).unwrap();
-        let (rest, v) = i32::from_wasm_bytes(Span::new(&v[..])).unwrap();
+        let (rest, v) = i32::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
         assert_eq!(v, -45);
         assert_eq!(&rest[..], b"");
 
         let mut v = Vec::new();
         leb128::write::signed(&mut v, i32::MAX as i64).unwrap();
-        let (rest, v) = i32::from_wasm_bytes(Span::new(&v[..])).unwrap();
+        let (rest, v) = i32::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
         assert_eq!(v, i32::MAX);
         assert_eq!(&rest[..], b"");
 
         let mut v = Vec::new();
         leb128::write::signed(&mut v, i32::MIN as i64).unwrap();
-        let (rest, v) = i32::from_wasm_bytes(Span::new(&v[..])).unwrap();
+        let (rest, v) = i32::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
         assert_eq!(v, i32::MIN);
         assert_eq!(&rest[..], b"");
 
         let mut v = Vec::new();
         leb128::write::signed(&mut v, 0).unwrap();
-        let (rest, v) = i32::from_wasm_bytes(Span::new(&v[..])).unwrap();
+        let (rest, v) = i32::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
         assert_eq!(v, 0);
         assert_eq!(&rest[..], b"");
     }
@@ -1489,7 +1684,8 @@ mod test {
         leb128::write::signed(&mut v, 2).unwrap();
         leb128::write::signed(&mut v, 3).unwrap();
         leb128::write::signed(&mut v, 5).unwrap();
-        let (rest, v) = Vec::<i64>::from_wasm_bytes(Span::new(&v[..])).unwrap();
+        let (rest, v) =
+            Vec::<i64>::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
         assert_eq!(v, vec![1, 1, 2]);
         assert_eq!(&rest[..], [3, 5]);
     }
@@ -1502,7 +1698,8 @@ mod test {
         leb128::write::unsigned(&mut v, xs.len() as u64).unwrap();
         write!(&mut v, "{}", xs).unwrap();
 
-        let (rest, v) = String::from_wasm_bytes(Span::new(&v[..])).unwrap();
+        let (rest, v) =
+            String::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
         assert_eq!(v, "hello world!");
         assert_eq!(&rest[..], []);
     }
@@ -1511,6 +1708,36 @@ mod test {
     fn test_read_wasm() {
         let bytes = include_bytes!("../example.wasm");
 
-        dbg!(Module::from_wasm_bytes(Span::new(bytes)));
+        let (input, wasm) =
+            Module::from_wasm_bytes::<nom::error::VerboseError<Span>>(Span::new(bytes)).unwrap();
+
+        assert!(input.is_empty());
+        assert_eq!(
+            wasm,
+            Module {
+                sections: vec![
+                    Section::Type(vec![FuncType(
+                        ResultType(vec![
+                            ValType::NumType(NumType::I32),
+                            ValType::NumType(NumType::I32),
+                        ],),
+                        ResultType(vec![ValType::NumType(NumType::I32),],),
+                    ),],),
+                    Section::Function(vec![TypeIdx(0,),],),
+                    Section::Export(vec![Export {
+                        nm: Name("add_i32".to_string(),),
+                        desc: ExportDesc::Func(TypeIdx(0,),),
+                    },],),
+                    Section::Code(vec![Code(Func {
+                        locals: vec![],
+                        expr: Expr(vec![
+                            Instr::LocalGet(LocalIdx(0,),),
+                            Instr::LocalGet(LocalIdx(1,),),
+                            Instr::I32Add,
+                        ],),
+                    },),],),
+                ],
+            }
+        );
     }
 }
