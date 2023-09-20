@@ -1,9 +1,9 @@
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct ByteVec(pub(crate) Vec<u8>);
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Name(pub(crate) String);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum NumType {
     I32,
     I64,
@@ -11,63 +11,79 @@ pub(crate) enum NumType {
     F64,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum VecType {
     V128,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum RefType {
     FuncRef,
     ExternRef,
 }
 
 #[allow(clippy::enum_variant_names)]
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum ValType {
     NumType(NumType),
     VecType(VecType),
     RefType(RefType),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct ResultType(pub(crate) Vec<ValType>);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct FuncType(pub(crate) ResultType, pub(crate) ResultType);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum Limits {
     Min(u32),
     Range(u32, u32),
 }
 
-#[derive(Debug, PartialEq)]
+impl Limits {
+    pub(crate) fn min(&self) -> u32 {
+        *match self {
+            Limits::Min(min) => min,
+            Limits::Range(min, _) => min,
+        }
+    }
+
+    pub(crate) fn max(&self) -> Option<u32> {
+        match self {
+            Limits::Min(_) => None,
+            Limits::Range(_, max) => Some(*max),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct MemType(pub(crate) Limits);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct TableType(pub(crate) RefType, pub(crate) Limits);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum Mutability {
     Const,
     Variable,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct GlobalType(pub(crate) ValType, pub(crate) Mutability);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum BlockType {
     Empty,
     Val(ValType),
     TypeIndex(i32),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct MemArg(pub(crate) u32, pub(crate) u32);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Instr {
     // Control Instructions
     Unreachable,
@@ -279,36 +295,36 @@ pub(crate) enum Instr {
     // Vector Instructions
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Expr(pub(crate) Vec<Instr>);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct TypeIdx(pub(crate) u32);
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct FuncIdx(pub(crate) u32);
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct TableIdx(pub(crate) u32);
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct MemIdx(pub(crate) u32);
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct GlobalIdx(pub(crate) u32);
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct ElemIdx(pub(crate) u32);
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct DataIdx(pub(crate) u32);
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct LocalIdx(pub(crate) u32);
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct LabelIdx(pub(crate) u32);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Import {
     pub(crate) r#mod: Name,
     pub(crate) nm: Name,
     pub(crate) desc: ImportDesc,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum ImportDesc {
     Func(TypeIdx),
     Table(TableType),
@@ -316,13 +332,13 @@ pub(crate) enum ImportDesc {
     Global(GlobalType),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Export {
     pub(crate) nm: Name,
     pub(crate) desc: ExportDesc,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum ExportDesc {
     Func(TypeIdx),
     Table(TableType),
@@ -332,7 +348,7 @@ pub(crate) enum ExportDesc {
 
 // TODO: Woof, this is a bad type. Parsed elements are much more straightforward than their
 // bit-flagged binary representation.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Elem {
     ActiveSegmentFuncs(Expr, Vec<FuncIdx>),
     PassiveSegment(u32, Vec<FuncIdx>),
@@ -345,25 +361,25 @@ pub(crate) enum Elem {
     DeclarativeSegmentExpr(RefType, Vec<Expr>),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct Local(pub(crate) u32, pub(crate) ValType);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Func {
     pub(crate) locals: Vec<Local>,
     pub(crate) expr: Expr,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Code(pub(crate) Func);
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Data {
     Active(ByteVec, MemIdx, Expr),
     Passive(ByteVec),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Section {
     Custom(Vec<u8>),
     Type(Vec<FuncType>),
@@ -380,7 +396,113 @@ pub(crate) enum Section {
     DataCount(u32),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Module {
     pub(crate) sections: Vec<Section>,
+}
+
+impl Module {
+    pub(crate) fn custom_sections(&self) -> impl Iterator<Item = &[u8]> {
+        self.sections.iter().filter_map(|xs| if let Section::Custom(xs) = xs {
+            Some(xs.as_slice())
+        } else {
+            None
+        })
+    }
+
+    pub(crate) fn type_section(&self) -> Option<&[FuncType]> {
+        self.sections.iter().filter_map(|xs| if let Section::Type(xs) = xs {
+            Some(xs.as_slice())
+        } else {
+            None
+        }).next()
+    }
+
+    pub(crate) fn import_section(&self) -> Option<&[Import]> {
+        self.sections.iter().filter_map(|xs| if let Section::Import(xs) = xs {
+            Some(xs.as_slice())
+        } else {
+            None
+        }).next()
+    }
+
+    pub(crate) fn function_section(&self) -> Option<&[TypeIdx]> {
+        self.sections.iter().filter_map(|xs| if let Section::Function(xs) = xs {
+            Some(xs.as_slice())
+        } else {
+            None
+        }).next()
+    }
+
+    pub(crate) fn table_section(&self) -> Option<&[TableType]> {
+        self.sections.iter().filter_map(|xs| if let Section::Table(xs) = xs {
+            Some(xs.as_slice())
+        } else {
+            None
+        }).next()
+    }
+
+    pub(crate) fn memory_section(&self) -> Option<&[MemType]> {
+        self.sections.iter().filter_map(|xs| if let Section::Memory(xs) = xs {
+            Some(xs.as_slice())
+        } else {
+            None
+        }).next()
+    }
+
+    pub(crate) fn global_section(&self) -> Option<(&GlobalType, &Expr)> {
+        self.sections.iter().filter_map(|xs| if let Section::Global(xs, ys) = xs {
+            Some((xs, ys))
+        } else {
+            None
+        }).next()
+    }
+
+    pub(crate) fn export_section(&self) -> Option<&[Export]> {
+        self.sections.iter().filter_map(|xs| if let Section::Export(xs) = xs {
+            Some(xs.as_slice())
+        } else {
+            None
+        }).next()
+    }
+
+    pub(crate) fn start_section(&self) -> Option<FuncIdx> {
+        self.sections.iter().filter_map(|xs| if let Section::Start(xs) = xs {
+            Some(*xs)
+        } else {
+            None
+        }).next()
+    }
+
+    pub(crate) fn element_section(&self) -> Option<&[Elem]> {
+        self.sections.iter().filter_map(|xs| if let Section::Element(xs) = xs {
+            Some(xs.as_slice())
+        } else {
+            None
+        }).next()
+    }
+
+    pub(crate) fn code_section(&self) -> Option<&[Code]> {
+        self.sections.iter().filter_map(|xs| if let Section::Code(xs) = xs {
+            Some(xs.as_slice())
+        } else {
+            None
+        }).next()
+    }
+
+    pub(crate) fn data_section(&self) -> Option<&[Data]> {
+        self.sections.iter().filter_map(|xs| if let Section::Data(xs) = xs {
+            Some(xs.as_slice())
+        } else {
+            None
+        }).next()
+    }
+
+    pub(crate) fn datacount_section(&self) -> Option<u32> {
+        self.sections.iter().filter_map(|xs| if let Section::DataCount(xs) = xs {
+            Some(*xs)
+        } else {
+            None
+        }).next()
+    }
 }

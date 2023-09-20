@@ -19,7 +19,7 @@ macro_rules! impl_parse_for_newtype {
     };
 }
 
-trait ParseWasmBinary: Sized {
+pub(crate) trait ParseWasmBinary: Sized {
     fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E>;
@@ -1200,7 +1200,7 @@ impl ParseWasmBinary for Module {
     fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
-        use nom::bytes::complete::tag;
+        use nom::{ combinator::fail, bytes::complete::tag };
 
         let (mut input, _) = tag([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x0, 0x0])(input)?;
         let mut sections = Vec::with_capacity(0xc);
@@ -1208,10 +1208,126 @@ impl ParseWasmBinary for Module {
         while !input.is_empty() {
             let section;
             (input, section) = Section::from_wasm_bytes(input)?;
+
+            if !match &section {
+                Section::Custom(_) => false,
+                Section::Type(_) => matches!(sections.last(), Some(Section::Custom(_)) | None),
+                Section::Import(_) => matches!(sections.last(), Some(
+                    Section::Custom(_) |
+                    Section::Type(_)
+                ) | None),
+                Section::Function(_) => matches!(sections.last(), Some(
+                    Section::Custom(_) |
+                    Section::Type(_) |
+                    Section::Import(_)
+                ) | None),
+                Section::Table(_) => matches!(sections.last(), Some(
+                    Section::Custom(_) |
+                    Section::Type(_) |
+                    Section::Import(_) |
+                    Section::Function(_)
+                ) | None),
+                Section::Memory(_) => matches!(sections.last(), Some(
+                    Section::Custom(_) |
+                    Section::Type(_) |
+                    Section::Import(_) |
+                    Section::Function(_) |
+                    Section::Table(_)
+                ) | None),
+                Section::Global(_, _) => matches!(sections.last(), Some(
+                    Section::Custom(_) |
+                    Section::Type(_) |
+                    Section::Import(_) |
+                    Section::Function(_) |
+                    Section::Table(_) |
+                    Section::Memory(_)
+                ) | None),
+                Section::Export(_) => matches!(sections.last(), Some(
+                    Section::Custom(_) |
+                    Section::Type(_) |
+                    Section::Import(_) |
+                    Section::Function(_) |
+                    Section::Table(_) |
+                    Section::Memory(_) |
+                    Section::Global(_, _)
+                ) | None),
+                Section::Start(_) => matches!(sections.last(), Some(
+                    Section::Custom(_) |
+                    Section::Type(_) |
+                    Section::Import(_) |
+                    Section::Function(_) |
+                    Section::Table(_) |
+                    Section::Memory(_) |
+                    Section::Global(_, _) |
+                    Section::Export(_)
+                ) | None),
+                Section::Element(_) => matches!(sections.last(), Some(
+                    Section::Custom(_) |
+                    Section::Type(_) |
+                    Section::Import(_) |
+                    Section::Function(_) |
+                    Section::Table(_) |
+                    Section::Memory(_) |
+                    Section::Global(_, _) |
+                    Section::Export(_) |
+                    Section::Start(_)
+                ) | None),
+                Section::Code(_) => matches!(sections.last(), Some(
+                    Section::Custom(_) |
+                    Section::Type(_) |
+                    Section::Import(_) |
+                    Section::Function(_) |
+                    Section::Table(_) |
+                    Section::Memory(_) |
+                    Section::Global(_, _) |
+                    Section::Export(_) |
+                    Section::Start(_) |
+                    Section::Element(_)
+                ) | None),
+                Section::Data(_) => matches!(sections.last(), Some(
+                    Section::Custom(_) |
+                    Section::Type(_) |
+                    Section::Import(_) |
+                    Section::Function(_) |
+                    Section::Table(_) |
+                    Section::Memory(_) |
+                    Section::Global(_, _) |
+                    Section::Export(_) |
+                    Section::Start(_) |
+                    Section::Element(_) |
+                    Section::Code(_)
+                ) | None),
+                Section::DataCount(_) => matches!(sections.last(), Some(
+                    Section::Custom(_) |
+                    Section::Type(_) |
+                    Section::Import(_) |
+                    Section::Function(_) |
+                    Section::Table(_) |
+                    Section::Memory(_) |
+                    Section::Global(_, _) |
+                    Section::Export(_) |
+                    Section::Start(_) |
+                    Section::Element(_) |
+                    Section::Code(_) |
+                    Section::Data(_)
+                ) | None),
+            } {
+                return fail::<_, Self, _>(input)
+            }
+
             sections.push(section);
         }
 
         Ok((input, Module { sections }))
+    }
+}
+
+pub(crate) fn parse(input: &[u8]) -> anyhow::Result<Module> {
+    match Module::from_wasm_bytes::<nom::error::VerboseError<Span>>(Span::new(input)) {
+        Ok((_, wasm)) => Ok(wasm),
+        Err(err) => {
+            anyhow::bail!("{:?}", err)
+        }
     }
 }
 
