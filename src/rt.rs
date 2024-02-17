@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::alloc::{ self, Layout };
 use rustix::mm::MprotectFlags;
 
-use crate::nodes::{Func, TypeIdx, Module, Code, FuncType, Import, ImportDesc, TableType, MemType};
+use crate::nodes::{Func, TypeIdx, Module, Code, FuncType, ImportDesc, TableType, MemType};
 
 const PAGE_SIZE: usize = 1 << 16;
 
@@ -142,13 +142,13 @@ impl Store {
         let function_sections = module.function_section();
         let table_sections = module.table_section();
         let memory_sections = module.memory_section();
-        let global_sections = module.global_section();
-        let export_sections = module.export_section();
-        let start_sections = module.start_section();
-        let element_sections = module.element_section();
+        let _global_sections = module.global_section();
+        let _export_sections = module.export_section();
+        let _start_sections = module.start_section();
+        let _element_sections = module.element_section();
         let code_sections = module.code_section();
-        let data_sections = module.data_section();
-        let datacount_sections = module.datacount_section();
+        let _data_sections = module.data_section();
+        let _datacount_sections = module.datacount_section();
 
         // NOTE: this is inexact -- not every import is a function -- but it's
         // a workable upper bound.
@@ -218,7 +218,7 @@ impl Store {
         })
     }
 
-    fn instantiate(&self, externs: &[Extern]) -> ModuleInstance {
+    fn instantiate(&self, _externs: &[Extern]) -> ModuleInstance {
         todo!();
     }
 

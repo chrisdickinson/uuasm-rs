@@ -1449,6 +1449,7 @@ mod test {
                         ResultType(vec![ValType::NumType(NumType::I32),],),
                     ),],),
                     Section::Function(vec![TypeIdx(0,),],),
+                    Section::Memory(vec![MemType(Limits::Min(64))]),
                     Section::Export(vec![Export {
                         nm: Name("add_i32".to_string(),),
                         desc: ExportDesc::Func(TypeIdx(0,),),

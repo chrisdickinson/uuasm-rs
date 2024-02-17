@@ -411,98 +411,98 @@ impl Module {
     }
 
     pub(crate) fn type_section(&self) -> Option<&[FuncType]> {
-        self.sections.iter().filter_map(|xs| if let Section::Type(xs) = xs {
+        self.sections.iter().find_map(|xs| if let Section::Type(xs) = xs {
             Some(xs.as_slice())
         } else {
             None
-        }).next()
+        })
     }
 
     pub(crate) fn import_section(&self) -> Option<&[Import]> {
-        self.sections.iter().filter_map(|xs| if let Section::Import(xs) = xs {
+        self.sections.iter().find_map(|xs| if let Section::Import(xs) = xs {
             Some(xs.as_slice())
         } else {
             None
-        }).next()
+        })
     }
 
     pub(crate) fn function_section(&self) -> Option<&[TypeIdx]> {
-        self.sections.iter().filter_map(|xs| if let Section::Function(xs) = xs {
+        self.sections.iter().find_map(|xs| if let Section::Function(xs) = xs {
             Some(xs.as_slice())
         } else {
             None
-        }).next()
+        })
     }
 
     pub(crate) fn table_section(&self) -> Option<&[TableType]> {
-        self.sections.iter().filter_map(|xs| if let Section::Table(xs) = xs {
+        self.sections.iter().find_map(|xs| if let Section::Table(xs) = xs {
             Some(xs.as_slice())
         } else {
             None
-        }).next()
+        })
     }
 
     pub(crate) fn memory_section(&self) -> Option<&[MemType]> {
-        self.sections.iter().filter_map(|xs| if let Section::Memory(xs) = xs {
+        self.sections.iter().find_map(|xs| if let Section::Memory(xs) = xs {
             Some(xs.as_slice())
         } else {
             None
-        }).next()
+        })
     }
 
     pub(crate) fn global_section(&self) -> Option<(&GlobalType, &Expr)> {
-        self.sections.iter().filter_map(|xs| if let Section::Global(xs, ys) = xs {
+        self.sections.iter().find_map(|xs| if let Section::Global(xs, ys) = xs {
             Some((xs, ys))
         } else {
             None
-        }).next()
+        })
     }
 
     pub(crate) fn export_section(&self) -> Option<&[Export]> {
-        self.sections.iter().filter_map(|xs| if let Section::Export(xs) = xs {
+        self.sections.iter().find_map(|xs| if let Section::Export(xs) = xs {
             Some(xs.as_slice())
         } else {
             None
-        }).next()
+        })
     }
 
     pub(crate) fn start_section(&self) -> Option<FuncIdx> {
-        self.sections.iter().filter_map(|xs| if let Section::Start(xs) = xs {
+        self.sections.iter().find_map(|xs| if let Section::Start(xs) = xs {
             Some(*xs)
         } else {
             None
-        }).next()
+        })
     }
 
     pub(crate) fn element_section(&self) -> Option<&[Elem]> {
-        self.sections.iter().filter_map(|xs| if let Section::Element(xs) = xs {
+        self.sections.iter().find_map(|xs| if let Section::Element(xs) = xs {
             Some(xs.as_slice())
         } else {
             None
-        }).next()
+        })
     }
 
     pub(crate) fn code_section(&self) -> Option<&[Code]> {
-        self.sections.iter().filter_map(|xs| if let Section::Code(xs) = xs {
+        self.sections.iter().find_map(|xs| if let Section::Code(xs) = xs {
             Some(xs.as_slice())
         } else {
             None
-        }).next()
+        })
     }
 
     pub(crate) fn data_section(&self) -> Option<&[Data]> {
-        self.sections.iter().filter_map(|xs| if let Section::Data(xs) = xs {
+        self.sections.iter().find_map(|xs| if let Section::Data(xs) = xs {
             Some(xs.as_slice())
         } else {
             None
-        }).next()
+        })
     }
 
     pub(crate) fn datacount_section(&self) -> Option<u32> {
-        self.sections.iter().filter_map(|xs| if let Section::DataCount(xs) = xs {
+        self.sections.iter().find_map(|xs| if let Section::DataCount(xs) = xs {
             Some(*xs)
         } else {
             None
-        }).next()
+        })
     }
 }
