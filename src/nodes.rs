@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct ByteVec(pub(crate) Vec<u8>);
 #[derive(Debug, PartialEq, Clone)]
@@ -72,6 +74,9 @@ pub(crate) enum Mutability {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct GlobalType(pub(crate) ValType, pub(crate) Mutability);
+
+#[derive(Debug, PartialEq, Clone)]
+pub(crate) struct Global(pub(crate) GlobalType, pub(crate) Expr);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum BlockType {
@@ -380,14 +385,14 @@ pub(crate) enum Data {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) enum Section {
+pub(crate) enum SectionType {
     Custom(Vec<u8>),
     Type(Vec<FuncType>),
     Import(Vec<Import>),
     Function(Vec<TypeIdx>),
     Table(Vec<TableType>),
     Memory(Vec<MemType>),
-    Global(GlobalType, Expr),
+    Global(Vec<Global>),
     Export(Vec<Export>),
     Start(FuncIdx),
     Element(Vec<Elem>),
@@ -397,112 +402,200 @@ pub(crate) enum Section {
 }
 
 #[derive(Debug, PartialEq, Clone)]
+pub(crate) struct Section<T: Debug + PartialEq + Clone> {
+    pub(crate) index: usize,
+    pub(crate) inner: T,
+}
+
+#[derive(Debug, PartialEq, Clone, Default)]
 pub(crate) struct Module {
-    pub(crate) sections: Vec<Section>,
+    pub(crate) custom_sections: Vec<Section<Vec<u8>>>,
+    pub(crate) type_section: Option<Section<Vec<FuncType>>>,
+    pub(crate) import_section: Option<Section<Vec<Import>>>,
+    pub(crate) function_section: Option<Section<Vec<TypeIdx>>>,
+    pub(crate) table_section: Option<Section<Vec<TableType>>>,
+    pub(crate) memory_section: Option<Section<Vec<MemType>>>,
+    pub(crate) global_section: Option<Section<Vec<Global>>>,
+    pub(crate) export_section: Option<Section<Vec<Export>>>,
+    pub(crate) start_section: Option<Section<FuncIdx>>,
+    pub(crate) element_section: Option<Section<Vec<Elem>>>,
+    pub(crate) code_section: Option<Section<Vec<Code>>>,
+    pub(crate) data_section: Option<Section<Vec<Data>>>,
+    pub(crate) datacount_section: Option<Section<u32>>,
+}
+
+pub struct ModuleBuilder {
+    inner: Module,
+    index: usize,
+}
+
+impl ModuleBuilder {
+    pub(crate) fn new() -> Self {
+        Self {
+            inner: Default::default(),
+            index: 0,
+        }
+    }
+
+    pub(crate) fn custom_section(mut self, v: Vec<u8>) -> Self {
+        self.inner.custom_sections.push(Section {
+            inner: v,
+            index: self.index,
+        });
+        self.index += 1;
+        self
+    }
+    pub(crate) fn type_section(mut self, xs: Vec<FuncType>) -> Self {
+        self.inner.type_section.replace(Section {
+            inner: xs,
+            index: self.index,
+        });
+        self.index += 1;
+        self
+    }
+    pub(crate) fn import_section(mut self, xs: Vec<Import>) -> Self {
+        self.inner.import_section.replace(Section {
+            inner: xs,
+            index: self.index,
+        });
+        self.index += 1;
+        self
+    }
+    pub(crate) fn function_section(mut self, xs: Vec<TypeIdx>) -> Self {
+        self.inner.function_section.replace(Section {
+            inner: xs,
+            index: self.index,
+        });
+        self.index += 1;
+        self
+    }
+    pub(crate) fn table_section(mut self, xs: Vec<TableType>) -> Self {
+        self.inner.table_section.replace(Section {
+            inner: xs,
+            index: self.index,
+        });
+        self.index += 1;
+        self
+    }
+    pub(crate) fn memory_section(mut self, xs: Vec<MemType>) -> Self {
+        self.inner.memory_section.replace(Section {
+            inner: xs,
+            index: self.index,
+        });
+        self.index += 1;
+        self
+    }
+    pub(crate) fn global_section(mut self, xs: Vec<Global>) -> Self {
+        self.inner.global_section.replace(Section {
+            inner: xs,
+            index: self.index,
+        });
+        self.index += 1;
+        self
+    }
+    pub(crate) fn export_section(mut self, xs: Vec<Export>) -> Self {
+        self.inner.export_section.replace(Section {
+            inner: xs,
+            index: self.index,
+        });
+        self.index += 1;
+        self
+    }
+    pub(crate) fn start_section(mut self, xs: FuncIdx) -> Self {
+        self.inner.start_section.replace(Section {
+            inner: xs,
+            index: self.index,
+        });
+        self.index += 1;
+        self
+    }
+    pub(crate) fn element_section(mut self, xs: Vec<Elem>) -> Self {
+        self.inner.element_section.replace(Section {
+            inner: xs,
+            index: self.index,
+        });
+        self.index += 1;
+        self
+    }
+    pub(crate) fn code_section(mut self, xs: Vec<Code>) -> Self {
+        self.inner.code_section.replace(Section {
+            inner: xs,
+            index: self.index,
+        });
+        self.index += 1;
+        self
+    }
+    pub(crate) fn data_section(mut self, xs: Vec<Data>) -> Self {
+        self.inner.data_section.replace(Section {
+            inner: xs,
+            index: self.index,
+        });
+        self.index += 1;
+        self
+    }
+    pub(crate) fn datacount_section(mut self, xs: u32) -> Self {
+        self.inner.datacount_section.replace(Section {
+            inner: xs,
+            index: self.index,
+        });
+        self.index += 1;
+        self
+    }
+
+    pub(crate) fn build(self) -> Module {
+        self.inner
+    }
 }
 
 impl Module {
     pub(crate) fn custom_sections(&self) -> impl Iterator<Item = &[u8]> {
-        self.sections.iter().filter_map(|xs| if let Section::Custom(xs) = xs {
-            Some(xs.as_slice())
-        } else {
-            None
-        })
+        self.custom_sections.iter().map(|xs| xs.inner.as_slice())
     }
 
     pub(crate) fn type_section(&self) -> Option<&[FuncType]> {
-        self.sections.iter().find_map(|xs| if let Section::Type(xs) = xs {
-            Some(xs.as_slice())
-        } else {
-            None
-        })
+        self.type_section.as_ref().map(|xs| xs.inner.as_slice())
     }
 
     pub(crate) fn import_section(&self) -> Option<&[Import]> {
-        self.sections.iter().find_map(|xs| if let Section::Import(xs) = xs {
-            Some(xs.as_slice())
-        } else {
-            None
-        })
+        self.import_section.as_ref().map(|xs| xs.inner.as_slice())
     }
 
     pub(crate) fn function_section(&self) -> Option<&[TypeIdx]> {
-        self.sections.iter().find_map(|xs| if let Section::Function(xs) = xs {
-            Some(xs.as_slice())
-        } else {
-            None
-        })
+        self.function_section.as_ref().map(|xs| xs.inner.as_slice())
     }
 
     pub(crate) fn table_section(&self) -> Option<&[TableType]> {
-        self.sections.iter().find_map(|xs| if let Section::Table(xs) = xs {
-            Some(xs.as_slice())
-        } else {
-            None
-        })
+        self.table_section.as_ref().map(|xs| xs.inner.as_slice())
     }
 
     pub(crate) fn memory_section(&self) -> Option<&[MemType]> {
-        self.sections.iter().find_map(|xs| if let Section::Memory(xs) = xs {
-            Some(xs.as_slice())
-        } else {
-            None
-        })
+        self.memory_section.as_ref().map(|xs| xs.inner.as_slice())
     }
 
-    pub(crate) fn global_section(&self) -> Option<(&GlobalType, &Expr)> {
-        self.sections.iter().find_map(|xs| if let Section::Global(xs, ys) = xs {
-            Some((xs, ys))
-        } else {
-            None
-        })
+    pub(crate) fn global_section(&self) -> Option<&[Global]> {
+        self.global_section.as_ref().map(|xs| xs.inner.as_slice())
     }
 
     pub(crate) fn export_section(&self) -> Option<&[Export]> {
-        self.sections.iter().find_map(|xs| if let Section::Export(xs) = xs {
-            Some(xs.as_slice())
-        } else {
-            None
-        })
+        self.export_section.as_ref().map(|xs| xs.inner.as_slice())
     }
 
     pub(crate) fn start_section(&self) -> Option<FuncIdx> {
-        self.sections.iter().find_map(|xs| if let Section::Start(xs) = xs {
-            Some(*xs)
-        } else {
-            None
-        })
+        self.start_section.as_ref().map(|xs| xs.inner)
     }
 
     pub(crate) fn element_section(&self) -> Option<&[Elem]> {
-        self.sections.iter().find_map(|xs| if let Section::Element(xs) = xs {
-            Some(xs.as_slice())
-        } else {
-            None
-        })
+        self.element_section.as_ref().map(|xs| xs.inner.as_slice())
     }
 
     pub(crate) fn code_section(&self) -> Option<&[Code]> {
-        self.sections.iter().find_map(|xs| if let Section::Code(xs) = xs {
-            Some(xs.as_slice())
-        } else {
-            None
-        })
+        self.code_section.as_ref().map(|xs| xs.inner.as_slice())
     }
-
     pub(crate) fn data_section(&self) -> Option<&[Data]> {
-        self.sections.iter().find_map(|xs| if let Section::Data(xs) = xs {
-            Some(xs.as_slice())
-        } else {
-            None
-        })
+        self.data_section.as_ref().map(|xs| xs.inner.as_slice())
     }
 
     pub(crate) fn datacount_section(&self) -> Option<u32> {
-        self.sections.iter().find_map(|xs| if let Section::DataCount(xs) = xs {
-            Some(*xs)
-        } else {
-            None
-        })
+        self.datacount_section.as_ref().map(|xs| xs.inner)
     }
 }

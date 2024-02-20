@@ -1,6 +1,6 @@
-use std::fmt::Debug;
 use nom::error::ParseError;
 use nom_locate::LocatedSpan;
+use std::fmt::Debug;
 
 use crate::nodes::*;
 
@@ -310,6 +310,18 @@ impl ParseWasmBinary for MemType {
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::combinator::map;
         map(Limits::from_wasm_bytes, MemType)(b)
+    }
+}
+
+impl ParseWasmBinary for Global {
+    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        input: Span<'a>,
+    ) -> nom::IResult<Span<'a>, Self, E> {
+        use nom::{combinator::map, sequence::tuple};
+        map(
+            tuple((GlobalType::from_wasm_bytes, Expr::from_wasm_bytes)),
+            |(x, y)| Global(x, y),
+        )(input)
     }
 }
 
@@ -1156,39 +1168,29 @@ impl ParseWasmBinary for Data {
     }
 }
 
-impl ParseWasmBinary for Section {
+impl ParseWasmBinary for SectionType {
     fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
-        use nom::{
-            bytes::complete::take,
-            combinator::{fail, map},
-            sequence::{pair, tuple},
-        };
+        use nom::{bytes::complete::take, combinator::fail, sequence::pair};
 
         let (input, (section_id, size)) = pair(take(1usize), u32::from_wasm_bytes)(input)?;
         let (input, section) = take(size as usize)(input)?;
 
         let section = match section_id[0] {
-            0x0 => Section::Custom(section.to_vec()),
-            0x1 => Section::Type(Vec::<FuncType>::from_wasm_bytes(section)?.1),
-            0x2 => Section::Import(Vec::<Import>::from_wasm_bytes(section)?.1),
-            0x3 => Section::Function(Vec::<TypeIdx>::from_wasm_bytes(section)?.1),
-            0x4 => Section::Table(Vec::<TableType>::from_wasm_bytes(section)?.1),
-            0x5 => Section::Memory(Vec::<MemType>::from_wasm_bytes(section)?.1),
-            0x6 => {
-                map(
-                    tuple((GlobalType::from_wasm_bytes, Expr::from_wasm_bytes)),
-                    |(x, y)| Section::Global(x, y),
-                )(section)?
-                .1
-            }
-            0x7 => Section::Export(Vec::<Export>::from_wasm_bytes(section)?.1),
-            0x8 => Section::Start(FuncIdx::from_wasm_bytes(section)?.1),
-            0x9 => Section::Element(Vec::<Elem>::from_wasm_bytes(section)?.1),
-            0xa => Section::Code(Vec::<Code>::from_wasm_bytes(section)?.1),
-            0xb => Section::Data(Vec::<Data>::from_wasm_bytes(section)?.1),
-            0xc => Section::DataCount(u32::from_wasm_bytes(section)?.1),
+            0x0 => SectionType::Custom(section.to_vec()),
+            0x1 => SectionType::Type(Vec::<FuncType>::from_wasm_bytes(section)?.1),
+            0x2 => SectionType::Import(Vec::<Import>::from_wasm_bytes(section)?.1),
+            0x3 => SectionType::Function(Vec::<TypeIdx>::from_wasm_bytes(section)?.1),
+            0x4 => SectionType::Table(Vec::<TableType>::from_wasm_bytes(section)?.1),
+            0x5 => SectionType::Memory(Vec::<MemType>::from_wasm_bytes(section)?.1),
+            0x6 => SectionType::Global(Vec::<Global>::from_wasm_bytes(section)?.1),
+            0x7 => SectionType::Export(Vec::<Export>::from_wasm_bytes(section)?.1),
+            0x8 => SectionType::Start(FuncIdx::from_wasm_bytes(section)?.1),
+            0x9 => SectionType::Element(Vec::<Elem>::from_wasm_bytes(section)?.1),
+            0xa => SectionType::Code(Vec::<Code>::from_wasm_bytes(section)?.1),
+            0xb => SectionType::Data(Vec::<Data>::from_wasm_bytes(section)?.1),
+            0xc => SectionType::DataCount(u32::from_wasm_bytes(section)?.1),
             _ => return fail::<_, Self, _>(section),
         };
 
@@ -1200,125 +1202,85 @@ impl ParseWasmBinary for Module {
     fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
-        use nom::{ combinator::fail, bytes::complete::tag };
+        use nom::{bytes::complete::tag, combinator::fail};
 
         let (mut input, _) = tag([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x0, 0x0])(input)?;
-        let mut sections = Vec::with_capacity(0xc);
 
+        let mut module_builder = ModuleBuilder::new();
         while !input.is_empty() {
             let section;
-            (input, section) = Section::from_wasm_bytes(input)?;
+            (input, section) = SectionType::from_wasm_bytes(input)?;
 
-            if !match &section {
-                Section::Custom(_) => false,
-                Section::Type(_) => matches!(sections.last(), Some(Section::Custom(_)) | None),
-                Section::Import(_) => matches!(sections.last(), Some(
-                    Section::Custom(_) |
-                    Section::Type(_)
-                ) | None),
-                Section::Function(_) => matches!(sections.last(), Some(
-                    Section::Custom(_) |
-                    Section::Type(_) |
-                    Section::Import(_)
-                ) | None),
-                Section::Table(_) => matches!(sections.last(), Some(
-                    Section::Custom(_) |
-                    Section::Type(_) |
-                    Section::Import(_) |
-                    Section::Function(_)
-                ) | None),
-                Section::Memory(_) => matches!(sections.last(), Some(
-                    Section::Custom(_) |
-                    Section::Type(_) |
-                    Section::Import(_) |
-                    Section::Function(_) |
-                    Section::Table(_)
-                ) | None),
-                Section::Global(_, _) => matches!(sections.last(), Some(
-                    Section::Custom(_) |
-                    Section::Type(_) |
-                    Section::Import(_) |
-                    Section::Function(_) |
-                    Section::Table(_) |
-                    Section::Memory(_)
-                ) | None),
-                Section::Export(_) => matches!(sections.last(), Some(
-                    Section::Custom(_) |
-                    Section::Type(_) |
-                    Section::Import(_) |
-                    Section::Function(_) |
-                    Section::Table(_) |
-                    Section::Memory(_) |
-                    Section::Global(_, _)
-                ) | None),
-                Section::Start(_) => matches!(sections.last(), Some(
-                    Section::Custom(_) |
-                    Section::Type(_) |
-                    Section::Import(_) |
-                    Section::Function(_) |
-                    Section::Table(_) |
-                    Section::Memory(_) |
-                    Section::Global(_, _) |
-                    Section::Export(_)
-                ) | None),
-                Section::Element(_) => matches!(sections.last(), Some(
-                    Section::Custom(_) |
-                    Section::Type(_) |
-                    Section::Import(_) |
-                    Section::Function(_) |
-                    Section::Table(_) |
-                    Section::Memory(_) |
-                    Section::Global(_, _) |
-                    Section::Export(_) |
-                    Section::Start(_)
-                ) | None),
-                Section::Code(_) => matches!(sections.last(), Some(
-                    Section::Custom(_) |
-                    Section::Type(_) |
-                    Section::Import(_) |
-                    Section::Function(_) |
-                    Section::Table(_) |
-                    Section::Memory(_) |
-                    Section::Global(_, _) |
-                    Section::Export(_) |
-                    Section::Start(_) |
-                    Section::Element(_)
-                ) | None),
-                Section::Data(_) => matches!(sections.last(), Some(
-                    Section::Custom(_) |
-                    Section::Type(_) |
-                    Section::Import(_) |
-                    Section::Function(_) |
-                    Section::Table(_) |
-                    Section::Memory(_) |
-                    Section::Global(_, _) |
-                    Section::Export(_) |
-                    Section::Start(_) |
-                    Section::Element(_) |
-                    Section::Code(_)
-                ) | None),
-                Section::DataCount(_) => matches!(sections.last(), Some(
-                    Section::Custom(_) |
-                    Section::Type(_) |
-                    Section::Import(_) |
-                    Section::Function(_) |
-                    Section::Table(_) |
-                    Section::Memory(_) |
-                    Section::Global(_, _) |
-                    Section::Export(_) |
-                    Section::Start(_) |
-                    Section::Element(_) |
-                    Section::Code(_) |
-                    Section::Data(_)
-                ) | None),
-            } {
-                return fail::<_, Self, _>(input)
+            match section {
+                SectionType::Custom(mut xs) => {
+                    xs.shrink_to_fit();
+                    module_builder = module_builder.custom_section(xs)
+                }
+
+                SectionType::Type(mut xs) => {
+                    xs.shrink_to_fit();
+                    module_builder = module_builder.type_section(xs);
+                }
+
+                SectionType::Import(mut xs) => {
+                    xs.shrink_to_fit();
+                    module_builder = module_builder.import_section(xs);
+                }
+
+                SectionType::Function(mut xs) => {
+                    xs.shrink_to_fit();
+                    module_builder = module_builder.function_section(xs);
+                }
+
+                SectionType::Table(mut xs) => {
+                    xs.shrink_to_fit();
+                    module_builder = module_builder.table_section(xs);
+                }
+
+                SectionType::Memory(mut xs) => {
+                    xs.shrink_to_fit();
+                    module_builder = module_builder.memory_section(xs);
+                }
+
+                SectionType::Global(mut xs) => {
+                    xs.shrink_to_fit();
+                    module_builder = module_builder.global_section(xs);
+                }
+
+                SectionType::Export(mut xs) => {
+                    xs.shrink_to_fit();
+                    module_builder = module_builder.export_section(xs);
+                }
+
+                SectionType::Start(xs) => {
+                    module_builder = module_builder.start_section(xs);
+                }
+
+                SectionType::Element(mut xs) => {
+                    xs.shrink_to_fit();
+                    module_builder = module_builder.element_section(xs);
+                }
+
+                SectionType::Code(mut xs) => {
+                    xs.shrink_to_fit();
+                    module_builder = module_builder.code_section(xs);
+                }
+
+                SectionType::Data(mut xs) => {
+                    xs.shrink_to_fit();
+                    module_builder = module_builder.data_section(xs);
+                }
+
+                SectionType::DataCount(xs) => {
+                    module_builder = module_builder.datacount_section(xs);
+                }
+
+                _ => return fail::<_, Self, _>(input),
             }
-
-            sections.push(section);
         }
 
-        Ok((input, Module { sections }))
+        let module = module_builder.build();
+        Ok((input, module))
     }
 }
 
@@ -1437,33 +1399,33 @@ mod test {
             Module::from_wasm_bytes::<nom::error::VerboseError<Span>>(Span::new(bytes)).unwrap();
 
         assert!(input.is_empty());
-        assert_eq!(
-            wasm,
-            Module {
-                sections: vec![
-                    Section::Type(vec![FuncType(
-                        ResultType(vec![
-                            ValType::NumType(NumType::I32),
-                            ValType::NumType(NumType::I32),
-                        ],),
-                        ResultType(vec![ValType::NumType(NumType::I32),],),
-                    ),],),
-                    Section::Function(vec![TypeIdx(0,),],),
-                    Section::Memory(vec![MemType(Limits::Min(64))]),
-                    Section::Export(vec![Export {
-                        nm: Name("add_i32".to_string(),),
-                        desc: ExportDesc::Func(TypeIdx(0,),),
-                    },],),
-                    Section::Code(vec![Code(Func {
-                        locals: vec![],
-                        expr: Expr(vec![
-                            Instr::LocalGet(LocalIdx(0,),),
-                            Instr::LocalGet(LocalIdx(1,),),
-                            Instr::I32Add,
-                        ],),
-                    },),],),
-                ],
-            }
-        );
+
+        let cmp = ModuleBuilder::new()
+            .type_section(vec![FuncType(
+                ResultType(vec![
+                    ValType::NumType(NumType::I32),
+                    ValType::NumType(NumType::I32),
+                ]),
+                ResultType(vec![ValType::NumType(NumType::I32)]),
+            )])
+            .function_section(vec![TypeIdx(0)])
+            .memory_section(vec![MemType(Limits::Min(64))])
+            .export_section(vec![Export {
+                nm: Name("add_i32".to_string()),
+                desc: ExportDesc::Func(TypeIdx(0)),
+            }])
+            .code_section(vec![Code(Func {
+                locals: vec![],
+                expr: Expr(vec![
+                    Instr::LocalGet(LocalIdx(0)),
+                    Instr::LocalGet(LocalIdx(1)),
+                    Instr::I32Add,
+                ]),
+            })])
+            .build();
+
+        // XXX future chris, turn this into a struct with fields instead of a struct with one big
+        // "sections" vec
+        assert_eq!(wasm, cmp);
     }
 }
