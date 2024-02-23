@@ -1,6 +1,7 @@
 use nom::error::ParseError;
 use nom_locate::LocatedSpan;
 use std::fmt::Debug;
+use core::ops::Deref;
 
 use crate::nodes::*;
 
@@ -8,8 +9,8 @@ type Span<'a> = LocatedSpan<&'a [u8]>;
 
 macro_rules! impl_parse_for_newtype {
     ($type:ident, $innertype:ident) => {
-        impl ParseWasmBinary for $type {
-            fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        impl<'a> ParseWasmBinary<'a> for $type {
+            fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
                 input: Span<'a>,
             ) -> nom::IResult<Span<'a>, Self, E> {
                 use nom::combinator::map;
@@ -19,14 +20,14 @@ macro_rules! impl_parse_for_newtype {
     };
 }
 
-pub(crate) trait ParseWasmBinary: Sized {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+pub(crate) trait ParseWasmBinary<'a>: Sized {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E>;
 }
 
-impl<T: ParseWasmBinary> ParseWasmBinary for Vec<T> {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a, T: ParseWasmBinary<'a>> ParseWasmBinary<'a> for Vec<T> {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         let (mut rest, sz) = <u32 as ParseWasmBinary>::from_wasm_bytes(b)?;
@@ -40,19 +41,19 @@ impl<T: ParseWasmBinary> ParseWasmBinary for Vec<T> {
     }
 }
 
-impl ParseWasmBinary for ByteVec {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for ByteVec<'a> {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::take;
         let (input, sz) = <u32 as ParseWasmBinary>::from_wasm_bytes(input)?;
         let (input, span) = take(sz as usize)(input)?;
-        Ok((input, ByteVec(span.to_vec())))
+        Ok((input, ByteVec(span.deref())))
     }
 }
 
-impl ParseWasmBinary for String {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for &'a str {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::take;
@@ -62,15 +63,15 @@ impl ParseWasmBinary for String {
             return nom::combinator::fail(input);
         };
 
-        Ok((input, xs.to_string()))
+        Ok((input, xs))
     }
 }
 
-impl ParseWasmBinary for Name {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Name<'a> {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
-        let (input, sz) = String::from_wasm_bytes(input)?;
+        let (input, sz) = <&'a str>::from_wasm_bytes(input)?;
 
         Ok((input, Name(sz)))
     }
@@ -78,8 +79,8 @@ impl ParseWasmBinary for Name {
 
 macro_rules! parse_leb128 {
     ($type:ident, signed) => {
-        impl ParseWasmBinary for $type {
-            fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        impl<'a> ParseWasmBinary<'a> for $type {
+            fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
                 input: Span<'a>,
             ) -> nom::IResult<Span<'a>, Self, E> {
                 use nom::{
@@ -112,8 +113,8 @@ macro_rules! parse_leb128 {
     };
 
     ($type:ident, unsigned) => {
-        impl ParseWasmBinary for $type {
-            fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+        impl<'a> ParseWasmBinary<'a> for $type {
+            fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
                 input: Span<'a>,
             ) -> nom::IResult<Span<'a>, Self, E> {
                 use nom::{
@@ -147,8 +148,8 @@ parse_leb128!(i64, signed);
 parse_leb128!(u32, unsigned);
 parse_leb128!(u64, unsigned);
 
-impl ParseWasmBinary for f32 {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for f32 {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::number::complete::le_f32;
@@ -156,8 +157,8 @@ impl ParseWasmBinary for f32 {
     }
 }
 
-impl ParseWasmBinary for f64 {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for f64 {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::number::complete::le_f64;
@@ -165,8 +166,8 @@ impl ParseWasmBinary for f64 {
     }
 }
 
-impl ParseWasmBinary for NumType {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for NumType {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::take;
@@ -191,8 +192,8 @@ impl ParseWasmBinary for NumType {
     }
 }
 
-impl ParseWasmBinary for VecType {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for VecType {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::take;
@@ -214,8 +215,8 @@ impl ParseWasmBinary for VecType {
     }
 }
 
-impl ParseWasmBinary for RefType {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for RefType {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::take;
@@ -238,8 +239,8 @@ impl ParseWasmBinary for RefType {
     }
 }
 
-impl ParseWasmBinary for ValType {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for ValType {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{branch::alt, combinator::map};
@@ -252,8 +253,8 @@ impl ParseWasmBinary for ValType {
     }
 }
 
-impl ParseWasmBinary for ResultType {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for ResultType {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::combinator::map;
@@ -261,8 +262,8 @@ impl ParseWasmBinary for ResultType {
     }
 }
 
-impl ParseWasmBinary for FuncType {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for FuncType {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{
@@ -280,8 +281,8 @@ impl ParseWasmBinary for FuncType {
     }
 }
 
-impl ParseWasmBinary for Limits {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Limits {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{
@@ -304,8 +305,8 @@ impl ParseWasmBinary for Limits {
     }
 }
 
-impl ParseWasmBinary for MemType {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for MemType {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::combinator::map;
@@ -313,8 +314,8 @@ impl ParseWasmBinary for MemType {
     }
 }
 
-impl ParseWasmBinary for Global {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Global {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{combinator::map, sequence::tuple};
@@ -325,8 +326,8 @@ impl ParseWasmBinary for Global {
     }
 }
 
-impl ParseWasmBinary for TableType {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for TableType {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{combinator::map, sequence::tuple};
@@ -337,8 +338,8 @@ impl ParseWasmBinary for TableType {
     }
 }
 
-impl ParseWasmBinary for Mutability {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Mutability {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::take;
@@ -361,8 +362,8 @@ impl ParseWasmBinary for Mutability {
     }
 }
 
-impl ParseWasmBinary for GlobalType {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for GlobalType {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{combinator::map, sequence::tuple};
@@ -373,8 +374,8 @@ impl ParseWasmBinary for GlobalType {
     }
 }
 
-impl ParseWasmBinary for BlockType {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for BlockType {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{branch::alt, bytes::complete::tag, combinator::map};
@@ -393,8 +394,8 @@ impl ParseWasmBinary for BlockType {
     }
 }
 
-impl ParseWasmBinary for MemArg {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for MemArg {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{combinator::map, sequence::tuple};
@@ -893,8 +894,8 @@ fn numeric_instrs<'a, E: Debug + ParseError<Span<'a>>>(
     ))(input)
 }
 
-impl ParseWasmBinary for Instr {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Instr {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::branch::alt;
@@ -911,8 +912,8 @@ impl ParseWasmBinary for Instr {
     }
 }
 
-impl ParseWasmBinary for Expr {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Expr {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{bytes::complete::tag, combinator::map, multi::many1, sequence::terminated};
@@ -931,8 +932,8 @@ impl_parse_for_newtype!(DataIdx, u32);
 impl_parse_for_newtype!(LocalIdx, u32);
 impl_parse_for_newtype!(LabelIdx, u32);
 
-impl ParseWasmBinary for Import {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Import<'a> {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{combinator::map, sequence::tuple};
@@ -948,8 +949,8 @@ impl ParseWasmBinary for Import {
     }
 }
 
-impl ParseWasmBinary for ImportDesc {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for ImportDesc {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::preceded};
@@ -975,8 +976,8 @@ impl ParseWasmBinary for ImportDesc {
     }
 }
 
-impl ParseWasmBinary for Export {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Export<'a> {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{combinator::map, sequence::tuple};
@@ -988,8 +989,8 @@ impl ParseWasmBinary for Export {
     }
 }
 
-impl ParseWasmBinary for ExportDesc {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for ExportDesc {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::preceded};
@@ -1015,8 +1016,8 @@ impl ParseWasmBinary for ExportDesc {
     }
 }
 
-impl ParseWasmBinary for Elem {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Elem {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{combinator::map, sequence::tuple};
@@ -1086,8 +1087,8 @@ impl ParseWasmBinary for Elem {
     }
 }
 
-impl ParseWasmBinary for Local {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Local {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{combinator::map, sequence::tuple};
@@ -1099,8 +1100,8 @@ impl ParseWasmBinary for Local {
     }
 }
 
-impl ParseWasmBinary for Func {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Func {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{combinator::map, sequence::tuple};
@@ -1112,8 +1113,8 @@ impl ParseWasmBinary for Func {
     }
 }
 
-impl ParseWasmBinary for Code {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Code {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{bytes::complete::take, combinator::fail};
@@ -1130,8 +1131,8 @@ impl ParseWasmBinary for Code {
     }
 }
 
-impl ParseWasmBinary for Data {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Data<'a> {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{
@@ -1168,8 +1169,8 @@ impl ParseWasmBinary for Data {
     }
 }
 
-impl ParseWasmBinary for SectionType {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for SectionType<'a> {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{bytes::complete::take, combinator::fail, sequence::pair};
@@ -1178,7 +1179,7 @@ impl ParseWasmBinary for SectionType {
         let (input, section) = take(size as usize)(input)?;
 
         let section = match section_id[0] {
-            0x0 => SectionType::Custom(section.to_vec()),
+            0x0 => SectionType::Custom(&section[..]),
             0x1 => SectionType::Type(Vec::<FuncType>::from_wasm_bytes(section)?.1),
             0x2 => SectionType::Import(Vec::<Import>::from_wasm_bytes(section)?.1),
             0x3 => SectionType::Function(Vec::<TypeIdx>::from_wasm_bytes(section)?.1),
@@ -1198,8 +1199,8 @@ impl ParseWasmBinary for SectionType {
     }
 }
 
-impl ParseWasmBinary for Module {
-    fn from_wasm_bytes<'a, E: Debug + ParseError<Span<'a>>>(
+impl<'a> ParseWasmBinary<'a> for Module<'a> {
+    fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{bytes::complete::tag, combinator::fail};
@@ -1212,8 +1213,7 @@ impl ParseWasmBinary for Module {
             (input, section) = SectionType::from_wasm_bytes(input)?;
 
             match section {
-                SectionType::Custom(mut xs) => {
-                    xs.shrink_to_fit();
+                SectionType::Custom(xs) => {
                     module_builder = module_builder.custom_section(xs)
                 }
 
@@ -1378,7 +1378,7 @@ mod test {
     }
 
     #[test]
-    fn test_read_string() {
+    fn test_read_str() {
         use leb128;
         let xs = "hello world!";
         let mut v = Vec::new();
@@ -1386,9 +1386,9 @@ mod test {
         write!(&mut v, "{}", xs).unwrap();
 
         let (rest, v) =
-            String::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
+            <&str>::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
         assert_eq!(v, "hello world!");
-        assert_eq!(&rest[..], []);
+        assert_eq!(&rest[..], &[] as &[u8]);
     }
 
     #[test]
@@ -1411,7 +1411,7 @@ mod test {
             .function_section(vec![TypeIdx(0)])
             .memory_section(vec![MemType(Limits::Min(64))])
             .export_section(vec![Export {
-                nm: Name("add_i32".to_string()),
+                nm: Name("add_i32"),
                 desc: ExportDesc::Func(TypeIdx(0)),
             }])
             .code_section(vec![Code(Func {

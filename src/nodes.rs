@@ -1,9 +1,9 @@
 use std::fmt::Debug;
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) struct ByteVec(pub(crate) Vec<u8>);
+pub(crate) struct ByteVec<'a>(pub(crate) &'a [u8]);
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) struct Name(pub(crate) String);
+pub(crate) struct Name<'a>(pub(crate) &'a str);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum NumType {
@@ -85,8 +85,27 @@ pub(crate) enum BlockType {
     TypeIndex(i32),
 }
 
+/// # MemArg
+///
+/// A memarg comprises two elements: an offset and an alignment.
+///
+/// The multiple memory proposal extends this with a memory index.
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct MemArg(pub(crate) u32, pub(crate) u32);
+
+impl MemArg {
+    pub(crate) fn memidx(&self) -> usize {
+        0
+    }
+
+    pub(crate) fn offset(&self) -> usize {
+        self.1 as usize
+    }
+
+    pub(crate) fn align(&self) -> usize {
+        self.0 as usize
+    }
+}
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Instr {
@@ -323,9 +342,9 @@ pub(crate) struct LocalIdx(pub(crate) u32);
 pub(crate) struct LabelIdx(pub(crate) u32);
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) struct Import {
-    pub(crate) r#mod: Name,
-    pub(crate) nm: Name,
+pub(crate) struct Import<'a> {
+    pub(crate) r#mod: Name<'a>,
+    pub(crate) nm: Name<'a>,
     pub(crate) desc: ImportDesc,
 }
 
@@ -338,8 +357,8 @@ pub(crate) enum ImportDesc {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) struct Export {
-    pub(crate) nm: Name,
+pub(crate) struct Export<'a> {
+    pub(crate) nm: Name<'a>,
     pub(crate) desc: ExportDesc,
 }
 
@@ -379,25 +398,25 @@ pub(crate) struct Func {
 pub(crate) struct Code(pub(crate) Func);
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) enum Data {
-    Active(ByteVec, MemIdx, Expr),
-    Passive(ByteVec),
+pub(crate) enum Data<'a> {
+    Active(ByteVec<'a>, MemIdx, Expr),
+    Passive(ByteVec<'a>),
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) enum SectionType {
-    Custom(Vec<u8>),
+pub(crate) enum SectionType<'a> {
+    Custom(&'a [u8]),
     Type(Vec<FuncType>),
-    Import(Vec<Import>),
+    Import(Vec<Import<'a>>),
     Function(Vec<TypeIdx>),
     Table(Vec<TableType>),
     Memory(Vec<MemType>),
     Global(Vec<Global>),
-    Export(Vec<Export>),
+    Export(Vec<Export<'a>>),
     Start(FuncIdx),
     Element(Vec<Elem>),
     Code(Vec<Code>),
-    Data(Vec<Data>),
+    Data(Vec<Data<'a>>),
     DataCount(u32),
 }
 
@@ -408,28 +427,28 @@ pub(crate) struct Section<T: Debug + PartialEq + Clone> {
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
-pub(crate) struct Module {
-    pub(crate) custom_sections: Vec<Section<Vec<u8>>>,
+pub(crate) struct Module<'a> {
+    pub(crate) custom_sections: Vec<Section<&'a [u8]>>,
     pub(crate) type_section: Option<Section<Vec<FuncType>>>,
-    pub(crate) import_section: Option<Section<Vec<Import>>>,
+    pub(crate) import_section: Option<Section<Vec<Import<'a>>>>,
     pub(crate) function_section: Option<Section<Vec<TypeIdx>>>,
     pub(crate) table_section: Option<Section<Vec<TableType>>>,
     pub(crate) memory_section: Option<Section<Vec<MemType>>>,
     pub(crate) global_section: Option<Section<Vec<Global>>>,
-    pub(crate) export_section: Option<Section<Vec<Export>>>,
+    pub(crate) export_section: Option<Section<Vec<Export<'a>>>>,
     pub(crate) start_section: Option<Section<FuncIdx>>,
     pub(crate) element_section: Option<Section<Vec<Elem>>>,
     pub(crate) code_section: Option<Section<Vec<Code>>>,
-    pub(crate) data_section: Option<Section<Vec<Data>>>,
+    pub(crate) data_section: Option<Section<Vec<Data<'a>>>>,
     pub(crate) datacount_section: Option<Section<u32>>,
 }
 
-pub struct ModuleBuilder {
-    inner: Module,
+pub struct ModuleBuilder<'a> {
+    inner: Module<'a>,
     index: usize,
 }
 
-impl ModuleBuilder {
+impl<'a> ModuleBuilder<'a> {
     pub(crate) fn new() -> Self {
         Self {
             inner: Default::default(),
@@ -437,7 +456,7 @@ impl ModuleBuilder {
         }
     }
 
-    pub(crate) fn custom_section(mut self, v: Vec<u8>) -> Self {
+    pub(crate) fn custom_section(mut self, v: &'a [u8]) -> Self {
         self.inner.custom_sections.push(Section {
             inner: v,
             index: self.index,
@@ -453,7 +472,7 @@ impl ModuleBuilder {
         self.index += 1;
         self
     }
-    pub(crate) fn import_section(mut self, xs: Vec<Import>) -> Self {
+    pub(crate) fn import_section(mut self, xs: Vec<Import<'a>>) -> Self {
         self.inner.import_section.replace(Section {
             inner: xs,
             index: self.index,
@@ -493,7 +512,7 @@ impl ModuleBuilder {
         self.index += 1;
         self
     }
-    pub(crate) fn export_section(mut self, xs: Vec<Export>) -> Self {
+    pub(crate) fn export_section(mut self, xs: Vec<Export<'a>>) -> Self {
         self.inner.export_section.replace(Section {
             inner: xs,
             index: self.index,
@@ -525,7 +544,7 @@ impl ModuleBuilder {
         self.index += 1;
         self
     }
-    pub(crate) fn data_section(mut self, xs: Vec<Data>) -> Self {
+    pub(crate) fn data_section(mut self, xs: Vec<Data<'a>>) -> Self {
         self.inner.data_section.replace(Section {
             inner: xs,
             index: self.index,
@@ -542,14 +561,14 @@ impl ModuleBuilder {
         self
     }
 
-    pub(crate) fn build(self) -> Module {
+    pub(crate) fn build(self) -> Module<'a> {
         self.inner
     }
 }
 
-impl Module {
+impl<'a> Module<'a> {
     pub(crate) fn custom_sections(&self) -> impl Iterator<Item = &[u8]> {
-        self.custom_sections.iter().map(|xs| xs.inner.as_slice())
+        self.custom_sections.iter().map(|xs| xs.inner)
     }
 
     pub(crate) fn type_section(&self) -> Option<&[FuncType]> {
