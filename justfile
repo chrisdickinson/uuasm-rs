@@ -220,9 +220,11 @@ setup_tests:
       ;;
     esac
 
-    if [ "$mod" == "address" ]; then
-      echo "mod $mod;" >> src/testsuite/mod.rs
-    fi
+    case "$mod" in
+      "address"|"call"|"block"|"names")
+        echo "mod $mod;" >> src/testsuite/mod.rs
+      ;;
+    esac
   done
 
 test:

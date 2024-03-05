@@ -1,5 +1,7 @@
-
-use std::{alloc::{self, Layout}, slice::{from_raw_parts, from_raw_parts_mut}};
+use std::{
+    alloc::{self, Layout},
+    slice::{from_raw_parts, from_raw_parts_mut},
+};
 
 use crate::nodes::Limits;
 
@@ -12,7 +14,7 @@ pub(crate) struct MemoryRegion {
     bytes: *mut u8,
     page_count: usize,
     layout: Layout,
-    limits: (usize, usize)
+    limits: (usize, usize),
 }
 
 impl MemoryRegion {
@@ -26,12 +28,12 @@ impl MemoryRegion {
             bytes,
             page_count,
             layout,
-            limits: (page_count, max_page_count)
+            limits: (page_count, max_page_count),
         }
     }
 
     pub fn len(&self) -> usize {
-        return self.page_count << PAGE_SHIFT
+        return self.page_count << PAGE_SHIFT;
     }
 
     pub(crate) fn as_slice(&self) -> &[u8] {
@@ -40,6 +42,10 @@ impl MemoryRegion {
 
     pub(crate) fn as_mut_slice(&mut self) -> &mut [u8] {
         unsafe { from_raw_parts_mut(self.bytes, self.page_count << PAGE_SHIFT) }
+    }
+
+    pub(crate) fn write<const U: usize>(&self, addr: usize, value: &[u8; U]) {
+        unsafe { std::ptr::copy_nonoverlapping(value.as_ptr(), self.bytes.wrapping_add(addr), U); }
     }
 
     pub(crate) fn copy_data(&mut self, data: &[u8], offset: usize) -> anyhow::Result<()> {
@@ -54,11 +60,14 @@ impl MemoryRegion {
 
     pub(crate) fn grow(&mut self, page_count: usize) -> anyhow::Result<()> {
         if page_count <= self.page_count {
-            return Ok(())
+            return Ok(());
         }
 
         if page_count >= self.limits.1 {
-            anyhow::bail!("cannot allocate more than max limit of memory ({} pages)", self.limits.1);
+            anyhow::bail!(
+                "cannot allocate more than max limit of memory ({} pages)",
+                self.limits.1
+            );
         }
 
         if page_count >= LAST_PAGE {

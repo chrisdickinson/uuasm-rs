@@ -1,7 +1,7 @@
+use core::ops::Deref;
 use nom::error::ParseError;
 use nom_locate::LocatedSpan;
 use std::fmt::Debug;
-use core::ops::Deref;
 
 use crate::nodes::*;
 
@@ -26,7 +26,7 @@ pub(crate) trait ParseWasmBinary<'a>: Sized {
     ) -> nom::IResult<Span<'a>, Self, E>;
 }
 
-impl<'a, T: ParseWasmBinary<'a>> ParseWasmBinary<'a> for Vec<T> {
+impl<'a, T: Debug + ParseWasmBinary<'a>> ParseWasmBinary<'a> for Vec<T> {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
@@ -262,7 +262,7 @@ impl<'a> ParseWasmBinary<'a> for ResultType {
     }
 }
 
-impl<'a> ParseWasmBinary<'a> for FuncType {
+impl<'a> ParseWasmBinary<'a> for Type {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
@@ -276,7 +276,7 @@ impl<'a> ParseWasmBinary<'a> for FuncType {
                 tag([0x60]),
                 tuple((ResultType::from_wasm_bytes, ResultType::from_wasm_bytes)),
             ),
-            |(args, rets)| FuncType(args, rets),
+            |(args, rets)| Type(args, rets),
         )(b)
     }
 }
@@ -413,8 +413,9 @@ fn control_instrs<'a, E: Debug + ParseError<Span<'a>>>(
     use nom::{
         branch::alt,
         bytes::complete::tag,
-        combinator::map,
-        sequence::{delimited, preceded, tuple},
+        combinator::{map, opt},
+        multi::many0,
+        sequence::{delimited, preceded, terminated, tuple},
     };
     alt((
         map(tag([0x00]), |_| Instr::Unreachable),
@@ -422,7 +423,7 @@ fn control_instrs<'a, E: Debug + ParseError<Span<'a>>>(
         map(
             delimited(
                 tag([0x02]),
-                tuple((BlockType::from_wasm_bytes, Vec::<Instr>::from_wasm_bytes)),
+                tuple((BlockType::from_wasm_bytes, many0(Instr::from_wasm_bytes))),
                 tag([0x0b]),
             ),
             |(bt, ins)| Instr::Block(bt, ins),
@@ -430,7 +431,7 @@ fn control_instrs<'a, E: Debug + ParseError<Span<'a>>>(
         map(
             delimited(
                 tag([0x03]),
-                tuple((BlockType::from_wasm_bytes, Vec::<Instr>::from_wasm_bytes)),
+                tuple((BlockType::from_wasm_bytes, many0(Instr::from_wasm_bytes))),
                 tag([0x0b]),
             ),
             |(bt, ins)| Instr::Loop(bt, ins),
@@ -440,21 +441,15 @@ fn control_instrs<'a, E: Debug + ParseError<Span<'a>>>(
                 tag([0x04]),
                 tuple((
                     BlockType::from_wasm_bytes,
-                    Vec::<Instr>::from_wasm_bytes,
-                    tag([0x05]),
-                    Vec::<Instr>::from_wasm_bytes,
+                    many0(Instr::from_wasm_bytes),
+                    opt(preceded(tag([0x05]), many0(Instr::from_wasm_bytes))),
                 )),
                 tag([0x0b]),
             ),
-            |(bt, consequent, _, alternate)| Instr::IfElse(bt, consequent, alternate),
-        ),
-        map(
-            delimited(
-                tag([0x04]),
-                tuple((BlockType::from_wasm_bytes, Vec::<Instr>::from_wasm_bytes)),
-                tag([0x0b]),
-            ),
-            |(bt, consequent)| Instr::If(bt, consequent),
+            |(bt, consequent, alternate)| match alternate {
+                Some(alternate) => Instr::IfElse(bt, consequent, alternate),
+                None => Instr::If(bt, consequent),
+            },
         ),
         map(preceded(tag([0x0c]), LabelIdx::from_wasm_bytes), Instr::Br),
         map(
@@ -997,7 +992,7 @@ impl<'a> ParseWasmBinary<'a> for ExportDesc {
 
         alt((
             map(
-                preceded(tag([0x00]), TypeIdx::from_wasm_bytes),
+                preceded(tag([0x00]), FuncIdx::from_wasm_bytes),
                 ExportDesc::Func,
             ),
             map(
@@ -1180,7 +1175,7 @@ impl<'a> ParseWasmBinary<'a> for SectionType<'a> {
 
         let section = match section_id[0] {
             0x0 => SectionType::Custom(&section[..]),
-            0x1 => SectionType::Type(Vec::<FuncType>::from_wasm_bytes(section)?.1),
+            0x1 => SectionType::Type(Vec::<Type>::from_wasm_bytes(section)?.1),
             0x2 => SectionType::Import(Vec::<Import>::from_wasm_bytes(section)?.1),
             0x3 => SectionType::Function(Vec::<TypeIdx>::from_wasm_bytes(section)?.1),
             0x4 => SectionType::Table(Vec::<TableType>::from_wasm_bytes(section)?.1),
@@ -1213,9 +1208,7 @@ impl<'a> ParseWasmBinary<'a> for Module<'a> {
             (input, section) = SectionType::from_wasm_bytes(input)?;
 
             match section {
-                SectionType::Custom(xs) => {
-                    module_builder = module_builder.custom_section(xs)
-                }
+                SectionType::Custom(xs) => module_builder = module_builder.custom_section(xs),
 
                 SectionType::Type(mut xs) => {
                     xs.shrink_to_fit();
@@ -1401,7 +1394,7 @@ mod test {
         assert!(input.is_empty());
 
         let cmp = ModuleBuilder::new()
-            .type_section(vec![FuncType(
+            .type_section(vec![Type(
                 ResultType(vec![
                     ValType::NumType(NumType::I32),
                     ValType::NumType(NumType::I32),
@@ -1412,7 +1405,7 @@ mod test {
             .memory_section(vec![MemType(Limits::Min(64))])
             .export_section(vec![Export {
                 nm: Name("add_i32"),
-                desc: ExportDesc::Func(TypeIdx(0)),
+                desc: ExportDesc::Func(FuncIdx(0)),
             }])
             .code_section(vec![Code(Func {
                 locals: vec![],

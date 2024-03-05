@@ -36,7 +36,7 @@ pub(crate) enum ValType {
 pub(crate) struct ResultType(pub(crate) Vec<ValType>);
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) struct FuncType(pub(crate) ResultType, pub(crate) ResultType);
+pub(crate) struct Type(pub(crate) ResultType, pub(crate) ResultType);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum Limits {
@@ -324,20 +324,31 @@ pub(crate) struct Expr(pub(crate) Vec<Instr>);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct TypeIdx(pub(crate) u32);
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct FuncIdx(pub(crate) u32);
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub(crate) struct CodeIdx(pub(crate) u32);
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct TableIdx(pub(crate) u32);
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct MemIdx(pub(crate) u32);
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct GlobalIdx(pub(crate) u32);
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct ElemIdx(pub(crate) u32);
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct DataIdx(pub(crate) u32);
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct LocalIdx(pub(crate) u32);
+
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) struct LabelIdx(pub(crate) u32);
 
@@ -364,7 +375,7 @@ pub(crate) struct Export<'a> {
 
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum ExportDesc {
-    Func(TypeIdx),
+    Func(FuncIdx),
     Table(TableType),
     Mem(MemType),
     Global(GlobalType),
@@ -406,7 +417,7 @@ pub(crate) enum Data<'a> {
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum SectionType<'a> {
     Custom(&'a [u8]),
-    Type(Vec<FuncType>),
+    Type(Vec<Type>),
     Import(Vec<Import<'a>>),
     Function(Vec<TypeIdx>),
     Table(Vec<TableType>),
@@ -429,7 +440,7 @@ pub(crate) struct Section<T: Debug + PartialEq + Clone> {
 #[derive(Debug, PartialEq, Clone, Default)]
 pub(crate) struct Module<'a> {
     pub(crate) custom_sections: Vec<Section<&'a [u8]>>,
-    pub(crate) type_section: Option<Section<Vec<FuncType>>>,
+    pub(crate) type_section: Option<Section<Vec<Type>>>,
     pub(crate) import_section: Option<Section<Vec<Import<'a>>>>,
     pub(crate) function_section: Option<Section<Vec<TypeIdx>>>,
     pub(crate) table_section: Option<Section<Vec<TableType>>>,
@@ -464,7 +475,7 @@ impl<'a> ModuleBuilder<'a> {
         self.index += 1;
         self
     }
-    pub(crate) fn type_section(mut self, xs: Vec<FuncType>) -> Self {
+    pub(crate) fn type_section(mut self, xs: Vec<Type>) -> Self {
         self.inner.type_section.replace(Section {
             inner: xs,
             index: self.index,
@@ -571,7 +582,7 @@ impl<'a> Module<'a> {
         self.custom_sections.iter().map(|xs| xs.inner)
     }
 
-    pub(crate) fn type_section(&self) -> Option<&[FuncType]> {
+    pub(crate) fn type_section(&self) -> Option<&[Type]> {
         self.type_section.as_ref().map(|xs| xs.inner.as_slice())
     }
 
