@@ -524,11 +524,11 @@ fn variable_instrs<'a, E: Debug + ParseError<Span<'a>>>(
             Instr::LocalTee,
         ),
         map(
-            preceded(tag([0x23]), LocalIdx::from_wasm_bytes),
+            preceded(tag([0x23]), GlobalIdx::from_wasm_bytes),
             Instr::GlobalGet,
         ),
         map(
-            preceded(tag([0x24]), LocalIdx::from_wasm_bytes),
+            preceded(tag([0x24]), GlobalIdx::from_wasm_bytes),
             Instr::GlobalSet,
         ),
     ))(b)
@@ -911,9 +911,9 @@ impl<'a> ParseWasmBinary<'a> for Expr {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
-        use nom::{bytes::complete::tag, combinator::map, multi::many1, sequence::terminated};
+        use nom::{bytes::complete::tag, combinator::map, multi::many0, sequence::terminated};
 
-        map(terminated(many1(Instr::from_wasm_bytes), tag([0x0b])), Expr)(b)
+        map(terminated(many0(Instr::from_wasm_bytes), tag([0x0b])), Expr)(b)
     }
 }
 

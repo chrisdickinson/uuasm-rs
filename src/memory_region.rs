@@ -58,9 +58,9 @@ impl MemoryRegion {
         Ok(())
     }
 
-    pub(crate) fn grow(&mut self, page_count: usize) -> anyhow::Result<()> {
+    pub(crate) fn grow(&mut self, page_count: usize) -> anyhow::Result<usize> {
         if page_count <= self.page_count {
-            return Ok(());
+            return Ok(self.page_count);
         }
 
         if page_count >= self.limits.1 {
@@ -76,8 +76,9 @@ impl MemoryRegion {
 
         self.layout = Layout::from_size_align(page_count << PAGE_SHIFT, PAGE_SIZE).unwrap();
         self.bytes = unsafe { alloc::realloc(self.bytes, self.layout, page_count << PAGE_SHIFT) };
+        let old_page_count = self.page_count;
         self.page_count = page_count;
-        Ok(())
+        Ok(old_page_count)
     }
 }
 

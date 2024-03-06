@@ -137,8 +137,8 @@ pub(crate) enum Instr {
     LocalGet(LocalIdx),
     LocalSet(LocalIdx),
     LocalTee(LocalIdx),
-    GlobalGet(LocalIdx),
-    GlobalSet(LocalIdx),
+    GlobalGet(GlobalIdx),
+    GlobalSet(GlobalIdx),
 
     // Table Instructions
     TableGet(TableIdx),
