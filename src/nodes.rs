@@ -82,7 +82,7 @@ pub(crate) struct Global(pub(crate) GlobalType, pub(crate) Expr);
 pub(crate) enum BlockType {
     Empty,
     Val(ValType),
-    TypeIndex(i32),
+    TypeIndex(TypeIdx),
 }
 
 /// # MemArg

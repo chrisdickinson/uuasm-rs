@@ -388,7 +388,7 @@ impl<'a> ParseWasmBinary<'a> for BlockType {
                     todo!("we do not allow this index");
                 }
 
-                BlockType::TypeIndex(idx as i32)
+                BlockType::TypeIndex(TypeIdx(idx as u32))
             }),
         ))(b)
     }
