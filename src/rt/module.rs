@@ -1,11 +1,11 @@
 use anyhow::Context;
 use std::collections::HashMap;
 
-use crate::nodes::{ ImportDesc, Module as ParsedModule, Global, Expr, Instr, GlobalIdx, FuncIdx, Data, Elem, CodeIdx, TypeIdx, Type, Code };
+use crate::nodes::{ ImportDesc, Module as ParsedModule, Global, Expr, Instr, GlobalIdx, FuncIdx, Data, Elem, CodeIdx, TypeIdx, Type, Code, Export };
 
-use super::{imports::Imports, instance::ModuleInstance, global::GlobalInst, TKTK, value::Value, function::FuncInst, memory::MemInst, table::TableInst};
+use super::{imports::{Imports, GuestIndex}, instance::ModuleInstance, global::GlobalInst, TKTK, value::Value, function::FuncInst, memory::MemInst, table::TableInst};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct Module<'a> {
     parsed_module: ParsedModule<'a>,
 }
@@ -15,6 +15,10 @@ impl<'a> Module<'a> {
         Self {
             parsed_module: module,
         }
+    }
+
+    pub(crate) fn exports(&self) -> &[Export] {
+        self.parsed_module.export_section().unwrap_or_default()
     }
 
     pub(crate) fn typedef(&self, idx: &TypeIdx) -> Option<&Type> {
@@ -31,7 +35,14 @@ impl<'a> Module<'a> {
             .nth(idx.0 as usize)
     }
 
-    pub(crate) fn instantiate(&self, imports: &Imports) -> anyhow::Result<ModuleInstance> {
+    pub(crate) fn instantiate(&self, imports: &mut Imports, module_idx: GuestIndex) -> anyhow::Result<ModuleInstance> {
+        // okay tomorrow chris, here's the thing:
+        // we _could_ keep moduleinstances around, sure, yes.
+        // but what if code sections, type sections, etc all contributed to a machine's "global"
+        // view of the module graph -- entering or exiting a module context was just applying "shifts" to
+        // those tables before evaluating code.
+
+
         let (func_imports, memory_imports, table_imports, global_imports) = self
             .parsed_module
             .import_section()
@@ -119,7 +130,7 @@ impl<'a> Module<'a> {
                     .memory_section()
                     .iter()
                     .flat_map(|xs| xs.iter())
-                    .map(|memtype| Ok(MemInst::new(*memtype))),
+                    .map(|memtype| Ok(MemInst::new(imports.register_memory(*memtype)))),
             )
             .collect::<anyhow::Result<Vec<_>>>()?;
 
@@ -130,7 +141,7 @@ impl<'a> Module<'a> {
                     .table_section()
                     .iter()
                     .flat_map(|xs| xs.iter())
-                    .map(|tabletype| Ok(TableInst::new(*tabletype))),
+                    .map(|tabletype| Ok(TableInst::new(imports.register_table(*tabletype)))),
             )
             .collect::<anyhow::Result<Vec<_>>>()?;
 
@@ -185,19 +196,8 @@ impl<'a> Module<'a> {
             }
         }
 
-        let mut map = HashMap::new();
-        for exports in self
-            .parsed_module
-            .export_section()
-            .iter()
-            .flat_map(|xs| xs.iter())
-        {
-            map.insert(exports.nm.0, exports.desc);
-        }
-
         Ok(ModuleInstance {
-            exports: map,
-            module: self,
+            module: module_idx,
             functions,
             globals,
             memories,

@@ -2,22 +2,21 @@ use anyhow::Context;
 use std::collections::HashMap;
 
 use crate::{nodes::{ExportDesc, Instr, BlockType}, rt::function::FuncInstImpl};
-use super::{module::Module, value::Value, global::GlobalInst, memory::MemInst, table::TableInst, function::FuncInst};
+use super::{module::Module, value::Value, global::GlobalInst, memory::MemInst, table::TableInst, function::FuncInst, imports::GuestIndex};
 
-#[derive(Debug)]
-pub(crate) struct ModuleInstance<'a> {
-    pub(super) module: &'a Module<'a>,
-    pub(super) exports: HashMap<&'a str, ExportDesc>,
+#[derive(Debug, Clone)]
+pub(crate) struct ModuleInstance {
+    pub(super) module: GuestIndex,
     pub(super) functions: Vec<FuncInst>,
     pub(super) globals: Vec<GlobalInst>,
     pub(super) memories: Vec<MemInst>,
     pub(super) tables: Vec<TableInst>,
 }
 
-impl<'a> ModuleInstance<'a> {
+impl ModuleInstance {
+    /*
     pub(crate) fn call(&mut self, funcname: &str, args: &[Value]) -> anyhow::Result<Vec<Value>> {
         let ModuleInstance {
-            exports,
             module,
             ref functions,
             globals,
@@ -27,7 +26,6 @@ impl<'a> ModuleInstance<'a> {
 
         struct ModuleInstanceLocal<'a> {
             module: &'a Module<'a>,
-            exports: &'a HashMap<&'a str, ExportDesc>,
             functions: &'a Vec<FuncInst>,
             globals: &'a mut Vec<GlobalInst>,
             memories: &'a mut Vec<MemInst>,
@@ -35,7 +33,6 @@ impl<'a> ModuleInstance<'a> {
         }
 
         let instance = ModuleInstanceLocal {
-            exports,
             module,
             functions,
             globals,
@@ -55,7 +52,7 @@ impl<'a> ModuleInstance<'a> {
             );
         };
 
-        let FuncInstImpl::Guest(code_idx) = func.r#impl else {
+        let FuncInstImpl::Local(code_idx) = func.r#impl else {
             todo!("imports")
         };
 
@@ -88,7 +85,7 @@ impl<'a> ModuleInstance<'a> {
             param_type.validate(value).with_context(|| format!("bad argument at {}", idx))?;
         }
 
-        let FuncInstImpl::Guest(_func_inst_impl) = func.r#impl else {
+        let FuncInstImpl::Local(_func_inst_impl) = func.r#impl else {
             todo!("implement re-exported imports");
         };
         let locals = code.0.locals.as_slice();
@@ -328,7 +325,7 @@ impl<'a> ModuleInstance<'a> {
                         anyhow::bail!("no type definition for {}", funcname);
                     };
 
-                    let FuncInstImpl::Guest(code_idx) = func.r#impl else {
+                    let FuncInstImpl::Local(code_idx) = func.r#impl else {
                         todo!("imports")
                     };
 
@@ -419,7 +416,7 @@ impl<'a> ModuleInstance<'a> {
                         anyhow::bail!("no type definition for {}", funcname);
                     };
 
-                    let FuncInstImpl::Guest(code_idx) = func.r#impl else {
+                    let FuncInstImpl::Local(code_idx) = func.r#impl else {
                         todo!("imports")
                     };
 
@@ -1646,5 +1643,6 @@ impl<'a> ModuleInstance<'a> {
         // TODO: handle multiple return values
         Ok(value_stack)
     }
+    */
 }
 

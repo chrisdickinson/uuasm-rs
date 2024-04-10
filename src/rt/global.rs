@@ -1,14 +1,14 @@
 use crate::nodes::{GlobalType, Import, Mutability};
 
-use super::{value::Value, TKTK, imports::Imports};
+use super::{value::Value, imports::{Imports, ExternGlobal}};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum GlobalInstImpl {
-    Guest(Value),
-    Host(TKTK),
+    Local(Value),
+    Remote(ExternGlobal),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct GlobalInst {
     r#type: GlobalType,
     r#impl: GlobalInstImpl,
@@ -18,16 +18,16 @@ impl GlobalInst {
     #[inline]
     pub(crate) fn value(&self) -> Value {
         match self.r#impl {
-            GlobalInstImpl::Guest(v) => v,
-            GlobalInstImpl::Host(_) => todo!(),
+            GlobalInstImpl::Local(v) => v,
+            GlobalInstImpl::Remote(_) => todo!(),
         }
     }
 
     #[inline]
     pub(crate) fn value_mut(&mut self) -> &mut Value {
         match &mut self.r#impl {
-            GlobalInstImpl::Guest(v) => v,
-            GlobalInstImpl::Host(_) => todo!(),
+            GlobalInstImpl::Local(v) => v,
+            GlobalInstImpl::Remote(_) => todo!(),
         }
     }
 
@@ -49,7 +49,7 @@ impl GlobalInst {
         ty.0.validate(&v)?;
         Ok(Self {
             r#type: ty,
-            r#impl: GlobalInstImpl::Guest(v)
+            r#impl: GlobalInstImpl::Local(v)
         })
     }
 }

@@ -996,15 +996,15 @@ impl<'a> ParseWasmBinary<'a> for ExportDesc {
                 ExportDesc::Func,
             ),
             map(
-                preceded(tag([0x01]), TableType::from_wasm_bytes),
+                preceded(tag([0x01]), TableIdx::from_wasm_bytes),
                 ExportDesc::Table,
             ),
             map(
-                preceded(tag([0x02]), MemType::from_wasm_bytes),
+                preceded(tag([0x02]), MemIdx::from_wasm_bytes),
                 ExportDesc::Mem,
             ),
             map(
-                preceded(tag([0x03]), GlobalType::from_wasm_bytes),
+                preceded(tag([0x03]), GlobalIdx::from_wasm_bytes),
                 ExportDesc::Global,
             ),
         ))(input)

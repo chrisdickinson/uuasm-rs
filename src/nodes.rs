@@ -376,9 +376,9 @@ pub(crate) struct Export<'a> {
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub(crate) enum ExportDesc {
     Func(FuncIdx),
-    Table(TableType),
-    Mem(MemType),
-    Global(GlobalType),
+    Table(TableIdx),
+    Mem(MemIdx),
+    Global(GlobalIdx),
 }
 
 // TODO: Woof, this is a bad type. Parsed elements are much more straightforward than their

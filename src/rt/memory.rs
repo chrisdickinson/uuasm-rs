@@ -2,13 +2,13 @@ use crate::{memory_region::MemoryRegion, nodes::{MemType, ByteVec, Import}};
 
 use super::{TKTK, imports::Imports};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum MemoryInstImpl {
-    Guest(MemoryRegion),
-    Host(TKTK),
+    Local(TKTK),
+    Remote(TKTK),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct MemInst {
     r#type: MemType,
     r#impl: MemoryInstImpl,
@@ -22,14 +22,14 @@ impl MemInst {
     pub(crate) fn new(ty: MemType) -> Self {
         Self {
             r#type: ty,
-            r#impl: MemoryInstImpl::Guest(MemoryRegion::new(ty.0)),
+            r#impl: MemoryInstImpl::Local(MemoryRegion::new(ty.0)),
         }
     }
 
     pub(crate) fn copy_data(&mut self, byte_vec: &ByteVec<'_>, offset: usize) -> anyhow::Result<()> {
         match &mut self.r#impl {
-            MemoryInstImpl::Guest(region) => region.copy_data(byte_vec.0, offset)?,
-            MemoryInstImpl::Host(_tktk) => todo!(),
+            MemoryInstImpl::Local(region) => region.copy_data(byte_vec.0, offset)?,
+            MemoryInstImpl::Remote(_tktk) => todo!(),
         }
 
         Ok(())
@@ -38,30 +38,30 @@ impl MemInst {
     #[inline]
     pub(crate) fn grow(&mut self, page_count: usize) -> anyhow::Result<usize> {
         match &mut self.r#impl {
-            MemoryInstImpl::Guest(memory) => {
+            MemoryInstImpl::Local(memory) => {
                 memory.grow(page_count)
             }
-            MemoryInstImpl::Host(_) => todo!(),
+            MemoryInstImpl::Remote(_) => todo!(),
         }
     }
 
     #[inline]
     pub(crate) fn load<const U: usize>(&self, addr: usize) -> anyhow::Result<[u8; U]> {
         match &self.r#impl {
-            MemoryInstImpl::Guest(memory) => {
+            MemoryInstImpl::Local(memory) => {
                 if addr.saturating_add(U) > memory.len() {
                     anyhow::bail!("out of bounds memory access")
                 }
                 Ok(memory.as_slice()[addr..addr + U].try_into()?)
             }
-            MemoryInstImpl::Host(_) => todo!(),
+            MemoryInstImpl::Remote(_) => todo!(),
         }
     }
 
     #[inline]
     pub(crate) fn write<const U: usize>(&mut self, addr: usize, value: &[u8; U]) -> anyhow::Result<()> {
         match &self.r#impl {
-            MemoryInstImpl::Guest(memory) => {
+            MemoryInstImpl::Local(memory) => {
                 if addr.saturating_add(U) > memory.len() {
                     anyhow::bail!("out of bounds memory access")
                 }
@@ -69,7 +69,7 @@ impl MemInst {
 
                 Ok(())
             }
-            MemoryInstImpl::Host(_) => todo!(),
+            MemoryInstImpl::Remote(_) => todo!(),
         }
     }
 }

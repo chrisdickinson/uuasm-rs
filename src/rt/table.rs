@@ -4,11 +4,11 @@ use super::{value::Value, TKTK, imports::Imports};
 
 #[derive(Debug)]
 enum TableInstImpl {
-    Guest(Vec<Value>),
-    Host(TKTK),
+    Local(Vec<Value>),
+    Remote(TKTK),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub(crate) struct TableInst {
     r#type: TableType,
     r#impl: TableInstImpl,
@@ -22,7 +22,7 @@ impl TableInst {
     pub(crate) fn new(ty: TableType) -> Self {
         Self {
             r#type: ty,
-            r#impl: TableInstImpl::Guest(vec![
+            r#impl: TableInstImpl::Local(vec![
                 Value::RefNull;
                 ty.1.min() as usize
             ]),
@@ -30,21 +30,21 @@ impl TableInst {
     }
     pub(crate) fn get(&self, idx: usize) -> Option<Value> {
         match &self.r#impl {
-            TableInstImpl::Guest(values) => {
+            TableInstImpl::Local(values) => {
                 values.get(idx).copied()
             }
-            TableInstImpl::Host(_) => todo!(),
+            TableInstImpl::Remote(_) => todo!(),
         }
     }
 
     pub(crate) fn write_func_indices(&mut self, func_indices: &[FuncIdx]) {
         match &mut self.r#impl {
-            TableInstImpl::Guest(v) => {
+            TableInstImpl::Local(v) => {
                 for (idx, xs) in func_indices.iter().enumerate() {
                     v[idx] = Value::RefFunc(*xs);
                 }
             }
-            TableInstImpl::Host(_) => {
+            TableInstImpl::Remote(_) => {
                 todo!("TODO: handle populating imported tables with elements")
             }
         }
