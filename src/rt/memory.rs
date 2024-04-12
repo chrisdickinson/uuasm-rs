@@ -1,11 +1,11 @@
 use crate::{memory_region::MemoryRegion, nodes::{MemType, ByteVec, Import}};
 
-use super::{TKTK, imports::Imports};
+use super::{TKTK, imports::{Imports, ExternMemory, Extern}, machine::MachineMemoryIndex};
 
 #[derive(Debug, Clone)]
 enum MemoryInstImpl {
-    Local(TKTK),
-    Remote(TKTK),
+    Local(MachineMemoryIndex),
+    Remote(ExternMemory),
 }
 
 #[derive(Debug, Clone)]
@@ -16,16 +16,29 @@ pub(crate) struct MemInst {
 
 impl MemInst {
     pub(crate) fn resolve(ty: MemType, import: &Import<'_>, imports: &Imports) -> anyhow::Result<Self> {
-        todo!()
+        let Some(ext) = imports.lookup(import) else {
+            anyhow::bail!("could not resolve {}/{}", import.r#mod.0, import.nm.0);
+        };
+
+        let Extern::Memory(mem) = ext else {
+            anyhow::bail!("expected {}/{} to resolve to a memory", import.r#mod.0, import.nm.0);
+        };
+
+        // TODO: validate type.
+        Ok(Self {
+            r#type: ty,
+            r#impl: MemoryInstImpl::Remote(mem)
+        })
     }
 
-    pub(crate) fn new(ty: MemType) -> Self {
+    pub(crate) fn new(ty: MemType, idx: MachineMemoryIndex) -> Self {
         Self {
             r#type: ty,
-            r#impl: MemoryInstImpl::Local(MemoryRegion::new(ty.0)),
+            r#impl: MemoryInstImpl::Local(idx),
         }
     }
 
+    /*
     pub(crate) fn copy_data(&mut self, byte_vec: &ByteVec<'_>, offset: usize) -> anyhow::Result<()> {
         match &mut self.r#impl {
             MemoryInstImpl::Local(region) => region.copy_data(byte_vec.0, offset)?,
@@ -72,4 +85,5 @@ impl MemInst {
             MemoryInstImpl::Remote(_) => todo!(),
         }
     }
+    */
 }

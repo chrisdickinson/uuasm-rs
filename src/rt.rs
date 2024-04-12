@@ -1,8 +1,6 @@
 #![allow(dead_code)]
 #![allow(clippy::upper_case_acronyms)]
 
-pub(crate) mod module;
-pub(crate) mod instance;
 pub(crate) mod value;
 pub(crate) mod imports;
 pub(crate) mod global;
@@ -12,7 +10,6 @@ pub(crate) mod table;
 pub(crate) mod machine;
 
 pub(crate) use value::Value;
-pub(crate) use module::Module;
 pub(crate) use imports::Imports;
 
 use crate::nodes::{
@@ -264,16 +261,13 @@ pub(crate) struct TKTK;
 #[cfg(test)]
 mod test {
     use super::*;
-    use crate::{parse::parse, rt::{imports::Imports, module::Module}};
+    use crate::{parse::parse, rt::{imports::Imports}};
 
     #[test]
     fn test_create_store() {
         let bytes = include_bytes!("../example2.wasm");
 
         let wasm = parse(bytes).unwrap();
-
-        let module = Module::new(wasm);
-        let imports = Imports::new(vec![]);
 
         /*
         let mut instance = module

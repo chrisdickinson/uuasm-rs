@@ -3,7 +3,7 @@ use std::collections::HashMap;
 
 use crate::nodes::{ ImportDesc, Module as ParsedModule, Global, Expr, Instr, GlobalIdx, FuncIdx, Data, Elem, CodeIdx, TypeIdx, Type, Code, Export };
 
-use super::{imports::{Imports, GuestIndex}, instance::ModuleInstance, global::GlobalInst, TKTK, value::Value, function::FuncInst, memory::MemInst, table::TableInst};
+use super::{imports::{Imports, GuestIndex}, instance::ModuleInstance, global::GlobalInst, TKTK, value::Value, function::FuncInst, memory::MemInst, table::TableInst, machine::MachineBuilder};
 
 #[derive(Debug, Clone)]
 pub(crate) struct Module<'a> {
@@ -35,36 +35,15 @@ impl<'a> Module<'a> {
             .nth(idx.0 as usize)
     }
 
-    pub(crate) fn instantiate(&self, imports: &mut Imports, module_idx: GuestIndex) -> anyhow::Result<ModuleInstance> {
-        // okay tomorrow chris, here's the thing:
-        // we _could_ keep moduleinstances around, sure, yes.
-        // but what if code sections, type sections, etc all contributed to a machine's "global"
-        // view of the module graph -- entering or exiting a module context was just applying "shifts" to
-        // those tables before evaluating code.
-
-
-        let (func_imports, memory_imports, table_imports, global_imports) = self
-            .parsed_module
-            .import_section()
-            .iter()
-            .flat_map(|xs| xs.iter())
-            .fold(
-                (vec![], vec![], vec![], vec![]),
-                |(mut funcs, mut mems, mut tables, mut globals), imp| {
-                    match imp.desc {
-                        ImportDesc::Func(desc) => funcs.push(FuncInst::resolve(desc, imp, imports)),
-                        ImportDesc::Mem(desc) => mems.push(MemInst::resolve(desc, imp, imports)),
-                        ImportDesc::Table(desc) => tables.push(TableInst::resolve(desc, imp, imports)),
-                        ImportDesc::Global(desc) => globals.push(GlobalInst::resolve(desc, imp, imports)),
-                    }
-
-                    (funcs, mems, tables, globals)
-                },
-            );
-
-        let globals = global_imports
-            .into_iter()
-            .collect::<anyhow::Result<Vec<GlobalInst>>>()?;
+    pub(crate) fn resolve(&self, builder: &mut MachineBuilder<'a>) -> anyhow::Result<ModuleInstance> {
+        for imp in self.parsed_module.import_section().iter().flat_map(|xs| xs.iter()) {
+            match imp.desc {
+                ImportDesc::Func(desc) => builder.define_function_import(desc, imp)
+                ImportDesc::Mem(desc) => builder.define_memory_import(desc, imp)
+                ImportDesc::Table(desc) => builder.define_table_import(desc, imp)
+                ImportDesc::Global(desc) => builder.define_global_import(desc, imp)
+            }
+        }
 
         let globals = self
             .parsed_module

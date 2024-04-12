@@ -1,10 +1,10 @@
-use crate::nodes::{GlobalType, Import, Mutability};
+use crate::nodes::{GlobalType, Import, Mutability, ValType, Instr};
 
-use super::{value::Value, imports::{Imports, ExternGlobal}};
+use super::{value::Value, imports::{Imports, ExternGlobal, Extern}, machine::MachineGlobalIndex};
 
 #[derive(Debug, Clone)]
 enum GlobalInstImpl {
-    Local(Value),
+    Local(MachineGlobalIndex, Box<[Instr]>),
     Remote(ExternGlobal),
 }
 
@@ -15,42 +15,58 @@ pub(crate) struct GlobalInst {
 }
 
 impl GlobalInst {
-    #[inline]
-    pub(crate) fn value(&self) -> Value {
-        match self.r#impl {
-            GlobalInstImpl::Local(v) => v,
-            GlobalInstImpl::Remote(_) => todo!(),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn value_mut(&mut self) -> &mut Value {
-        match &mut self.r#impl {
-            GlobalInstImpl::Local(v) => v,
-            GlobalInstImpl::Remote(_) => todo!(),
-        }
-    }
-
-    pub(crate) fn assign(&mut self, v: &Value) -> anyhow::Result<()> {
-        if self.r#type.1 == Mutability::Const {
-            anyhow::bail!("cannot assign to constant global");
-        }
-
-        self.r#type.0.validate(&v)?;
-        *self.value_mut() = *v;
-        Ok(())
-    }
-
     pub(crate) fn resolve(ty: GlobalType, import: &Import<'_>, imports: &Imports) -> anyhow::Result<Self> {
-        todo!()
-    }
+        let Some(ext) = imports.lookup(import) else {
+            anyhow::bail!("could not resolve {}/{}", import.r#mod.0, import.nm.0);
+        };
 
-    pub(crate) fn new(ty: GlobalType, v: Value) -> anyhow::Result<Self> {
-        ty.0.validate(&v)?;
+        let Extern::Global(global) = ext else {
+            anyhow::bail!("expected {}/{} to resolve to a global", import.r#mod.0, import.nm.0);
+        };
+
+        // TODO: validate type.
         Ok(Self {
             r#type: ty,
-            r#impl: GlobalInstImpl::Local(v)
+            r#impl: GlobalInstImpl::Remote(global)
         })
+    }
+
+    pub(crate) fn valtype(&self) -> ValType {
+        self.r#type.0
+    }
+
+    pub(crate) fn mutability(&self) -> Mutability {
+        self.r#type.1
+    }
+
+    pub(crate) fn new(ty: GlobalType, idx: MachineGlobalIndex, initializer: Box<[Instr]>) -> Self {
+        Self {
+            r#type: ty,
+            r#impl: GlobalInstImpl::Local(idx, initializer),
+        }
     }
 }
 
+                    /*
+                if instrs.len() > 2 {
+                    anyhow::bail!("multiple instr global initializers are not supported");
+                }
+
+
+                // TKTK: should we include this in "initializers" alongside active data/elem
+                // elements?
+                let global = match instrs.first() {
+                    Some(Instr::I32Const(v)) => Value::I32(*v),
+                    Some(Instr::I64Const(v)) => Value::I64(*v),
+                    Some(Instr::F32Const(v)) => Value::F32(*v),
+                    Some(Instr::F64Const(v)) => Value::F64(*v),
+                    Some(Instr::GlobalGet(GlobalIdx(idx))) => {
+                        let idx = *idx as usize;
+                        // globals[idx].value()
+                        todo!("lookup global from builder");
+                    }
+                    Some(Instr::RefNull(_ref_type)) => Value::RefNull,
+                    Some(Instr::RefFunc(FuncIdx(idx))) => Value::RefFunc(FuncIdx(*idx)),
+                    _ => anyhow::bail!("unsupported global initializer instruction"),
+                };
+                */

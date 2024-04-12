@@ -1,6 +1,6 @@
-use crate::nodes::{CodeIdx, TypeIdx, Import};
+use crate::nodes::{CodeIdx, TypeIdx, Import, Func};
 
-use super::{TKTK, imports::{Imports, Extern, ExternFunc}};
+use super::{imports::{Imports, Extern, ExternFunc}, machine::{MachineCodeIndex, Machine}};
 
 #[derive(Debug, Clone)]
 pub(crate) enum FuncInstImpl {
@@ -29,6 +29,21 @@ impl FuncInst {
             r#type: ty,
             r#impl: FuncInstImpl::Remote(func)
         })
+    }
+
+    pub(crate) fn func<'a>(&self, machine: &Machine<'a>, module_idx: usize) -> Option<&Func> {
+        match self.r#impl {
+            FuncInstImpl::Local(code_idx) => machine.code(module_idx, code_idx.0 as usize).map(|xs| &xs.0),
+            FuncInstImpl::Remote(external) => {
+                match external {
+                    ExternFunc::Guest(module_idx, offset) => {
+                        machine.function(module_idx, offset.0 as usize)?.func(machine, module_idx)
+                    },
+
+                    ExternFunc::Host(host_fn) => todo!(),
+                }
+            },
+        }
     }
 
     pub(crate) fn new(ty: TypeIdx, code_idx: CodeIdx) -> Self {

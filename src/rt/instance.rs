@@ -14,7 +14,6 @@ pub(crate) struct ModuleInstance {
 }
 
 impl ModuleInstance {
-    /*
     pub(crate) fn call(&mut self, funcname: &str, args: &[Value]) -> anyhow::Result<Vec<Value>> {
         let ModuleInstance {
             module,
@@ -1643,6 +1642,5 @@ impl ModuleInstance {
         // TODO: handle multiple return values
         Ok(value_stack)
     }
-    */
 }
 
