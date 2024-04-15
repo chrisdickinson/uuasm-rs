@@ -1,33 +1,44 @@
-use crate::nodes::{TableType, Import, FuncIdx};
+use crate::nodes::{Import, TableIdx, TableType};
 
-use super::{value::Value, imports::{Imports, ExternTable, Extern}, machine::MachineTableIndex};
+use super::{
+    imports::{Extern, GuestIndex, Imports},
+    machine::MachineTableIndex,
+};
 
 #[derive(Debug, Clone)]
-enum TableInstImpl {
+pub(super) enum TableInstImpl {
     Local(MachineTableIndex),
-    Remote(ExternTable),
+    Remote(GuestIndex, TableIdx),
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct TableInst {
     r#type: TableType,
-    r#impl: TableInstImpl,
+    pub(super) r#impl: TableInstImpl,
 }
 
 impl TableInst {
-    pub(crate) fn resolve(ty: TableType, import: &Import<'_>, imports: &Imports) -> anyhow::Result<Self> {
+    pub(crate) fn resolve(
+        ty: TableType,
+        import: &Import<'_>,
+        imports: &Imports,
+    ) -> anyhow::Result<Self> {
         let Some(ext) = imports.lookup(import) else {
             anyhow::bail!("could not resolve {}/{}", import.r#mod.0, import.nm.0);
         };
 
-        let Extern::Table(table) = ext else {
-            anyhow::bail!("expected {}/{} to resolve to a memory", import.r#mod.0, import.nm.0);
+        let Extern::Table(module_idx, table_idx) = ext else {
+            anyhow::bail!(
+                "expected {}/{} to resolve to a memory",
+                import.r#mod.0,
+                import.nm.0
+            );
         };
 
         // TODO: validate type.
         Ok(Self {
             r#type: ty,
-            r#impl: TableInstImpl::Remote(table)
+            r#impl: TableInstImpl::Remote(module_idx, table_idx),
         })
     }
 
@@ -62,4 +73,3 @@ impl TableInst {
     }
     */
 }
-

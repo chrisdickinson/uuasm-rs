@@ -1,8 +1,9 @@
-use std::{sync::Arc, collections::HashMap};
+use std::{collections::HashMap, sync::Arc};
 
-use crate::{nodes::{ExportDesc, Module, FuncIdx, Import, TableIdx, MemIdx, GlobalIdx}, rt::machine::Machine};
-
-use super::machine::{MachineGlobalIndex, MachineTableIndex, MachineMemoryIndex};
+use crate::{
+    nodes::{ExportDesc, FuncIdx, GlobalIdx, Import, MemIdx, Module, TableIdx},
+    rt::machine::Machine,
+};
 
 type HostFnIndex = usize;
 pub(super) type GuestIndex = usize;
@@ -10,41 +11,12 @@ pub(super) type GuestIndex = usize;
 #[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
 pub(crate) struct ExternKey(usize, usize);
 
-
-// So here's an interesting thing... there's no need to keep a MachineGlobalIndex etc if we
-// _generate_ "host" modules to hold our host memories, tables, globals, and functions. the
-// functions should just point to single-instr "CallTrampoline" impls.
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ExternGlobal {
-    Guest(GuestIndex, GlobalIdx),
-    Host(MachineGlobalIndex), 
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ExternFunc {
-    Guest(GuestIndex, FuncIdx),
-    Host(HostFnIndex),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ExternTable {
-    Guest(GuestIndex, TableIdx),
-    Host(MachineTableIndex), 
-}
-
-#[derive(Debug, Clone, Copy)]
-pub(crate) enum ExternMemory {
-    Guest(GuestIndex, MemIdx),
-    Host(MachineMemoryIndex), 
-}
-
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum Extern {
-    Func(ExternFunc),
-    Global(ExternGlobal),
-    Table(ExternTable),
-    Memory(ExternMemory),
+    Func(GuestIndex, FuncIdx),
+    Global(GuestIndex, GlobalIdx),
+    Table(GuestIndex, TableIdx),
+    Memory(GuestIndex, MemIdx),
 }
 
 #[derive(Default, Debug, Clone)]
@@ -64,7 +36,7 @@ impl InternMap {
 
     pub(super) fn insert(&mut self, string: &str) -> usize {
         if let Some(idx) = self.string_to_idx.get(string) {
-            return *idx
+            return *idx;
         }
 
         let string: Arc<str> = string.into();
@@ -80,7 +52,7 @@ pub(crate) struct Imports<'a> {
     // borrow a page from wasmtime!
     pub(crate) guests: Vec<Module<'a>>,
     pub(crate) externs: HashMap<ExternKey, Extern>,
-    pub(super) internmap: InternMap
+    pub(super) internmap: InternMap,
 }
 
 impl<'a> Imports<'a> {
@@ -104,28 +76,28 @@ impl<'a> Imports<'a> {
         self.externs.insert(ExternKey(modname, name), ext);
     }
 
-    fn link_module(&mut self, modname: &str, module: Module<'a>) {
+    pub(crate) fn link_module(&mut self, modname: &str, module: Module<'a>) {
         let idx = self.guests.len();
         for export in module.export_section().unwrap_or_default() {
             match export.desc {
                 ExportDesc::Func(func_idx) => {
-                    self.link_extern(modname, export.nm.0, Extern::Func(ExternFunc::Guest(idx, func_idx)));
-                },
+                    self.link_extern(modname, export.nm.0, Extern::Func(idx, func_idx));
+                }
                 ExportDesc::Table(table_idx) => {
-                    self.link_extern(modname, export.nm.0, Extern::Table(ExternTable::Guest(idx, table_idx)));
-                },
+                    self.link_extern(modname, export.nm.0, Extern::Table(idx, table_idx));
+                }
                 ExportDesc::Mem(mem_idx) => {
-                    self.link_extern(modname, export.nm.0, Extern::Memory(ExternMemory::Guest(idx, mem_idx)));
-                },
+                    self.link_extern(modname, export.nm.0, Extern::Memory(idx, mem_idx));
+                }
                 ExportDesc::Global(global_idx) => {
-                    self.link_extern(modname, export.nm.0, Extern::Global(ExternGlobal::Guest(idx, global_idx)));
-                },
+                    self.link_extern(modname, export.nm.0, Extern::Global(idx, global_idx));
+                }
             }
         }
         self.guests.push(module);
     }
 
-    fn instantiate(mut self, module: Module<'a>) -> anyhow::Result<Machine<'a>> {
+    pub(crate) fn instantiate(mut self, module: Module<'a>) -> anyhow::Result<Machine<'a>> {
         let mut exportmap = HashMap::new();
         for export in module.export_section().unwrap_or_default() {
             exportmap.insert(self.internmap.insert(export.nm.0), export.desc);
@@ -139,6 +111,8 @@ impl<'a> Imports<'a> {
 
 #[cfg(test)]
 mod test {
+    use std::mem::size_of;
+
     use crate::{parse::parse, rt::Value};
 
     use super::*;
@@ -152,8 +126,10 @@ mod test {
 
         let exports: Vec<_> = machine.exports().collect();
         eprintln!("{exports:?}");
-        machine.call("foo", &[Value::I32(0)])?;
+        let result = machine.call("add_i32", &[Value::I32(5), Value::I32(2)])?;
+        eprintln!("{result:?}");
 
+        eprintln!("instr={}", size_of::<Machine>());
         Ok(())
     }
 }

@@ -1,34 +1,52 @@
-use crate::nodes::{GlobalType, Import, Mutability, ValType, Instr};
+use crate::nodes::{GlobalIdx, GlobalType, Import, Instr, Mutability, ValType};
 
-use super::{value::Value, imports::{Imports, ExternGlobal, Extern}, machine::MachineGlobalIndex};
+use super::{
+    imports::{Extern, GuestIndex, Imports},
+    machine::MachineGlobalIndex,
+};
 
 #[derive(Debug, Clone)]
-enum GlobalInstImpl {
+pub(super) enum GlobalInstImpl {
     Local(MachineGlobalIndex, Box<[Instr]>),
-    Remote(ExternGlobal),
+    Remote(GuestIndex, GlobalIdx),
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct GlobalInst {
     r#type: GlobalType,
-    r#impl: GlobalInstImpl,
+    pub(super) r#impl: GlobalInstImpl,
 }
 
 impl GlobalInst {
-    pub(crate) fn resolve(ty: GlobalType, import: &Import<'_>, imports: &Imports) -> anyhow::Result<Self> {
+    pub(crate) fn resolve(
+        ty: GlobalType,
+        import: &Import<'_>,
+        imports: &Imports,
+    ) -> anyhow::Result<Self> {
         let Some(ext) = imports.lookup(import) else {
             anyhow::bail!("could not resolve {}/{}", import.r#mod.0, import.nm.0);
         };
 
-        let Extern::Global(global) = ext else {
-            anyhow::bail!("expected {}/{} to resolve to a global", import.r#mod.0, import.nm.0);
+        let Extern::Global(module_idx, global_idx) = ext else {
+            anyhow::bail!(
+                "expected {}/{} to resolve to a global",
+                import.r#mod.0,
+                import.nm.0
+            );
         };
 
         // TODO: validate type.
         Ok(Self {
             r#type: ty,
-            r#impl: GlobalInstImpl::Remote(global)
+            r#impl: GlobalInstImpl::Remote(module_idx, global_idx),
         })
+    }
+
+    pub(super) fn initdata(&self) -> Option<(MachineGlobalIndex, &[Instr])> {
+        match &self.r#impl {
+            GlobalInstImpl::Local(idx, instrs) => Some((*idx, instrs.as_ref())),
+            GlobalInstImpl::Remote(_, _) => None
+        }
     }
 
     pub(crate) fn valtype(&self) -> ValType {
@@ -47,26 +65,26 @@ impl GlobalInst {
     }
 }
 
-                    /*
-                if instrs.len() > 2 {
-                    anyhow::bail!("multiple instr global initializers are not supported");
-                }
+/*
+if instrs.len() > 2 {
+    anyhow::bail!("multiple instr global initializers are not supported");
+}
 
 
-                // TKTK: should we include this in "initializers" alongside active data/elem
-                // elements?
-                let global = match instrs.first() {
-                    Some(Instr::I32Const(v)) => Value::I32(*v),
-                    Some(Instr::I64Const(v)) => Value::I64(*v),
-                    Some(Instr::F32Const(v)) => Value::F32(*v),
-                    Some(Instr::F64Const(v)) => Value::F64(*v),
-                    Some(Instr::GlobalGet(GlobalIdx(idx))) => {
-                        let idx = *idx as usize;
-                        // globals[idx].value()
-                        todo!("lookup global from builder");
-                    }
-                    Some(Instr::RefNull(_ref_type)) => Value::RefNull,
-                    Some(Instr::RefFunc(FuncIdx(idx))) => Value::RefFunc(FuncIdx(*idx)),
-                    _ => anyhow::bail!("unsupported global initializer instruction"),
-                };
-                */
+// TKTK: should we include this in "initializers" alongside active data/elem
+// elements?
+let global = match instrs.first() {
+    Some(Instr::I32Const(v)) => Value::I32(*v),
+    Some(Instr::I64Const(v)) => Value::I64(*v),
+    Some(Instr::F32Const(v)) => Value::F32(*v),
+    Some(Instr::F64Const(v)) => Value::F64(*v),
+    Some(Instr::GlobalGet(GlobalIdx(idx))) => {
+        let idx = *idx as usize;
+        // globals[idx].value()
+        todo!("lookup global from builder");
+    }
+    Some(Instr::RefNull(_ref_type)) => Value::RefNull,
+    Some(Instr::RefFunc(FuncIdx(idx))) => Value::RefFunc(FuncIdx(*idx)),
+    _ => anyhow::bail!("unsupported global initializer instruction"),
+};
+*/

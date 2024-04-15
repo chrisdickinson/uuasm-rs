@@ -25,7 +25,7 @@ generate_test for_json interp="{{}}":
 
   #[test]
   fn test_0() {
-    let imports = Imports::new(vec![]);
+    let spectest = crate::parse::parse(include_bytes!("../../spectest.wasm")).expect("could not parse spec test");
   """)
 
   def convf32(f):
@@ -107,14 +107,14 @@ generate_test for_json interp="{{}}":
         filename = command["filename"]
         escaped_filename = json.dumps(command["filename"])
         output.append(f"""
-          let module{module_count} = Module::new(
-            crate::parse::parse(
-              include_bytes!({escaped_filename})
-            ).expect("failed to parse \\"{filename}\\" (\\"{source_filename}\\"; line {line})")
-          );
+          let module{module_count} = crate::parse::parse(
+            include_bytes!({escaped_filename})
+          ).expect("failed to parse \\"{filename}\\" (\\"{source_filename}\\"; line {line})");
 
-          let mut instance{module_count} = module{module_count}
-            .instantiate(&imports)
+          let mut imports{module_count} = Imports::new();
+          imports{module_count}.link_module("spectest", spectest.clone());
+          let mut instance{module_count} = imports{module_count}
+            .instantiate(module{module_count})
             .expect("could not instantiate module{module_count} (\\"{source_filename}\\"; line {line})"); 
         """)
 
@@ -183,7 +183,25 @@ generate_test for_json interp="{{}}":
       case "assert_unlinkable":
         ...
       case "action":
-        ...
+        match command["action"]["type"]:
+          case "invoke":
+            field = command["action"]["field"]
+
+            args = command["action"]["args"]
+            expected = command["expected"]
+            args = ",".join(map(to_value, args))
+            expected = ",".join(map(to_value, expected))
+
+            field_esc = json.dumps(json.dumps(field))
+            if '\\u' in field_esc or '\\b' in field_esc:
+              ...
+
+            output.append(f"""
+              let field: String = serde_json::from_str({field_esc}).expect("could not decode");
+              let expectation = format!(r#"failed to call {{interp}} ("{source_filename}"; line {line}")"#, field.as_str());
+              instance{module_count}.call(field.as_str(), &[{args}]).expect(&expectation);
+            """)
+
       case "register":
         ...
 
@@ -221,7 +239,7 @@ setup_tests:
     esac
 
     case "$mod" in
-      "address"|"call"|"block"|"names")
+      "address"| "align"| "binary-leb128"| "binary"| "block"| "br"| "br_if"| "br_table"| "bulk"| "call"| "call_indirect"| "names"| "local_get"| "local_set"| "local_tee"|"return" )
         echo "mod $mod;" >> src/testsuite/mod.rs
       ;;
     esac

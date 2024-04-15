@@ -33,7 +33,7 @@ impl MemoryRegion {
     }
 
     pub fn len(&self) -> usize {
-        return self.page_count << PAGE_SHIFT;
+        self.page_count << PAGE_SHIFT
     }
 
     pub(crate) fn as_slice(&self) -> &[u8] {
@@ -45,17 +45,35 @@ impl MemoryRegion {
     }
 
     pub(crate) fn write<const U: usize>(&self, addr: usize, value: &[u8; U]) {
-        unsafe { std::ptr::copy_nonoverlapping(value.as_ptr(), self.bytes.wrapping_add(addr), U); }
+        unsafe {
+            std::ptr::copy_nonoverlapping(value.as_ptr(), self.bytes.wrapping_add(addr), U);
+        }
     }
 
-    pub(crate) fn copy_data(&mut self, data: &[u8], offset: usize) -> anyhow::Result<()> {
-        let desired_size = offset + data.len();
-        let desired_pages = desired_size >> PAGE_SHIFT;
-        self.grow(desired_pages)?;
+    pub(crate) fn fill_data(&mut self, val: u8, offset: usize, count: usize) -> anyhow::Result<()> {
+        let desired_size = offset.saturating_add(count);
+        if desired_size > self.len() {
+            anyhow::bail!("out of bounds memory access");
+        }
 
-        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), self.bytes.add(offset), data.len()) };
+        unsafe { std::ptr::write_bytes(self.bytes.add(offset), val, count) };
 
         Ok(())
+    }
+
+    // XXX: should we have an option for "just copy, do not grow"?
+    pub(crate) fn copy_data(&self, data: &[u8], offset: usize) {
+        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), self.bytes.add(offset), data.len()) };
+    }
+
+    pub(crate) fn copy_overlapping_data(&self, data: &[u8], offset: usize) {
+        unsafe { std::ptr::copy(data.as_ptr(), self.bytes.add(offset), data.len()) };
+    }
+
+    pub(crate) fn grow_to_fit(&mut self, data: &[u8], offset: usize) -> anyhow::Result<usize> {
+        let desired_size = offset + data.len();
+        let desired_pages = desired_size >> PAGE_SHIFT;
+        self.grow(desired_pages)
     }
 
     pub(crate) fn grow(&mut self, page_count: usize) -> anyhow::Result<usize> {
@@ -79,6 +97,27 @@ impl MemoryRegion {
         let old_page_count = self.page_count;
         self.page_count = page_count;
         Ok(old_page_count)
+    }
+
+    #[inline]
+    pub(crate) fn load<const U: usize>(&self, addr: usize) -> anyhow::Result<[u8; U]> {
+        if addr.saturating_add(U) > self.len() {
+            anyhow::bail!("out of bounds memory access")
+        }
+        Ok(self.as_slice()[addr..addr + U].try_into()?)
+    }
+
+    #[inline]
+    pub(crate) fn store<const U: usize>(
+        &mut self,
+        addr: usize,
+        value: &[u8; U],
+    ) -> anyhow::Result<()> {
+        if addr.saturating_add(U) > self.len() {
+            anyhow::bail!("out of bounds memory access")
+        }
+        self.write(addr, value);
+        Ok(())
     }
 }
 

@@ -1,33 +1,43 @@
-use crate::{memory_region::MemoryRegion, nodes::{MemType, ByteVec, Import}};
+use crate::nodes::{Import, MemIdx, MemType};
 
-use super::{TKTK, imports::{Imports, ExternMemory, Extern}, machine::MachineMemoryIndex};
+use super::{
+    imports::{Extern, GuestIndex, Imports},
+    machine::MachineMemoryIndex,
+};
 
 #[derive(Debug, Clone)]
-enum MemoryInstImpl {
+pub(super) enum MemoryInstImpl {
     Local(MachineMemoryIndex),
-    Remote(ExternMemory),
+    Remote(GuestIndex, MemIdx),
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct MemInst {
     r#type: MemType,
-    r#impl: MemoryInstImpl,
+    pub(super) r#impl: MemoryInstImpl,
 }
 
 impl MemInst {
-    pub(crate) fn resolve(ty: MemType, import: &Import<'_>, imports: &Imports) -> anyhow::Result<Self> {
+    pub(crate) fn resolve(
+        ty: MemType,
+        import: &Import<'_>,
+        imports: &Imports,
+    ) -> anyhow::Result<Self> {
         let Some(ext) = imports.lookup(import) else {
             anyhow::bail!("could not resolve {}/{}", import.r#mod.0, import.nm.0);
         };
 
-        let Extern::Memory(mem) = ext else {
-            anyhow::bail!("expected {}/{} to resolve to a memory", import.r#mod.0, import.nm.0);
+        let Extern::Memory(module_idx, mem_idx) = ext else {
+            anyhow::bail!(
+                "expected {}/{} to resolve to a memory",
+                import.r#mod.0,
+                import.nm.0
+            );
         };
 
-        // TODO: validate type.
         Ok(Self {
             r#type: ty,
-            r#impl: MemoryInstImpl::Remote(mem)
+            r#impl: MemoryInstImpl::Remote(module_idx, mem_idx),
         })
     }
 

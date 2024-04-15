@@ -1,23 +1,19 @@
 #![allow(dead_code)]
 #![allow(clippy::upper_case_acronyms)]
 
-pub(crate) mod value;
-pub(crate) mod imports;
-pub(crate) mod global;
 pub(crate) mod function;
+pub(crate) mod global;
+pub(crate) mod imports;
+pub(crate) mod machine;
 pub(crate) mod memory;
 pub(crate) mod table;
-pub(crate) mod machine;
+pub(crate) mod value;
 
-pub(crate) use value::Value;
 pub(crate) use imports::Imports;
+pub(crate) use value::Value;
 
-use crate::nodes::{
-    NumType,
-    RefType,
-    ValType,
-    VecType,
-};
+pub(crate) use machine::Machine;
+use crate::nodes::{BlockType, NumType, RefType, ValType, VecType};
 
 impl ValType {
     fn instantiate(&self) -> Value {
@@ -43,18 +39,25 @@ impl ValType {
             | (ValType::RefType(RefType::FuncRef), Value::RefFunc(_))
             | (ValType::RefType(RefType::FuncRef), Value::RefNull)
             | (ValType::RefType(RefType::ExternRef), Value::RefExtern(_))
-            | (ValType::RefType(RefType::ExternRef), Value::RefNull) => {
-                Ok(())
-            }
-            (vt, v) => anyhow::bail!(
-                "expected={:?}; got={:?}",
-                vt,
-                v
-            ),
+            | (ValType::RefType(RefType::ExternRef), Value::RefNull) => Ok(()),
+            (vt, v) => anyhow::bail!("expected={:?}; got={:?}", vt, v),
         }
     }
 }
 
+impl BlockType {
+    fn validate(&self, values: &mut Vec<Value>) -> anyhow::Result<Vec<Value>> {
+        match self {
+            BlockType::Empty => return Ok(vec![]),
+            BlockType::Val(vt) => {
+                let v = values.pop().ok_or_else(|| anyhow::anyhow!("expected one value on stack"))?;
+                vt.validate(&v)?;
+                Ok(vec![v])
+            },
+            BlockType::TypeIndex(_) => todo!(),
+        }
+    }
+}
 
 macro_rules! Instrs {
     ($input:expr, $exec:ident) => {
@@ -260,14 +263,14 @@ pub(crate) struct TKTK;
 
 #[cfg(test)]
 mod test {
-    use super::*;
-    use crate::{parse::parse, rt::{imports::Imports}};
+    
+    use crate::{parse::parse};
 
     #[test]
     fn test_create_store() {
         let bytes = include_bytes!("../example2.wasm");
 
-        let wasm = parse(bytes).unwrap();
+        let _wasm = parse(bytes).unwrap();
 
         /*
         let mut instance = module

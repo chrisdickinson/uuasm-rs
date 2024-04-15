@@ -415,7 +415,7 @@ fn control_instrs<'a, E: Debug + ParseError<Span<'a>>>(
         bytes::complete::tag,
         combinator::{map, opt},
         multi::many0,
-        sequence::{delimited, preceded, terminated, tuple},
+        sequence::{delimited, preceded, tuple},
     };
     alt((
         map(tag([0x00]), |_| Instr::Unreachable),
@@ -426,7 +426,7 @@ fn control_instrs<'a, E: Debug + ParseError<Span<'a>>>(
                 tuple((BlockType::from_wasm_bytes, many0(Instr::from_wasm_bytes))),
                 tag([0x0b]),
             ),
-            |(bt, ins)| Instr::Block(bt, ins),
+            |(bt, ins)| Instr::Block(bt, ins.into_boxed_slice()),
         ),
         map(
             delimited(
@@ -434,7 +434,7 @@ fn control_instrs<'a, E: Debug + ParseError<Span<'a>>>(
                 tuple((BlockType::from_wasm_bytes, many0(Instr::from_wasm_bytes))),
                 tag([0x0b]),
             ),
-            |(bt, ins)| Instr::Loop(bt, ins),
+            |(bt, ins)| Instr::Loop(bt, ins.into_boxed_slice()),
         ),
         map(
             delimited(
@@ -447,8 +447,8 @@ fn control_instrs<'a, E: Debug + ParseError<Span<'a>>>(
                 tag([0x0b]),
             ),
             |(bt, consequent, alternate)| match alternate {
-                Some(alternate) => Instr::IfElse(bt, consequent, alternate),
-                None => Instr::If(bt, consequent),
+                Some(alternate) => Instr::IfElse(bt, consequent.into_boxed_slice(), alternate.into_boxed_slice()),
+                None => Instr::If(bt, consequent.into_boxed_slice()),
             },
         ),
         map(preceded(tag([0x0c]), LabelIdx::from_wasm_bytes), Instr::Br),
@@ -461,7 +461,7 @@ fn control_instrs<'a, E: Debug + ParseError<Span<'a>>>(
                 tag([0x0e]),
                 tuple((Vec::<LabelIdx>::from_wasm_bytes, LabelIdx::from_wasm_bytes)),
             ),
-            |(tbl, alt)| Instr::BrTable(tbl, alt),
+            |(tbl, alt)| Instr::BrTable(tbl.into_boxed_slice(), alt),
         ),
         map(tag([0x0f]), |_| Instr::Return),
         map(preceded(tag([0x10]), FuncIdx::from_wasm_bytes), Instr::Call),
@@ -501,7 +501,7 @@ fn parametric_instrs<'a, E: Debug + ParseError<Span<'a>>>(
         map(tag([0x1b]), |_| Instr::SelectEmpty),
         map(
             preceded(tag([0x1c]), Vec::<ValType>::from_wasm_bytes),
-            Instr::Select,
+            |xs| Instr::Select(xs.into_boxed_slice()),
         ),
     ))(b)
 }

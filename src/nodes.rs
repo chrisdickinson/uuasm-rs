@@ -107,6 +107,39 @@ impl MemArg {
     }
 }
 
+// TODO(maybe-optimize): split "Instr type" from "Instr payload". We can pack a lot more instrs
+// into the processing stream this way; instrs fit into a single byte, giving us three bytes to
+// index into a separate "instr payload" stream as necessary (16,777,215 values per stream; plus
+// we can deduplicate repeated payloads.)
+//
+// Otherwise instrs take up 40 bytes (!!) which is kinda too many bytes?
+/*pub(crate) enum InstrPayload {
+    TypeInstrs(BlockType, Box<[Instr]>),
+    TypeInstrs2(BlockType, Box<[Instr]>, Box<[Instr]>),
+    BrTable(Box<[LabelIdx]>, LabelIdx),
+    Select(Box<[ValType]>),
+    DataOp(DataIdx),
+    MemDataOp(DataIdx, MemIdx),
+    ElemOp(ElemIdx),
+    TableElemOp(ElemIdx, TableIdx),
+    FuncOp(FuncIdx),
+    GlobalOp(GlobalIdx),
+    LabelOp(LabelIdx),
+    LocalOp(LocalIdx),
+    LoadOp(MemArg),
+    MemOp(MemIdx),
+    MemOp2(MemIdx, MemIdx),
+    RefOp(RefType),
+    TableOp(TableIdx),
+    TableOp2(TableIdx, TableIdx),
+    TypeTableOp(TypeIdx, TableIdx),
+    F32(f32),
+    F64(f64),
+    I32(i32),
+    I64(i64),
+}
+*/
+
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Instr {
     // Internal (non-wasm) instructions
@@ -115,13 +148,13 @@ pub(crate) enum Instr {
     // Control Instructions
     Unreachable,
     Nop,
-    Block(BlockType, Vec<Instr>),
-    Loop(BlockType, Vec<Instr>),
-    If(BlockType, Vec<Instr>),
-    IfElse(BlockType, Vec<Instr>, Vec<Instr>),
+    Block(BlockType, Box<[Instr]>),
+    Loop(BlockType, Box<[Instr]>),
+    If(BlockType, Box<[Instr]>),
+    IfElse(BlockType, Box<[Instr]>, Box<[Instr]>),
     Br(LabelIdx),
     BrIf(LabelIdx),
-    BrTable(Vec<LabelIdx>, LabelIdx),
+    BrTable(Box<[LabelIdx]>, LabelIdx),
     Return,
     Call(FuncIdx),
     CallIndirect(TypeIdx, TableIdx),
@@ -134,7 +167,7 @@ pub(crate) enum Instr {
     // Parametric Instructions
     Drop,
     SelectEmpty,
-    Select(Vec<ValType>),
+    Select(Box<[ValType]>),
 
     // Variable Instructions
     LocalGet(LocalIdx),
@@ -326,6 +359,7 @@ pub(crate) enum Instr {
 pub(crate) struct Expr(pub(crate) Vec<Instr>);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(transparent)]
 pub(crate) struct TypeIdx(pub(crate) u32);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -397,6 +431,21 @@ pub(crate) enum Elem {
     PassiveSegmentExpr(RefType, Vec<Expr>),
     ActiveSegmentTableAndExpr(TableIdx, Expr, RefType, Vec<Expr>),
     DeclarativeSegmentExpr(RefType, Vec<Expr>),
+}
+
+impl Elem {
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Elem::ActiveSegmentFuncs(_, xs) => xs.len(),
+            Elem::PassiveSegment(_, xs) => xs.len(),
+            Elem::ActiveSegment(_, _, _, xs) => xs.len(),
+            Elem::DeclarativeSegment(_, xs) => xs.len(),
+            Elem::ActiveSegmentExpr(_, xs) => xs.len(),
+            Elem::PassiveSegmentExpr(_, xs) => xs.len(),
+            Elem::ActiveSegmentTableAndExpr(_, _, _, xs) => xs.len(),
+            Elem::DeclarativeSegmentExpr(_, xs) => xs.len(),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
