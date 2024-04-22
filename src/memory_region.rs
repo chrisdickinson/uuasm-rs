@@ -11,23 +11,20 @@ const LAST_PAGE: usize = 0xffff_ffff >> PAGE_SHIFT;
 
 #[derive(Debug)]
 pub(crate) struct MemoryRegion {
-    bytes: *mut u8,
     page_count: usize,
-    layout: Layout,
     limits: (usize, usize),
+    storage: Vec<u8>
 }
 
 impl MemoryRegion {
     pub(crate) fn new(limits: Limits) -> Self {
         let page_count = limits.min() as usize;
         let max_page_count = limits.max().map(|xs| xs as usize).unwrap_or(0xffff_ffff);
-        let layout = Layout::from_size_align(page_count << PAGE_SHIFT, PAGE_SIZE).unwrap();
-        let bytes = unsafe { alloc::alloc(layout) };
+        let storage = vec![0u8; page_count << PAGE_SHIFT];
 
         MemoryRegion {
-            bytes,
+            storage,
             page_count,
-            layout,
             limits: (page_count, max_page_count),
         }
     }
@@ -36,18 +33,20 @@ impl MemoryRegion {
         self.page_count << PAGE_SHIFT
     }
 
+    pub fn page_count(&self) -> usize {
+        self.page_count
+    }
+
     pub(crate) fn as_slice(&self) -> &[u8] {
-        unsafe { from_raw_parts(self.bytes, self.page_count << PAGE_SHIFT) }
+        self.storage.as_slice()
     }
 
     pub(crate) fn as_mut_slice(&mut self) -> &mut [u8] {
-        unsafe { from_raw_parts_mut(self.bytes, self.page_count << PAGE_SHIFT) }
+        self.storage.as_mut_slice()
     }
 
-    pub(crate) fn write<const U: usize>(&self, addr: usize, value: &[u8; U]) {
-        unsafe {
-            std::ptr::copy_nonoverlapping(value.as_ptr(), self.bytes.wrapping_add(addr), U);
-        }
+    pub(crate) fn write<const U: usize>(&mut self, addr: usize, value: &[u8; U]) {
+        self.storage[addr..addr.saturating_add(U)].copy_from_slice(value.as_slice());
     }
 
     pub(crate) fn fill_data(&mut self, val: u8, offset: usize, count: usize) -> anyhow::Result<()> {
@@ -56,18 +55,18 @@ impl MemoryRegion {
             anyhow::bail!("out of bounds memory access");
         }
 
-        unsafe { std::ptr::write_bytes(self.bytes.add(offset), val, count) };
+        self.storage[offset..count + offset].fill(val);
 
         Ok(())
     }
 
     // XXX: should we have an option for "just copy, do not grow"?
-    pub(crate) fn copy_data(&self, data: &[u8], offset: usize) {
-        unsafe { std::ptr::copy_nonoverlapping(data.as_ptr(), self.bytes.add(offset), data.len()) };
+    pub(crate) fn copy_data(&mut self, data: &[u8], offset: usize) {
+        self.storage[offset..offset+data.len()].copy_from_slice(data);
     }
 
-    pub(crate) fn copy_overlapping_data(&self, data: &[u8], offset: usize) {
-        unsafe { std::ptr::copy(data.as_ptr(), self.bytes.add(offset), data.len()) };
+    pub(crate) fn copy_overlapping_data(&mut self, offset: usize, from_offset: usize, count: usize) {
+        self.storage.copy_within(from_offset..from_offset+count, offset);
     }
 
     pub(crate) fn grow_to_fit(&mut self, data: &[u8], offset: usize) -> anyhow::Result<usize> {
@@ -77,25 +76,18 @@ impl MemoryRegion {
     }
 
     pub(crate) fn grow(&mut self, page_count: usize) -> anyhow::Result<usize> {
-        if page_count <= self.page_count {
-            return Ok(self.page_count);
+        let new_page_count = self.page_count + page_count;
+        if new_page_count > self.limits.1 {
+            return Ok(-1i32 as usize)
         }
 
-        if page_count >= self.limits.1 {
-            anyhow::bail!(
-                "cannot allocate more than max limit of memory ({} pages)",
-                self.limits.1
-            );
-        }
-
-        if page_count >= LAST_PAGE {
+        if new_page_count >= LAST_PAGE {
             anyhow::bail!("cannot allocate more than 4GiB of memory");
         }
 
-        self.layout = Layout::from_size_align(page_count << PAGE_SHIFT, PAGE_SIZE).unwrap();
-        self.bytes = unsafe { alloc::realloc(self.bytes, self.layout, page_count << PAGE_SHIFT) };
+        self.storage.resize(new_page_count << PAGE_SHIFT, 0);
         let old_page_count = self.page_count;
-        self.page_count = page_count;
+        self.page_count = new_page_count;
         Ok(old_page_count)
     }
 
@@ -118,11 +110,5 @@ impl MemoryRegion {
         }
         self.write(addr, value);
         Ok(())
-    }
-}
-
-impl Drop for MemoryRegion {
-    fn drop(&mut self) {
-        unsafe { alloc::dealloc(self.bytes, self.layout) };
     }
 }

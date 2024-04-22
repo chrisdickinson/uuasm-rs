@@ -29,8 +29,8 @@ impl PartialEq for Value {
 
 impl Value {
     #[cfg(test)]
-    pub(crate) fn bit_eq(&self, rhs: &Self) -> bool {
-        match (self, rhs) {
+    pub(crate) fn bit_eq(&self, rhs: &Self) -> anyhow::Result<()> {
+        if match (self, rhs) {
             (Self::F32(l0), Self::F32(r0)) => unsafe {
                 std::mem::transmute::<&f32, &u32>(l0) == std::mem::transmute::<&f32, &u32>(r0)
             },
@@ -38,6 +38,10 @@ impl Value {
                 std::mem::transmute::<&f64, &u64>(l0) == std::mem::transmute::<&f64, &u64>(r0)
             },
             (lhs, rhs) => lhs == rhs,
+        } {
+            Ok(())
+        } else {
+            anyhow::bail!("{self:?} != {rhs:?}");
         }
     }
 

@@ -45,20 +45,6 @@ impl ValType {
     }
 }
 
-impl BlockType {
-    fn validate(&self, values: &mut Vec<Value>) -> anyhow::Result<Vec<Value>> {
-        match self {
-            BlockType::Empty => return Ok(vec![]),
-            BlockType::Val(vt) => {
-                let v = values.pop().ok_or_else(|| anyhow::anyhow!("expected one value on stack"))?;
-                vt.validate(&v)?;
-                Ok(vec![v])
-            },
-            BlockType::TypeIndex(_) => todo!(),
-        }
-    }
-}
-
 macro_rules! Instrs {
     ($input:expr, $exec:ident) => {
         match $input {

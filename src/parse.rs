@@ -486,7 +486,7 @@ fn ref_instrs<'a, E: Debug + ParseError<Span<'a>>>(
         ),
         map(tag([0xd1]), |_| Instr::RefIsNull),
         map(
-            preceded(tag([0xd0]), FuncIdx::from_wasm_bytes),
+            preceded(tag([0xd2]), FuncIdx::from_wasm_bytes),
             Instr::RefFunc,
         ),
     ))(b)
@@ -541,7 +541,7 @@ fn table_instrs<'a, E: Debug + ParseError<Span<'a>>>(
         branch::alt,
         bytes::complete::tag,
         combinator::map,
-        sequence::{preceded, tuple},
+        sequence::preceded,
     };
 
     alt((
@@ -552,38 +552,6 @@ fn table_instrs<'a, E: Debug + ParseError<Span<'a>>>(
         map(
             preceded(tag([0x26]), TableIdx::from_wasm_bytes),
             Instr::TableSet,
-        ),
-        // TODO: these should be encoded as u32s, but instead I'm just... pulling
-        // them in as byte literals, since they're all <2 bytes long in LEB128.
-        map(
-            preceded(
-                tag([0xfc, 0x0c]),
-                tuple((ElemIdx::from_wasm_bytes, TableIdx::from_wasm_bytes)),
-            ),
-            |(ei, ti)| Instr::TableInit(ei, ti),
-        ),
-        map(
-            preceded(tag([0xfc, 0x0d]), ElemIdx::from_wasm_bytes),
-            Instr::ElemDrop,
-        ),
-        map(
-            preceded(
-                tag([0xfc, 0x0e]),
-                tuple((TableIdx::from_wasm_bytes, TableIdx::from_wasm_bytes)),
-            ),
-            |(ei, ti)| Instr::TableCopy(ei, ti),
-        ),
-        map(
-            preceded(tag([0xfc, 0x0f]), TableIdx::from_wasm_bytes),
-            Instr::TableGrow,
-        ),
-        map(
-            preceded(tag([0xfc, 0x10]), TableIdx::from_wasm_bytes),
-            Instr::TableSize,
-        ),
-        map(
-            preceded(tag([0xfc, 0x11]), TableIdx::from_wasm_bytes),
-            Instr::TableFill,
         ),
     ))(b)
 }
@@ -705,28 +673,6 @@ fn memory_instrs<'a, E: Debug + ParseError<Span<'a>>>(
         ),
         // TODO: these should be encoded as u32s, but instead I'm just... pulling
         // them in as byte literals, since they're all <2 bytes long in LEB128.
-        map(
-            preceded(
-                tag([0xfc, 0x08]),
-                tuple((DataIdx::from_wasm_bytes, MemIdx::from_wasm_bytes)),
-            ),
-            |(di, mi)| Instr::MemoryInit(di, mi),
-        ),
-        map(
-            preceded(tag([0xfc, 0x09]), DataIdx::from_wasm_bytes),
-            Instr::DataDrop,
-        ),
-        map(
-            preceded(
-                tag([0xfc, 0x0a]),
-                tuple((MemIdx::from_wasm_bytes, MemIdx::from_wasm_bytes)),
-            ),
-            |(mi0, mi1)| Instr::MemoryCopy(mi0, mi1),
-        ),
-        map(
-            preceded(tag([0xfc, 0x0b]), MemIdx::from_wasm_bytes),
-            Instr::MemoryFill,
-        ),
     ))(input)
 }
 
@@ -889,6 +835,96 @@ fn numeric_instrs<'a, E: Debug + ParseError<Span<'a>>>(
     ))(input)
 }
 
+fn multibyte_instrs<'a, E: Debug + ParseError<Span<'a>>>(
+    input: Span<'a>,
+) -> nom::IResult<Span<'a>, Instr, E> {
+    use nom::{bytes::complete::tag, branch::alt, sequence::tuple, combinator::{ fail, map }};
+    let (input, t) = alt((
+        tag([0xfc]),
+        tag([0xfd]),
+        tag([0xfe]),
+        tag([0xff])
+    ))(input)?;
+
+    let (input, mb) = u32::from_wasm_bytes(input)?;
+
+    let instr = match (t[0], mb) {
+        (0xfc, 0x00) => Instr::I32SConvertSatF32,
+        (0xfc, 0x01) => Instr::I32UConvertSatF32,
+        (0xfc, 0x02) => Instr::I32SConvertSatF64,
+        (0xfc, 0x03) => Instr::I32UConvertSatF64,
+        (0xfc, 0x04) => Instr::I64SConvertSatF32,
+        (0xfc, 0x05) => Instr::I64UConvertSatF32,
+        (0xfc, 0x06) => Instr::I64SConvertSatF64,
+        (0xfc, 0x07) => Instr::I64UConvertSatF64,
+        (0xfc, 0x08) => {
+            return map(
+                tuple((DataIdx::from_wasm_bytes, MemIdx::from_wasm_bytes)),
+                |(di, mi)| Instr::MemoryInit(di, mi)
+            )(input)
+        },
+        (0xfc, 0x09) => {
+            return map(
+                DataIdx::from_wasm_bytes,
+                Instr::DataDrop,
+            )(input)
+        },
+        (0xfc, 0x0a) => {
+            return map(
+                tuple((MemIdx::from_wasm_bytes, MemIdx::from_wasm_bytes)),
+                |(mi0, mi1)| Instr::MemoryCopy(mi0, mi1),
+            )(input)
+        }
+        (0xfc, 0x0b) => {
+            return map(
+                MemIdx::from_wasm_bytes,
+                Instr::MemoryFill,
+            )(input)
+        }
+        (0xfc, 0x0c) => {
+            return map(
+                tuple((ElemIdx::from_wasm_bytes, TableIdx::from_wasm_bytes)),
+                |(ei, ti)| Instr::TableInit(ei, ti)
+            )(input)
+        }
+        (0xfc, 0x0d) => {
+            return map(
+                ElemIdx::from_wasm_bytes,
+                Instr::ElemDrop,
+            )(input)
+        }
+        (0xfc, 0x0e) => {
+            return map(
+                tuple((TableIdx::from_wasm_bytes, TableIdx::from_wasm_bytes)),
+                |(ei, ti)| Instr::TableCopy(ei, ti),
+            )(input)
+        }
+        (0xfc, 0x0f) => {
+            return map(
+                TableIdx::from_wasm_bytes,
+                Instr::TableGrow
+            )(input)
+        },
+        (0xfc, 0x10) => {
+            return map(
+                TableIdx::from_wasm_bytes,
+                Instr::TableSize
+            )(input)
+        }
+        (0xfc, 0x11) => {
+            return map(
+                TableIdx::from_wasm_bytes,
+                Instr::TableFill
+            )(input)
+        }
+
+        _ => return fail::<_, Instr, _>(input)
+    };
+
+    Ok((input, instr))
+}
+
+
 impl<'a> ParseWasmBinary<'a> for Instr {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         b: Span<'a>,
@@ -903,6 +939,7 @@ impl<'a> ParseWasmBinary<'a> for Instr {
             table_instrs,
             memory_instrs,
             numeric_instrs,
+            multibyte_instrs,
         ))(b)
     }
 }
@@ -1015,10 +1052,12 @@ impl<'a> ParseWasmBinary<'a> for Elem {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
-        use nom::{combinator::map, sequence::tuple};
+        use nom::{combinator::map, sequence::tuple, multi::many0};
 
+        let (input, pos) = nom_locate::position(input)?;
         let (input, flags) = u32::from_wasm_bytes(input)?;
 
+        let pos = pos.location_offset();
         /*
         ┌─── element type+exprs vs element kind + element idx
         │┌── explicit table index (or distinguishes passive from declarative)
@@ -1034,7 +1073,7 @@ impl<'a> ParseWasmBinary<'a> for Elem {
         111: reftype vec<expr>                      -> declarative
         */
 
-        match flags & 3 {
+        match flags & 7 {
             0b000 => map(
                 tuple((Expr::from_wasm_bytes, Vec::<FuncIdx>::from_wasm_bytes)),
                 |(ex, fs)| Elem::ActiveSegmentFuncs(ex, fs),
@@ -1069,7 +1108,7 @@ impl<'a> ParseWasmBinary<'a> for Elem {
                     TableIdx::from_wasm_bytes,
                     Expr::from_wasm_bytes,
                     RefType::from_wasm_bytes,
-                    Vec::<Expr>::from_wasm_bytes,
+                    many0(Expr::from_wasm_bytes),
                 )),
                 |(a, b, c, d)| Elem::ActiveSegmentTableAndExpr(a, b, c, d),
             )(input),
@@ -1131,36 +1170,22 @@ impl<'a> ParseWasmBinary<'a> for Data<'a> {
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::{
-            branch::alt,
-            bytes::complete::tag,
-            combinator::map,
-            sequence::{preceded, tuple},
+            combinator::{fail, map},
+            sequence::tuple,
         };
 
-        alt((
-            map(
-                preceded(
-                    tag([0x00]),
-                    tuple((Expr::from_wasm_bytes, ByteVec::from_wasm_bytes)),
-                ),
-                |(expr, bvec)| Data::Active(bvec, MemIdx(0), expr),
-            ),
-            map(
-                preceded(tag([0x01]), ByteVec::from_wasm_bytes),
-                Data::Passive,
-            ),
-            map(
-                preceded(
-                    tag([0x02]),
-                    tuple((
+        let (input, value) = u32::from_wasm_bytes(input)?;
+
+        match value {
+            0x00 => map(tuple((Expr::from_wasm_bytes, ByteVec::from_wasm_bytes)), |(expr, bvec)| Data::Active(bvec, MemIdx(0), expr))(input),
+            0x01 => map(ByteVec::from_wasm_bytes, Data::Passive)(input),
+            0x02 => map(tuple((
                         MemIdx::from_wasm_bytes,
                         Expr::from_wasm_bytes,
                         ByteVec::from_wasm_bytes,
-                    )),
-                ),
-                |(memidx, expr, bvec)| Data::Active(bvec, memidx, expr),
-            ),
-        ))(input)
+                    )), |(memidx, expr, bvec)| Data::Active(bvec, memidx, expr))(input),
+            _ => fail::<_, Self, _>(input)
+        }
     }
 }
 

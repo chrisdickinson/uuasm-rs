@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use std::fmt::Debug;
 
 #[derive(Debug, PartialEq, Clone)]
@@ -343,6 +344,16 @@ pub(crate) enum Instr {
     F64SConvertI64,
     F64UConvertI64,
     F64ConvertF32,
+
+    I32SConvertSatF32,
+    I32UConvertSatF32,
+    I32SConvertSatF64,
+    I32UConvertSatF64,
+    I64SConvertSatF32,
+    I64UConvertSatF32,
+    I64SConvertSatF64,
+    I64UConvertSatF64,
+
     I32ReinterpretF32,
     I64ReinterpretF64,
     F32ReinterpretI32,
