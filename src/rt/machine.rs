@@ -418,6 +418,7 @@ impl<'a> Machine<'a> {
     }
 
     pub(crate) fn call(&mut self, funcname: &str, args: &[Value]) -> anyhow::Result<Vec<Value>> {
+        // eprintln!("call={funcname:?}; args={args:?}");
         if !self.initialized {
             self.initialize()?;
         }
@@ -759,6 +760,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::Call(func_idx) => {
+                    let module_idx = frames[frame_idx].guest_index;
                     let (module_idx, function) = self
                         .function(module_idx, *func_idx)
                         .ok_or_else(|| anyhow::anyhow!("missing function"))?;
@@ -837,6 +839,7 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("expected reffunc value, got {:?}", v);
                     };
 
+                    let module_idx = frames[frame_idx].guest_index;
                     let (module_idx, function) = self
                         .function(module_idx, *v)
                         .ok_or_else(|| anyhow::anyhow!("missing function"))?;
@@ -1876,7 +1879,7 @@ impl<'a> Machine<'a> {
                     else {
                         anyhow::bail!("i32.add: not enough operands");
                     };
-                    value_stack.push(Value::I32(lhs + rhs));
+                    value_stack.push(Value::I32(lhs.wrapping_add(rhs)));
                 }
                 Instr::I32Sub => {
                     let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
@@ -1884,7 +1887,7 @@ impl<'a> Machine<'a> {
                     else {
                         anyhow::bail!("i32.sub: not enough operands");
                     };
-                    value_stack.push(Value::I32(lhs - rhs));
+                    value_stack.push(Value::I32(lhs.wrapping_sub(rhs)));
                 }
                 Instr::I32Mul => {
                     let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
@@ -1892,7 +1895,7 @@ impl<'a> Machine<'a> {
                     else {
                         anyhow::bail!("i32.mul: not enough operands");
                     };
-                    value_stack.push(Value::I32(lhs * rhs));
+                    value_stack.push(Value::I32(lhs.wrapping_mul(rhs)));
                 }
                 Instr::I32DivS => {
                     let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
@@ -1900,7 +1903,16 @@ impl<'a> Machine<'a> {
                     else {
                         anyhow::bail!("i32.divS: not enough operands");
                     };
-                    value_stack.push(Value::I32(lhs / rhs));
+
+                    if rhs == 0 {
+                        anyhow::bail!("i32.divS: integer divide by zero");
+                    }
+
+                    let Some(result) = lhs.checked_div(rhs) else {
+                        anyhow::bail!("i32.divS: integer overflow");
+                    };
+
+                    value_stack.push(Value::I32(result));
                 }
                 Instr::I32DivU => {
                     let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
@@ -1908,7 +1920,19 @@ impl<'a> Machine<'a> {
                     else {
                         anyhow::bail!("i32.divU: not enough operands");
                     };
-                    value_stack.push(Value::I32(((lhs as u32) / (rhs as u32)) as i32));
+
+                    let lhs = lhs as u32;
+                    let rhs = rhs as u32;
+
+                    if rhs == 0 {
+                        anyhow::bail!("i32.divU: integer divide by zero");
+                    }
+
+                    let Some(result) = lhs.checked_div(rhs) else {
+                        anyhow::bail!("i32.divU: integer overflow");
+                    };
+
+                    value_stack.push(Value::I32(result as i32));
                 }
                 Instr::I32RemS => {
                     let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
@@ -1916,16 +1940,34 @@ impl<'a> Machine<'a> {
                     else {
                         anyhow::bail!("i32.remS: not enough operands");
                     };
-                    value_stack.push(Value::I32(lhs % rhs));
+
+                    if rhs == 0 {
+                        anyhow::bail!("i32.remS: integer divide by zero");
+                    }
+
+                    let result = lhs.wrapping_rem(rhs);
+
+                    value_stack.push(Value::I32(result));
                 }
                 Instr::I32RemU => {
                     let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
                         (value_stack.pop(), value_stack.pop())
                     else {
-                        anyhow::bail!("i32.remU: not enough operands");
+                        anyhow::bail!("i32.rem_u: not enough operands");
                     };
-                    value_stack.push(Value::I32(((lhs as u32) % (rhs as u32)) as i32));
+
+                    let lhs = lhs as u32;
+                    let rhs = rhs as u32;
+
+                    if rhs == 0 {
+                        anyhow::bail!("i32.rem_u: integer divide by zero");
+                    }
+
+                    let result = lhs.wrapping_rem(rhs);
+
+                    value_stack.push(Value::I32(result as i32));
                 }
+
                 Instr::I32And => {
                     let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
                         (value_stack.pop(), value_stack.pop())
@@ -1956,15 +1998,14 @@ impl<'a> Machine<'a> {
                     else {
                         anyhow::bail!("i32.shl: not enough operands");
                     };
-                    value_stack.push(Value::I32(lhs << rhs));
-                }
+                    value_stack.push(Value::I32(lhs.wrapping_shl(rhs as u32)));                }
                 Instr::I32ShrS => {
                     let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
                         (value_stack.pop(), value_stack.pop())
                     else {
                         anyhow::bail!("i32.shrS: not enough operands");
                     };
-                    value_stack.push(Value::I32(lhs >> rhs));
+                    value_stack.push(Value::I32(lhs.wrapping_shr(rhs as u32)));
                 }
                 Instr::I32ShrU => {
                     let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
@@ -1972,7 +2013,8 @@ impl<'a> Machine<'a> {
                     else {
                         anyhow::bail!("i32.shrU: not enough operands");
                     };
-                    value_stack.push(Value::I32(((lhs as u32) >> rhs) as i32));
+                    let lhs = lhs as u32;
+                    value_stack.push(Value::I32(lhs.wrapping_shr(rhs as u32) as i32));
                 }
                 Instr::I32Rol => {
                     let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
@@ -2456,9 +2498,28 @@ impl<'a> Machine<'a> {
 
                     value_stack.push(Value::F64(op as f64));
                 },
-                Instr::I32ReinterpretF32 => todo!("I32ReinterpretF32"),
-                Instr::I64ReinterpretF64 => todo!("I64ReinterpretF64"),
-                Instr::F32ReinterpretI32 => todo!("F32ReinterpretI32"),
+                Instr::I32ReinterpretF32 => {
+                    let Some(Value::F32(op)) = value_stack.pop() else {
+                        anyhow::bail!("f32.TKTK: not enough operands");
+                    };
+                    value_stack.push(Value::I32(op.to_bits() as i32));
+                },
+
+                Instr::I64ReinterpretF64 => {
+                    let Some(Value::F64(op)) = value_stack.pop() else {
+                        anyhow::bail!("f64.TKTK: not enough operands");
+                    };
+                    value_stack.push(Value::I64(op.to_bits() as i64));
+                },
+
+                Instr::F32ReinterpretI32 => {
+                    let Some(Value::I32(op)) = value_stack.pop() else {
+                        anyhow::bail!("f32.convert_i32_u: not enough operands");
+                    };
+
+                    value_stack.push(Value::F32(f32::from_bits(op as u32)));
+                },
+
                 Instr::F64ReinterpretI64 => {
                     let Some(Value::I64(op)) = value_stack.pop() else {
                         anyhow::bail!("f64.convert_i64_u: not enough operands");
@@ -2467,8 +2528,24 @@ impl<'a> Machine<'a> {
                     value_stack.push(Value::F64(f64::from_bits(op as u64)));
                 },
 
-                Instr::I32SExtendI8 => todo!("I32SExtendI8"),
-                Instr::I32SExtendI16 => todo!("I32SExtendI16"),
+                Instr::I32SExtendI8 => {
+                    let Some(Value::I32(op)) = value_stack.pop() else {
+                        anyhow::bail!("i32.extend8_s: not enough operands");
+                    };
+
+                    let op = (op & 0xff) as u8 as i8;
+                    value_stack.push(Value::I32(op as i32));
+                },
+
+                Instr::I32SExtendI16 => {
+                    let Some(Value::I32(op)) = value_stack.pop() else {
+                        anyhow::bail!("i32.extend16_s: not enough operands");
+                    };
+
+                    let op = (op & 0xffff) as u16 as i16;
+                    value_stack.push(Value::I32(op as i32));
+                },
+
                 Instr::I64SExtendI8 => todo!("I64SExtendI8"),
                 Instr::I64SExtendI16 => todo!("I64SExtendI16"),
                 Instr::I64SExtendI32 => todo!("I64SExtendI32"),
@@ -2486,6 +2563,7 @@ impl<'a> Machine<'a> {
         }
 
         // TODO: handle multiple return values
+        // eprintln!("call={funcname:?}; args={args:?}; result={value_stack:?}");
         Ok(value_stack)
     }
 

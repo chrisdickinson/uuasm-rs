@@ -77,6 +77,7 @@ impl<'a> Imports<'a> {
     }
 
     pub(crate) fn link_module(&mut self, modname: &str, module: Module<'a>) {
+        // eprintln!("link_module={modname:?}");
         let idx = self.guests.len();
         for export in module.export_section().unwrap_or_default() {
             match export.desc {
