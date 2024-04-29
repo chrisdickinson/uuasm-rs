@@ -1,10 +1,10 @@
 use std::{error::Error, fs::read_to_string};
 
 use quote::quote;
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type", content = "value", rename_all="snake_case")]
+#[serde(tag = "type", content = "value", rename_all = "snake_case")]
 enum Value<'a> {
     F32(Option<&'a str>),
     I32(Option<&'a str>),
@@ -18,7 +18,7 @@ enum Value<'a> {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type", rename_all="snake_case")]
+#[serde(tag = "type", rename_all = "snake_case")]
 enum Action<'a> {
     Invoke {
         module: Option<&'a str>,
@@ -28,13 +28,13 @@ enum Action<'a> {
     Get {
         module: Option<&'a str>,
         field: &'a str,
-    }
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Input<'a> {
     source_filename: &'a str,
-    commands: Box<[Command<'a>]>
+    commands: Box<[Command<'a>]>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -46,7 +46,7 @@ struct Command<'a> {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type", rename_all="snake_case")]
+#[serde(tag = "type", rename_all = "snake_case")]
 enum CommandKind<'a> {
     Module {
         name: Option<&'a str>,
@@ -54,22 +54,22 @@ enum CommandKind<'a> {
     },
     Register {
         name: Option<&'a str>,
-        #[serde(rename="as")]
-        as_target: &'a str
+        #[serde(rename = "as")]
+        as_target: &'a str,
     },
     AssertReturn {
         action: Action<'a>,
-        expected: Box<[Value<'a>]>
+        expected: Box<[Value<'a>]>,
     },
     AssertTrap {
         action: Action<'a>,
         text: &'a str,
-        expected: Box<[Value<'a>]>
+        expected: Box<[Value<'a>]>,
     },
     AssertExhaustion {
         action: Action<'a>,
         text: &'a str,
-        expected: Box<[Value<'a>]>
+        expected: Box<[Value<'a>]>,
     },
     AssertMalformed {
         text: &'a str,
@@ -88,13 +88,13 @@ enum CommandKind<'a> {
         filename: &'a str,
     },
     Action {
-        action: Action<'a>
+        action: Action<'a>,
     },
 }
 
 fn main() -> Result<(), Box<dyn Error>> {
     let Some(arg) = std::env::args().nth(1) else {
-        return Ok(())
+        return Ok(());
     };
 
     let data = read_to_string(arg)?;
@@ -106,7 +106,6 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
 
     };
-
 
     Ok(())
 }

@@ -12,8 +12,7 @@ pub(crate) mod value;
 pub(crate) use imports::Imports;
 pub(crate) use value::Value;
 
-pub(crate) use machine::Machine;
-use crate::nodes::{BlockType, NumType, RefType, ValType, VecType};
+use crate::nodes::{NumType, RefType, ValType, VecType};
 
 impl ValType {
     fn instantiate(&self) -> Value {
@@ -249,8 +248,8 @@ pub(crate) struct TKTK;
 
 #[cfg(test)]
 mod test {
-    
-    use crate::{parse::parse};
+
+    use crate::parse::parse;
 
     #[test]
     fn test_create_store() {

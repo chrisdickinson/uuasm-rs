@@ -1,8 +1,3 @@
-use std::{
-    alloc::{self, Layout},
-    slice::{from_raw_parts, from_raw_parts_mut},
-};
-
 use crate::nodes::Limits;
 
 const PAGE_SHIFT: usize = 16;
@@ -13,7 +8,7 @@ const LAST_PAGE: usize = 0xffff_ffff >> PAGE_SHIFT;
 pub(crate) struct MemoryRegion {
     page_count: usize,
     limits: (usize, usize),
-    storage: Vec<u8>
+    storage: Vec<u8>,
 }
 
 impl MemoryRegion {
@@ -62,11 +57,17 @@ impl MemoryRegion {
 
     // XXX: should we have an option for "just copy, do not grow"?
     pub(crate) fn copy_data(&mut self, data: &[u8], offset: usize) {
-        self.storage[offset..offset+data.len()].copy_from_slice(data);
+        self.storage[offset..offset + data.len()].copy_from_slice(data);
     }
 
-    pub(crate) fn copy_overlapping_data(&mut self, offset: usize, from_offset: usize, count: usize) {
-        self.storage.copy_within(from_offset..from_offset+count, offset);
+    pub(crate) fn copy_overlapping_data(
+        &mut self,
+        offset: usize,
+        from_offset: usize,
+        count: usize,
+    ) {
+        self.storage
+            .copy_within(from_offset..from_offset + count, offset);
     }
 
     pub(crate) fn grow_to_fit(&mut self, data: &[u8], offset: usize) -> anyhow::Result<usize> {
@@ -78,7 +79,7 @@ impl MemoryRegion {
     pub(crate) fn grow(&mut self, page_count: usize) -> anyhow::Result<usize> {
         let new_page_count = self.page_count + page_count;
         if new_page_count > self.limits.1 {
-            return Ok(-1i32 as usize)
+            return Ok(-1i32 as usize);
         }
 
         if new_page_count >= LAST_PAGE {

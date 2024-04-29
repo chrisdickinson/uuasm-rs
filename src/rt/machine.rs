@@ -5,7 +5,8 @@ use anyhow::Context;
 use crate::{
     memory_region::MemoryRegion,
     nodes::{
-        BlockType, ByteVec, Code, CodeIdx, Data, Elem, ExportDesc, Expr, FuncIdx, Global, GlobalIdx, ImportDesc, Instr, MemIdx, Module, TableIdx, Type, TypeIdx
+        BlockType, ByteVec, Code, CodeIdx, Data, Elem, ExportDesc, Expr, FuncIdx, Global,
+        GlobalIdx, ImportDesc, Instr, MemIdx, Module, TableIdx, Type, TypeIdx,
     },
 };
 
@@ -26,16 +27,23 @@ pub(super) type MachineTableIndex = usize;
 pub(super) type MachineGlobalIndex = usize;
 
 impl Elem {
-    pub(crate) fn value(&self, idx: usize, module_idx: usize, machine: &Machine<'_>) -> anyhow::Result<Value> {
+    pub(crate) fn value(
+        &self,
+        idx: usize,
+        module_idx: usize,
+        machine: &Machine<'_>,
+    ) -> anyhow::Result<Value> {
         Ok(match self {
-            Elem::ActiveSegmentFuncs(_, xs) |
-            Elem::PassiveSegment(_, xs) |
-            Elem::ActiveSegment(_, _, _, xs) |
-            Elem::DeclarativeSegment(_, xs) => Value::RefFunc(xs[idx]),
-            Elem::ActiveSegmentExpr(_, xs) | 
-            Elem::PassiveSegmentExpr(_, xs) |
-            Elem::ActiveSegmentTableAndExpr(_, _, _, xs) |
-            Elem::DeclarativeSegmentExpr(_, xs) => machine.compute_constant_expr(module_idx, xs[idx].0.as_slice())?
+            Elem::ActiveSegmentFuncs(_, xs)
+            | Elem::PassiveSegment(_, xs)
+            | Elem::ActiveSegment(_, _, _, xs)
+            | Elem::DeclarativeSegment(_, xs) => Value::RefFunc(xs[idx]),
+            Elem::ActiveSegmentExpr(_, xs)
+            | Elem::PassiveSegmentExpr(_, xs)
+            | Elem::ActiveSegmentTableAndExpr(_, _, _, xs)
+            | Elem::DeclarativeSegmentExpr(_, xs) => {
+                machine.compute_constant_expr(module_idx, xs[idx].0.as_slice())?
+            }
         })
     }
 }
@@ -302,11 +310,12 @@ impl<'a> Machine<'a> {
     pub(crate) fn initialize(&mut self) -> anyhow::Result<()> {
         for (module_idx, global_set) in self.globals.iter().enumerate() {
             for global in global_set.iter() {
-                let Some((global_idx, instrs)) = global.initdata() else { continue };
+                let Some((global_idx, instrs)) = global.initdata() else {
+                    continue;
+                };
                 self.global_values[global_idx] = self.compute_constant_expr(module_idx, instrs)?;
             }
         }
-
 
         for (module_idx, data_set) in self.data.iter().enumerate() {
             for data in data_set.iter() {
@@ -318,7 +327,10 @@ impl<'a> Machine<'a> {
                             .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
 
                         let memoryidx = self.memory(module_idx, *memory_idx);
-                        let memory = self.memory_regions.get_mut(memoryidx).ok_or_else(|| anyhow::anyhow!("no such memory"))?;
+                        let memory = self
+                            .memory_regions
+                            .get_mut(memoryidx)
+                            .ok_or_else(|| anyhow::anyhow!("no such memory"))?;
 
                         memory.grow_to_fit(data.0, memoffset)?;
                         memory.copy_data(data.0, memoffset);
@@ -333,10 +345,10 @@ impl<'a> Machine<'a> {
             for elem in elem_set.iter_mut() {
                 if matches!(
                     elem,
-                    Elem::ActiveSegmentFuncs(_, _) |
-                    Elem::ActiveSegment(_, _, _, _) |
-                    Elem::ActiveSegmentExpr(_, _) |
-                    Elem::ActiveSegmentTableAndExpr(_, _, _, _)
+                    Elem::ActiveSegmentFuncs(_, _)
+                        | Elem::ActiveSegment(_, _, _, _)
+                        | Elem::ActiveSegmentExpr(_, _)
+                        | Elem::ActiveSegmentTableAndExpr(_, _, _, _)
                 ) {
                     let mut empty = Elem::PassiveSegment(0, vec![]);
                     mem::swap(elem, &mut empty);
@@ -354,7 +366,10 @@ impl<'a> Machine<'a> {
                         .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
 
                     let tableidx = self.table(module_idx, TableIdx(0));
-                    let table = self.table_instances.get_mut(tableidx).ok_or_else(|| anyhow::anyhow!("no such table"))?;
+                    let table = self
+                        .table_instances
+                        .get_mut(tableidx)
+                        .ok_or_else(|| anyhow::anyhow!("no such table"))?;
 
                     for (idx, xs) in func_indices.iter().enumerate() {
                         table[idx + offset] = Value::RefFunc(*xs);
@@ -369,12 +384,15 @@ impl<'a> Machine<'a> {
                         .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
 
                     let tableidx = self.table(module_idx, table_idx);
-                    let table = self.table_instances.get_mut(tableidx).ok_or_else(|| anyhow::anyhow!("no such table"))?;
+                    let table = self
+                        .table_instances
+                        .get_mut(tableidx)
+                        .ok_or_else(|| anyhow::anyhow!("no such table"))?;
 
                     for (idx, xs) in func_indices.iter().enumerate() {
                         table[idx + offset] = Value::RefFunc(*xs);
                     }
-                },
+                }
 
                 Elem::ActiveSegmentExpr(expr, exprs) => {
                     let offset = self.compute_constant_expr(module_idx, &expr.0)?;
@@ -382,15 +400,21 @@ impl<'a> Machine<'a> {
                         .as_usize()
                         .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
 
-                    let values = exprs.iter().map(|xs| self.compute_constant_expr(module_idx, &xs.0)).collect::<anyhow::Result<Vec<_>>>()?;
+                    let values = exprs
+                        .iter()
+                        .map(|xs| self.compute_constant_expr(module_idx, &xs.0))
+                        .collect::<anyhow::Result<Vec<_>>>()?;
 
                     let tableidx = self.table(module_idx, TableIdx(0));
-                    let table = self.table_instances.get_mut(tableidx).ok_or_else(|| anyhow::anyhow!("no such table"))?;
+                    let table = self
+                        .table_instances
+                        .get_mut(tableidx)
+                        .ok_or_else(|| anyhow::anyhow!("no such table"))?;
 
                     for (idx, xs) in values.iter().enumerate() {
                         table[idx + offset] = *xs;
                     }
-                },
+                }
 
                 Elem::ActiveSegmentTableAndExpr(table_idx, expr, _ref_type, exprs) => {
                     let offset = self.compute_constant_expr(module_idx, &expr.0)?;
@@ -398,15 +422,21 @@ impl<'a> Machine<'a> {
                         .as_usize()
                         .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
 
-                    let values = exprs.iter().map(|xs| self.compute_constant_expr(module_idx, &xs.0)).collect::<anyhow::Result<Vec<_>>>()?;
+                    let values = exprs
+                        .iter()
+                        .map(|xs| self.compute_constant_expr(module_idx, &xs.0))
+                        .collect::<anyhow::Result<Vec<_>>>()?;
 
                     let tableidx = self.table(module_idx, table_idx);
-                    let table = self.table_instances.get_mut(tableidx).ok_or_else(|| anyhow::anyhow!("no such table"))?;
+                    let table = self
+                        .table_instances
+                        .get_mut(tableidx)
+                        .ok_or_else(|| anyhow::anyhow!("no such table"))?;
 
                     for (idx, xs) in values.iter().enumerate() {
                         table[idx + offset] = *xs;
                     }
-                },
+                }
 
                 _ => (), // passive and declarative segments do not participate in
                          // initialization
@@ -429,10 +459,13 @@ impl<'a> Machine<'a> {
             .get(funcname)
             .ok_or_else(|| anyhow::anyhow!("no such export {funcname}"))?;
 
-        let ExportDesc::Func(func_idx) = self.exports.get(&func_name_idx)
-            .ok_or_else(|| anyhow::anyhow!("no such export {funcname}"))? else {
-                anyhow::bail!("export {funcname} is not a function");
-            };
+        let ExportDesc::Func(func_idx) = self
+            .exports
+            .get(&func_name_idx)
+            .ok_or_else(|| anyhow::anyhow!("no such export {funcname}"))?
+        else {
+            anyhow::bail!("export {funcname} is not a function");
+        };
 
         let module_idx = self.functions.len() - 1;
         let (module_idx, function) = self
@@ -470,7 +503,11 @@ impl<'a> Machine<'a> {
         let mut locals: Vec<Value> = args
             .iter()
             .cloned()
-            .chain(locals.iter().flat_map(|xs| (0..xs.0).map(|_| xs.1.instantiate())))
+            .chain(
+                locals
+                    .iter()
+                    .flat_map(|xs| (0..xs.0).map(|_| xs.1.instantiate())),
+            )
             .collect();
 
         let mut value_stack = Vec::<Value>::new();
@@ -494,26 +531,38 @@ impl<'a> Machine<'a> {
             let frame_idx = frames.len() - 1;
             if frames[frame_idx].pc >= frames[frame_idx].instrs.len() {
                 match frames[frame_idx].block_type {
-                    BlockType::Empty => {},
+                    BlockType::Empty => {}
                     BlockType::Val(val_type) => {
                         let Some(last_value) = value_stack.last() else {
                             anyhow::bail!("block expected at least one value on stack");
                         };
 
                         val_type.validate(last_value)?;
-                    },
+                    }
                     BlockType::TypeIndex(type_idx) => {
-                        let Some(ty) = self.types[frames[frame_idx].guest_index].get(type_idx.0 as usize) else {
+                        let Some(ty) =
+                            self.types[frames[frame_idx].guest_index].get(type_idx.0 as usize)
+                        else {
                             anyhow::bail!("could not resolve blocktype");
                         };
-                        if value_stack.len() < ty.1.0.len() {
-                            anyhow::bail!("block expected at least {} value{} on stack", ty.1.0.len(), if ty.1.0.len() == 1 { "" } else { "s" });
+                        if value_stack.len() < ty.1 .0.len() {
+                            anyhow::bail!(
+                                "block expected at least {} value{} on stack",
+                                ty.1 .0.len(),
+                                if ty.1 .0.len() == 1 { "" } else { "s" }
+                            );
                         }
 
-                        for (v, vt) in value_stack.iter().rev().take(ty.1.0.len()).rev().zip(ty.1.0.iter()) {
+                        for (v, vt) in value_stack
+                            .iter()
+                            .rev()
+                            .take(ty.1 .0.len())
+                            .rev()
+                            .zip(ty.1 .0.iter())
+                        {
                             vt.validate(v)?;
                         }
-                    },
+                    }
                 };
 
                 locals.shrink_to(frames[frame_idx].locals_base_offset);
@@ -630,11 +679,13 @@ impl<'a> Machine<'a> {
                         BlockType::Empty => 0,
                         BlockType::Val(_) => 1,
                         BlockType::TypeIndex(type_idx) => {
-                            let Some(ty) = self.types[frames[frame_idx].guest_index].get(type_idx.0 as usize) else {
+                            let Some(ty) =
+                                self.types[frames[frame_idx].guest_index].get(type_idx.0 as usize)
+                            else {
                                 anyhow::bail!("could not resolve blocktype");
                             };
-                            ty.1.0.len()
-                        },
+                            ty.1 .0.len()
+                        }
                     };
 
                     let vs = value_stack.split_off(value_stack.len() - to_preserve);
@@ -664,14 +715,20 @@ impl<'a> Machine<'a> {
                             BlockType::Empty => 0,
                             BlockType::Val(_) => 1,
                             BlockType::TypeIndex(type_idx) => {
-                                let Some(ty) = self.types[frames[frame_idx].guest_index].get(type_idx.0 as usize) else {
+                                let Some(ty) = self.types[frames[frame_idx].guest_index]
+                                    .get(type_idx.0 as usize)
+                                else {
                                     anyhow::bail!("could not resolve blocktype");
                                 };
-                                ty.1.0.len()
-                            },
+                                ty.1 .0.len()
+                            }
                         };
                         if value_stack.len() < to_preserve {
-                            anyhow::bail!("block expected at least {} value{} on stack", to_preserve, if to_preserve == 1 { "" } else { "s" });
+                            anyhow::bail!(
+                                "block expected at least {} value{} on stack",
+                                to_preserve,
+                                if to_preserve == 1 { "" } else { "s" }
+                            );
                         }
 
                         let vs = value_stack.split_off(value_stack.len() - to_preserve);
@@ -708,14 +765,20 @@ impl<'a> Machine<'a> {
                         BlockType::Empty => 0,
                         BlockType::Val(_) => 1,
                         BlockType::TypeIndex(type_idx) => {
-                            let Some(ty) = self.types[frames[frame_idx].guest_index].get(type_idx.0 as usize) else {
+                            let Some(ty) =
+                                self.types[frames[frame_idx].guest_index].get(type_idx.0 as usize)
+                            else {
                                 anyhow::bail!("could not resolve blocktype");
                             };
-                            ty.1.0.len()
-                        },
+                            ty.1 .0.len()
+                        }
                     };
                     if value_stack.len() < to_preserve {
-                        anyhow::bail!("block expected at least {} value{} on stack", to_preserve, if to_preserve == 1 { "" } else { "s" });
+                        anyhow::bail!(
+                            "block expected at least {} value{} on stack",
+                            to_preserve,
+                            if to_preserve == 1 { "" } else { "s" }
+                        );
                     }
 
                     let vs = value_stack.split_off(value_stack.len() - to_preserve);
@@ -742,15 +805,21 @@ impl<'a> Machine<'a> {
                         BlockType::Empty => 0,
                         BlockType::Val(_) => 1,
                         BlockType::TypeIndex(type_idx) => {
-                            let Some(ty) = self.types[frames[frame_idx].guest_index].get(type_idx.0 as usize) else {
+                            let Some(ty) =
+                                self.types[frames[frame_idx].guest_index].get(type_idx.0 as usize)
+                            else {
                                 anyhow::bail!("could not resolve blocktype");
                             };
-                            ty.1.0.len()
-                        },
+                            ty.1 .0.len()
+                        }
                     };
 
                     if value_stack.len() < to_preserve {
-                        anyhow::bail!("block expected at least {} value{} on stack", to_preserve, if to_preserve == 1 { "" } else { "s" });
+                        anyhow::bail!(
+                            "block expected at least {} value{} on stack",
+                            to_preserve,
+                            if to_preserve == 1 { "" } else { "s" }
+                        );
                     }
 
                     let vs = value_stack.split_off(value_stack.len() - to_preserve);
@@ -817,7 +886,8 @@ impl<'a> Machine<'a> {
 
                 Instr::CallIndirect(type_idx, table_idx) => {
                     let table_instance_idx = self.table(frames[frame_idx].guest_index, *table_idx);
-                    let check_type = &self.types[frames[frame_idx].guest_index][type_idx.0 as usize];
+                    let check_type =
+                        &self.types[frames[frame_idx].guest_index][type_idx.0 as usize];
 
                     let table = &self.table_instances[table_instance_idx];
 
@@ -898,16 +968,14 @@ impl<'a> Machine<'a> {
                     });
                 }
 
-                Instr::RefNull(_ref_type) => {
-                    value_stack.push(Value::RefNull)
-                },
+                Instr::RefNull(_ref_type) => value_stack.push(Value::RefNull),
                 Instr::RefIsNull => {
                     let Some(v) = value_stack.pop() else {
                         anyhow::bail!("ref.null: expected one value on stack")
                     };
 
                     value_stack.push(Value::I32(if matches!(v, Value::RefNull) { 1 } else { 0 }));
-                },
+                }
 
                 Instr::RefFunc(func_idx) => {
                     if func_idx.0 as usize >= self.functions[frames[frame_idx].guest_index].len() {
@@ -915,7 +983,7 @@ impl<'a> Machine<'a> {
                     }
 
                     value_stack.push(Value::RefFunc(*func_idx))
-                },
+                }
 
                 Instr::Drop => {
                     let Some(_) = value_stack.pop() else {
@@ -994,11 +1062,16 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("out of bounds table access");
                     }
                     value_stack.push(table[offset]);
-                },
+                }
 
                 Instr::TableSet(table_idx) => {
                     let table_idx = self.table(frames[frame_idx].guest_index, *table_idx);
-                    let Some(value @ Value::RefFunc(_) | value @ Value::RefNull | value @ Value::RefExtern(_)) = value_stack.pop() else {
+                    let Some(
+                        value @ Value::RefFunc(_)
+                        | value @ Value::RefNull
+                        | value @ Value::RefExtern(_),
+                    ) = value_stack.pop()
+                    else {
                         anyhow::bail!("table.set: expected reference value at top of stack");
                     };
                     let Some(offset) = value_stack.pop().and_then(|xs| xs.as_usize()) else {
@@ -1011,11 +1084,15 @@ impl<'a> Machine<'a> {
                     }
 
                     table[offset] = value;
-                },
+                }
 
                 Instr::TableInit(elem_idx, table_idx) => {
                     let guest_index = frames[frame_idx].guest_index;
-                    let Some(elem) = self.elements.get(guest_index).and_then(|xs| xs.get(elem_idx.0 as usize)) else {
+                    let Some(elem) = self
+                        .elements
+                        .get(guest_index)
+                        .and_then(|xs| xs.get(elem_idx.0 as usize))
+                    else {
                         anyhow::bail!("element idx out of range");
                     };
 
@@ -1041,13 +1118,16 @@ impl<'a> Machine<'a> {
                     }
 
                     // TODO: is there any context in which a declarative elem can be used?
-                    if matches!(elem, Elem::DeclarativeSegment(_, _) | Elem::DeclarativeSegmentExpr(_, _)) {
+                    if matches!(
+                        elem,
+                        Elem::DeclarativeSegment(_, _) | Elem::DeclarativeSegmentExpr(_, _)
+                    ) {
                         anyhow::bail!("out of bounds table access");
                     }
 
-                    let v: Box<[Value]> = (srcaddr..srcaddr + count).map(|idx| {
-                        elem.value(idx, guest_index, self)
-                    }).collect::<anyhow::Result<_>>()?;
+                    let v: Box<[Value]> = (srcaddr..srcaddr + count)
+                        .map(|idx| elem.value(idx, guest_index, self))
+                        .collect::<anyhow::Result<_>>()?;
 
                     let table = &mut self.table_instances[table_idx];
                     if (destaddr + count) > table.len() {
@@ -1057,26 +1137,28 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("out of bounds table access");
                     }
 
-                    for (src_idx, dst_idx) in (0..count).zip(destaddr..destaddr+count) {
+                    for (src_idx, dst_idx) in (0..count).zip(destaddr..destaddr + count) {
                         table[dst_idx] = v[src_idx];
                     }
-                },
+                }
 
                 Instr::ElemDrop(elem_idx) => {
                     let guest_index = frames[frame_idx].guest_index;
-                    let Some(elem) = self.elements.get_mut(guest_index).and_then(|xs| xs.get_mut(elem_idx.0 as usize)) else {
+                    let Some(elem) = self
+                        .elements
+                        .get_mut(guest_index)
+                        .and_then(|xs| xs.get_mut(elem_idx.0 as usize))
+                    else {
                         anyhow::bail!("element idx out of range");
                     };
 
                     *elem = Elem::PassiveSegment(0, vec![]);
-                },
+                }
 
                 Instr::TableCopy(from_table_idx, to_table_idx) => {
-                    let from_table_idx =
-                        self.table(frames[frame_idx].guest_index, *from_table_idx);
+                    let from_table_idx = self.table(frames[frame_idx].guest_index, *from_table_idx);
 
-                    let to_table_idx =
-                        self.table(frames[frame_idx].guest_index, *to_table_idx);
+                    let to_table_idx = self.table(frames[frame_idx].guest_index, *to_table_idx);
 
                     let items = value_stack.split_off(value_stack.len() - 3);
                     let Some(count) = items[2].as_usize() else {
@@ -1095,20 +1177,20 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("out of bounds table access");
                     }
 
-                    let values = (srcaddr..srcaddr+count).map(|src_idx| {
-                        self.table_instances[from_table_idx][src_idx]
-                    }).collect::<Box<[_]>>();
+                    let values = (srcaddr..srcaddr + count)
+                        .map(|src_idx| self.table_instances[from_table_idx][src_idx])
+                        .collect::<Box<[_]>>();
 
-                    for (src_idx, dst_idx) in (0..count).zip(destaddr..destaddr+count) {
+                    for (src_idx, dst_idx) in (0..count).zip(destaddr..destaddr + count) {
                         self.table_instances[to_table_idx][dst_idx] = values[src_idx];
                     }
-                },
+                }
 
                 Instr::TableGrow(_) => todo!("TableGrow"),
                 Instr::TableSize(table_idx) => {
                     let table_idx = self.table(frames[frame_idx].guest_index, *table_idx);
                     value_stack.push(Value::I32(self.table_instances[table_idx].len() as i32));
-                },
+                }
                 Instr::TableFill(_) => todo!("TableFill"),
 
                 Instr::I32Load(mem) => {
@@ -1325,7 +1407,7 @@ impl<'a> Machine<'a> {
 
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &v.to_le_bytes())?;
-                },
+                }
 
                 Instr::F32Store(mem) => {
                     let memory_idx =
@@ -1342,7 +1424,7 @@ impl<'a> Machine<'a> {
 
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &v.to_le_bytes())?;
-                },
+                }
 
                 Instr::F64Store(mem) => {
                     let memory_idx =
@@ -1359,7 +1441,7 @@ impl<'a> Machine<'a> {
 
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &v.to_le_bytes())?;
-                },
+                }
                 Instr::I32Store8(mem) => {
                     let memory_idx =
                         self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
@@ -1376,7 +1458,7 @@ impl<'a> Machine<'a> {
                     let v = v as i8;
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &[v as u8])?;
-                },
+                }
                 Instr::I32Store16(mem) => {
                     let memory_idx =
                         self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
@@ -1393,7 +1475,7 @@ impl<'a> Machine<'a> {
                     let v = v as i16;
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &v.to_le_bytes())?;
-                },
+                }
 
                 Instr::I64Store8(mem) => {
                     let memory_idx =
@@ -1411,7 +1493,7 @@ impl<'a> Machine<'a> {
                     let v = v as i8;
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &[v as u8])?;
-                },
+                }
                 Instr::I64Store16(mem) => {
                     let memory_idx =
                         self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
@@ -1428,7 +1510,7 @@ impl<'a> Machine<'a> {
                     let v = v as i16;
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &v.to_le_bytes())?;
-                },
+                }
                 Instr::I64Store32(mem) => {
                     let memory_idx =
                         self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
@@ -1445,13 +1527,13 @@ impl<'a> Machine<'a> {
                     let v = v as i32;
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &v.to_le_bytes())?;
-                },
+                }
 
                 Instr::MemorySize(mem_idx) => {
                     let memory_idx = self.memory(frames[frame_idx].guest_index, *mem_idx);
                     let memory_region = &mut self.memory_regions[memory_idx];
                     value_stack.push(Value::I32(memory_region.page_count() as i32));
-                },
+                }
 
                 Instr::MemoryGrow(mem_idx) => {
                     let memory_idx = self.memory(frames[frame_idx].guest_index, *mem_idx);
@@ -1465,7 +1547,9 @@ impl<'a> Machine<'a> {
                     value_stack.push(Value::I32(page_count as i32));
                 }
                 Instr::MemoryInit(data_idx, mem_idx) => {
-                    let Some(data) = self.data[frames[frame_idx].guest_index].get(data_idx.0 as usize) else {
+                    let Some(data) =
+                        self.data[frames[frame_idx].guest_index].get(data_idx.0 as usize)
+                    else {
                         anyhow::bail!("could not fetch data by that id")
                     };
                     let data = match data {
@@ -1473,8 +1557,7 @@ impl<'a> Machine<'a> {
                         Data::Passive(v) => v,
                     };
 
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, *mem_idx);
+                    let memory_idx = self.memory(frames[frame_idx].guest_index, *mem_idx);
 
                     let memory_region = &mut self.memory_regions[memory_idx];
                     let items = value_stack.split_off(value_stack.len() - 3);
@@ -1505,22 +1588,22 @@ impl<'a> Machine<'a> {
                     }
 
                     memory_region.copy_data(from_slice, destaddr);
-                },
+                }
 
                 Instr::DataDrop(data_idx) => {
-                    let Some(data) = self.data[frames[frame_idx].guest_index].get_mut(data_idx.0 as usize) else {
+                    let Some(data) =
+                        self.data[frames[frame_idx].guest_index].get_mut(data_idx.0 as usize)
+                    else {
                         anyhow::bail!("could not fetch data by that id")
                     };
 
                     *data = Data::Passive(ByteVec(&[]));
-                },
+                }
 
                 Instr::MemoryCopy(from_mem_idx, to_mem_idx) => {
-                    let from_memory_idx =
-                        self.memory(frames[frame_idx].guest_index, *from_mem_idx);
+                    let from_memory_idx = self.memory(frames[frame_idx].guest_index, *from_mem_idx);
 
-                    let to_memory_idx =
-                        self.memory(frames[frame_idx].guest_index, *to_mem_idx);
+                    let to_memory_idx = self.memory(frames[frame_idx].guest_index, *to_mem_idx);
 
                     // if these are the same memory, we're going to borrow it once mutably.
                     if from_memory_idx == to_memory_idx {
@@ -1543,17 +1626,15 @@ impl<'a> Machine<'a> {
                         }
                         memory_region.copy_overlapping_data(destaddr, srcaddr, count);
                     } else {
-                        let from_memory_region = &self.memory_regions[from_memory_idx];
-                        let to_memory_region = &self.memory_regions[to_memory_idx];
+                        let _from_memory_region = &self.memory_regions[from_memory_idx];
+                        let _to_memory_region = &self.memory_regions[to_memory_idx];
                         // memory_region.copy_data(from_slice, count);
                         todo!()
                     }
-
-                },
+                }
 
                 Instr::MemoryFill(mem_idx) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, *mem_idx);
+                    let memory_idx = self.memory(frames[frame_idx].guest_index, *mem_idx);
 
                     let memory_region = &mut self.memory_regions[memory_idx];
 
@@ -1569,7 +1650,7 @@ impl<'a> Machine<'a> {
                     };
 
                     memory_region.fill_data(val as u8, offset as usize, count as usize)?;
-                },
+                }
 
                 Instr::I32Const(v) => {
                     value_stack.push(Value::I32(*v));
@@ -1998,7 +2079,8 @@ impl<'a> Machine<'a> {
                     else {
                         anyhow::bail!("i32.shl: not enough operands");
                     };
-                    value_stack.push(Value::I32(lhs.wrapping_shl(rhs as u32)));                }
+                    value_stack.push(Value::I32(lhs.wrapping_shl(rhs as u32)));
+                }
                 Instr::I32ShrS => {
                     let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
                         (value_stack.pop(), value_stack.pop())
@@ -2392,7 +2474,7 @@ impl<'a> Machine<'a> {
                     };
 
                     value_stack.push(Value::I32(op as i32));
-                },
+                }
 
                 Instr::I32SConvertF32 => {
                     let Some(Value::F32(op)) = value_stack.pop() else {
@@ -2400,28 +2482,28 @@ impl<'a> Machine<'a> {
                     };
 
                     value_stack.push(Value::I32(op as i32));
-                },
+                }
                 Instr::I32UConvertF32 => {
                     let Some(Value::F32(op)) = value_stack.pop() else {
                         anyhow::bail!("i32.trunc_f32_u: not enough operands");
                     };
 
                     value_stack.push(Value::I32(op as u32 as i32));
-                },
+                }
                 Instr::I32SConvertF64 => {
                     let Some(Value::F64(op)) = value_stack.pop() else {
                         anyhow::bail!("i32.TKTK: not enough operands");
                     };
 
                     value_stack.push(Value::I32(op as i32));
-                },
+                }
                 Instr::I32UConvertF64 => {
                     let Some(Value::F64(op)) = value_stack.pop() else {
                         anyhow::bail!("i32.TKTK: not enough operands");
                     };
 
                     value_stack.push(Value::I32(op as u32 as i32));
-                },
+                }
                 Instr::I64SConvertI32 => {
                     let Some(Value::I32(op)) = value_stack.pop() else {
                         anyhow::bail!("i64.extend_i32_s: not enough operands");
@@ -2435,35 +2517,35 @@ impl<'a> Machine<'a> {
                     };
 
                     value_stack.push(Value::I64(op as u32 as i64));
-                },
+                }
                 Instr::I64SConvertF32 => {
                     let Some(Value::F32(op)) = value_stack.pop() else {
                         anyhow::bail!("i64.TKTK: not enough operands");
                     };
 
                     value_stack.push(Value::I64(op as i64));
-                },
+                }
                 Instr::I64UConvertF32 => {
                     let Some(Value::F32(op)) = value_stack.pop() else {
                         anyhow::bail!("i64.TKTK: not enough operands");
                     };
 
                     value_stack.push(Value::I64(op as u32 as i64));
-                },
+                }
                 Instr::I64SConvertF64 => {
                     let Some(Value::F64(op)) = value_stack.pop() else {
                         anyhow::bail!("i64.TKTK: not enough operands");
                     };
 
                     value_stack.push(Value::I64(op as i64));
-                },
+                }
                 Instr::I64UConvertF64 => {
                     let Some(Value::F64(op)) = value_stack.pop() else {
                         anyhow::bail!("i64.TKTK: not enough operands");
                     };
 
                     value_stack.push(Value::I64(op as u64 as i64));
-                },
+                }
                 Instr::F32SConvertI32 => todo!("F32SConvertI32"),
                 Instr::F32UConvertI32 => todo!("F32UConvertI32"),
                 Instr::F32SConvertI64 => todo!("F32SConvertI64"),
@@ -2475,14 +2557,14 @@ impl<'a> Machine<'a> {
                     };
 
                     value_stack.push(Value::F64(op as f64));
-                },
+                }
                 Instr::F64UConvertI32 => {
                     let Some(Value::I32(op)) = value_stack.pop() else {
                         anyhow::bail!("f64.convert_i32_u: not enough operands");
                     };
 
                     value_stack.push(Value::F64(op as u32 as f64));
-                },
+                }
                 Instr::F64SConvertI64 => todo!("F64SConvertI64"),
                 Instr::F64UConvertI64 => {
                     let Some(Value::I64(op)) = value_stack.pop() else {
@@ -2490,27 +2572,27 @@ impl<'a> Machine<'a> {
                     };
 
                     value_stack.push(Value::F64(op as u64 as f64));
-                },
+                }
                 Instr::F64ConvertF32 => {
                     let Some(Value::F32(op)) = value_stack.pop() else {
                         anyhow::bail!("f64.promote_f32: not enough operands");
                     };
 
                     value_stack.push(Value::F64(op as f64));
-                },
+                }
                 Instr::I32ReinterpretF32 => {
                     let Some(Value::F32(op)) = value_stack.pop() else {
                         anyhow::bail!("f32.TKTK: not enough operands");
                     };
                     value_stack.push(Value::I32(op.to_bits() as i32));
-                },
+                }
 
                 Instr::I64ReinterpretF64 => {
                     let Some(Value::F64(op)) = value_stack.pop() else {
                         anyhow::bail!("f64.TKTK: not enough operands");
                     };
                     value_stack.push(Value::I64(op.to_bits() as i64));
-                },
+                }
 
                 Instr::F32ReinterpretI32 => {
                     let Some(Value::I32(op)) = value_stack.pop() else {
@@ -2518,7 +2600,7 @@ impl<'a> Machine<'a> {
                     };
 
                     value_stack.push(Value::F32(f32::from_bits(op as u32)));
-                },
+                }
 
                 Instr::F64ReinterpretI64 => {
                     let Some(Value::I64(op)) = value_stack.pop() else {
@@ -2526,7 +2608,7 @@ impl<'a> Machine<'a> {
                     };
 
                     value_stack.push(Value::F64(f64::from_bits(op as u64)));
-                },
+                }
 
                 Instr::I32SExtendI8 => {
                     let Some(Value::I32(op)) = value_stack.pop() else {
@@ -2535,7 +2617,7 @@ impl<'a> Machine<'a> {
 
                     let op = (op & 0xff) as u8 as i8;
                     value_stack.push(Value::I32(op as i32));
-                },
+                }
 
                 Instr::I32SExtendI16 => {
                     let Some(Value::I32(op)) = value_stack.pop() else {
@@ -2544,7 +2626,7 @@ impl<'a> Machine<'a> {
 
                     let op = (op & 0xffff) as u16 as i16;
                     value_stack.push(Value::I32(op as i32));
-                },
+                }
 
                 Instr::I64SExtendI8 => todo!("I64SExtendI8"),
                 Instr::I64SExtendI16 => todo!("I64SExtendI16"),
@@ -2571,7 +2653,11 @@ impl<'a> Machine<'a> {
         self.exports.keys().filter_map(|xs| self.internmap.idx(*xs))
     }
 
-    fn compute_constant_expr(&self, module_idx: GuestIndex, instrs: &[Instr]) -> anyhow::Result<Value> {
+    fn compute_constant_expr(
+        &self,
+        module_idx: GuestIndex,
+        instrs: &[Instr],
+    ) -> anyhow::Result<Value> {
         Ok(match instrs.first() {
             Some(Instr::F32Const(c)) => Value::F32(*c),
             Some(Instr::F64Const(c)) => Value::F64(*c),

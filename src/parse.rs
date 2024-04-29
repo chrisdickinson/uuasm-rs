@@ -447,7 +447,11 @@ fn control_instrs<'a, E: Debug + ParseError<Span<'a>>>(
                 tag([0x0b]),
             ),
             |(bt, consequent, alternate)| match alternate {
-                Some(alternate) => Instr::IfElse(bt, consequent.into_boxed_slice(), alternate.into_boxed_slice()),
+                Some(alternate) => Instr::IfElse(
+                    bt,
+                    consequent.into_boxed_slice(),
+                    alternate.into_boxed_slice(),
+                ),
                 None => Instr::If(bt, consequent.into_boxed_slice()),
             },
         ),
@@ -537,12 +541,7 @@ fn variable_instrs<'a, E: Debug + ParseError<Span<'a>>>(
 fn table_instrs<'a, E: Debug + ParseError<Span<'a>>>(
     b: Span<'a>,
 ) -> nom::IResult<Span<'a>, Instr, E> {
-    use nom::{
-        branch::alt,
-        bytes::complete::tag,
-        combinator::map,
-        sequence::preceded,
-    };
+    use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::preceded};
 
     alt((
         map(
@@ -559,12 +558,7 @@ fn table_instrs<'a, E: Debug + ParseError<Span<'a>>>(
 fn memory_instrs<'a, E: Debug + ParseError<Span<'a>>>(
     input: Span<'a>,
 ) -> nom::IResult<Span<'a>, Instr, E> {
-    use nom::{
-        branch::alt,
-        bytes::complete::tag,
-        combinator::map,
-        sequence::{preceded, tuple},
-    };
+    use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::preceded};
 
     alt((
         alt((
@@ -838,13 +832,13 @@ fn numeric_instrs<'a, E: Debug + ParseError<Span<'a>>>(
 fn multibyte_instrs<'a, E: Debug + ParseError<Span<'a>>>(
     input: Span<'a>,
 ) -> nom::IResult<Span<'a>, Instr, E> {
-    use nom::{bytes::complete::tag, branch::alt, sequence::tuple, combinator::{ fail, map }};
-    let (input, t) = alt((
-        tag([0xfc]),
-        tag([0xfd]),
-        tag([0xfe]),
-        tag([0xff])
-    ))(input)?;
+    use nom::{
+        branch::alt,
+        bytes::complete::tag,
+        combinator::{fail, map},
+        sequence::tuple,
+    };
+    let (input, t) = alt((tag([0xfc]), tag([0xfd]), tag([0xfe]), tag([0xff])))(input)?;
 
     let (input, mb) = u32::from_wasm_bytes(input)?;
 
@@ -860,70 +854,39 @@ fn multibyte_instrs<'a, E: Debug + ParseError<Span<'a>>>(
         (0xfc, 0x08) => {
             return map(
                 tuple((DataIdx::from_wasm_bytes, MemIdx::from_wasm_bytes)),
-                |(di, mi)| Instr::MemoryInit(di, mi)
+                |(di, mi)| Instr::MemoryInit(di, mi),
             )(input)
-        },
-        (0xfc, 0x09) => {
-            return map(
-                DataIdx::from_wasm_bytes,
-                Instr::DataDrop,
-            )(input)
-        },
+        }
+        (0xfc, 0x09) => return map(DataIdx::from_wasm_bytes, Instr::DataDrop)(input),
         (0xfc, 0x0a) => {
             return map(
                 tuple((MemIdx::from_wasm_bytes, MemIdx::from_wasm_bytes)),
                 |(mi0, mi1)| Instr::MemoryCopy(mi0, mi1),
             )(input)
         }
-        (0xfc, 0x0b) => {
-            return map(
-                MemIdx::from_wasm_bytes,
-                Instr::MemoryFill,
-            )(input)
-        }
+        (0xfc, 0x0b) => return map(MemIdx::from_wasm_bytes, Instr::MemoryFill)(input),
         (0xfc, 0x0c) => {
             return map(
                 tuple((ElemIdx::from_wasm_bytes, TableIdx::from_wasm_bytes)),
-                |(ei, ti)| Instr::TableInit(ei, ti)
+                |(ei, ti)| Instr::TableInit(ei, ti),
             )(input)
         }
-        (0xfc, 0x0d) => {
-            return map(
-                ElemIdx::from_wasm_bytes,
-                Instr::ElemDrop,
-            )(input)
-        }
+        (0xfc, 0x0d) => return map(ElemIdx::from_wasm_bytes, Instr::ElemDrop)(input),
         (0xfc, 0x0e) => {
             return map(
                 tuple((TableIdx::from_wasm_bytes, TableIdx::from_wasm_bytes)),
                 |(ei, ti)| Instr::TableCopy(ei, ti),
             )(input)
         }
-        (0xfc, 0x0f) => {
-            return map(
-                TableIdx::from_wasm_bytes,
-                Instr::TableGrow
-            )(input)
-        },
-        (0xfc, 0x10) => {
-            return map(
-                TableIdx::from_wasm_bytes,
-                Instr::TableSize
-            )(input)
-        }
-        (0xfc, 0x11) => {
-            return map(
-                TableIdx::from_wasm_bytes,
-                Instr::TableFill
-            )(input)
-        }
+        (0xfc, 0x0f) => return map(TableIdx::from_wasm_bytes, Instr::TableGrow)(input),
+        (0xfc, 0x10) => return map(TableIdx::from_wasm_bytes, Instr::TableSize)(input),
+        (0xfc, 0x11) => return map(TableIdx::from_wasm_bytes, Instr::TableFill)(input),
 
-        _ => return fail::<_, Instr, _>(input)
+        _ => return fail::<_, Instr, _>(input),
     };
 
     Ok((input, instr))
 }
-
 
 impl<'a> ParseWasmBinary<'a> for Instr {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
@@ -1052,12 +1015,12 @@ impl<'a> ParseWasmBinary<'a> for Elem {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
-        use nom::{combinator::map, sequence::tuple, multi::many0};
+        use nom::{combinator::map, multi::many0, sequence::tuple};
 
         let (input, pos) = nom_locate::position(input)?;
         let (input, flags) = u32::from_wasm_bytes(input)?;
 
-        let pos = pos.location_offset();
+        let _pos = pos.location_offset();
         /*
         ┌─── element type+exprs vs element kind + element idx
         │┌── explicit table index (or distinguishes passive from declarative)
@@ -1177,14 +1140,20 @@ impl<'a> ParseWasmBinary<'a> for Data<'a> {
         let (input, value) = u32::from_wasm_bytes(input)?;
 
         match value {
-            0x00 => map(tuple((Expr::from_wasm_bytes, ByteVec::from_wasm_bytes)), |(expr, bvec)| Data::Active(bvec, MemIdx(0), expr))(input),
+            0x00 => map(
+                tuple((Expr::from_wasm_bytes, ByteVec::from_wasm_bytes)),
+                |(expr, bvec)| Data::Active(bvec, MemIdx(0), expr),
+            )(input),
             0x01 => map(ByteVec::from_wasm_bytes, Data::Passive)(input),
-            0x02 => map(tuple((
-                        MemIdx::from_wasm_bytes,
-                        Expr::from_wasm_bytes,
-                        ByteVec::from_wasm_bytes,
-                    )), |(memidx, expr, bvec)| Data::Active(bvec, memidx, expr))(input),
-            _ => fail::<_, Self, _>(input)
+            0x02 => map(
+                tuple((
+                    MemIdx::from_wasm_bytes,
+                    Expr::from_wasm_bytes,
+                    ByteVec::from_wasm_bytes,
+                )),
+                |(memidx, expr, bvec)| Data::Active(bvec, memidx, expr),
+            )(input),
+            _ => fail::<_, Self, _>(input),
         }
     }
 }

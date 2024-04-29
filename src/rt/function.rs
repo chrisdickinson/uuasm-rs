@@ -1,8 +1,6 @@
 use crate::nodes::{CodeIdx, FuncIdx, Import, TypeIdx};
 
-use super::{
-    imports::{Extern, GuestIndex, Imports},
-};
+use super::imports::{Extern, GuestIndex, Imports};
 
 #[derive(Debug, Clone)]
 pub(crate) enum FuncInstImpl {

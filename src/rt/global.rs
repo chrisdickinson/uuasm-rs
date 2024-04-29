@@ -45,7 +45,7 @@ impl GlobalInst {
     pub(super) fn initdata(&self) -> Option<(MachineGlobalIndex, &[Instr])> {
         match &self.r#impl {
             GlobalInstImpl::Local(idx, instrs) => Some((*idx, instrs.as_ref())),
-            GlobalInstImpl::Remote(_, _) => None
+            GlobalInstImpl::Remote(_, _) => None,
         }
     }
 
