@@ -1,6 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use crate::{
+    intern_map::InternMap,
     nodes::{ExportDesc, FuncIdx, GlobalIdx, Import, MemIdx, Module, TableIdx},
     rt::machine::Machine,
 };
@@ -17,34 +18,6 @@ pub(crate) enum Extern {
     Global(GuestIndex, GlobalIdx),
     Table(GuestIndex, TableIdx),
     Memory(GuestIndex, MemIdx),
-}
-
-#[derive(Default, Debug, Clone)]
-pub(super) struct InternMap {
-    strings: Vec<Arc<str>>,
-    string_to_idx: HashMap<Arc<str>, usize>,
-}
-
-impl InternMap {
-    pub(super) fn get(&self, key: &str) -> Option<usize> {
-        self.string_to_idx.get(key).copied()
-    }
-
-    pub(super) fn idx(&self, key: usize) -> Option<&str> {
-        self.strings.get(key).map(|xs| xs.as_ref())
-    }
-
-    pub(super) fn insert(&mut self, string: &str) -> usize {
-        if let Some(idx) = self.string_to_idx.get(string) {
-            return *idx;
-        }
-
-        let string: Arc<str> = string.into();
-        let idx = self.strings.len();
-        self.strings.push(string.clone());
-        self.string_to_idx.insert(string, idx);
-        idx
-    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -77,7 +50,6 @@ impl<'a> Imports<'a> {
     }
 
     pub(crate) fn link_module(&mut self, modname: &str, module: Module<'a>) {
-        // eprintln!("link_module={modname:?}");
         let idx = self.guests.len();
         for export in module.export_section().unwrap_or_default() {
             match export.desc {

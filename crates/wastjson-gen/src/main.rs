@@ -98,14 +98,24 @@ fn main() -> Result<(), Box<dyn Error>> {
     };
 
     let data = read_to_string(arg)?;
-    let commands: Input = serde_json::from_str(data.as_str())?;
-    println!("{commands:?}");
+    let input: Input = serde_json::from_str(data.as_str())?;
+    for command in input.commands.iter() {
+        let line = command.line;
+        let location = format!(r#""{}" L{line}"#, input.source_filename);
 
-    let assert_return = quote! {
-        fn assert_return(instance: &mut Machine<'a>, args: &[Value], expect: &[Value], line: usize) -> anyhow::Result<()> {
+        match &command.kind {
+            CommandKind::Module { name, filename } => todo!(),
+            CommandKind::Register { name, as_target } => todo!(),
+            CommandKind::AssertReturn { action, expected } => todo!(),
+            CommandKind::AssertTrap { action, text, expected } => todo!(),
+            CommandKind::AssertExhaustion { action, text, expected } => todo!(),
+            CommandKind::AssertMalformed { text, filename } => todo!(),
+            CommandKind::AssertInvalid { text, filename } => todo!(),
+            CommandKind::AssertUnlinkable { text, filename } => todo!(),
+            CommandKind::AssertUninstantiable { text, filename } => todo!(),
+            CommandKind::Action { action } => todo!(),
         }
-
-    };
+    }
 
     Ok(())
 }

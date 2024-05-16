@@ -13,12 +13,13 @@ use crate::{
 use super::{
     function::FuncInst,
     global::{GlobalInst, GlobalInstImpl},
-    imports::{GuestIndex, InternMap},
+    imports::GuestIndex,
     memory::{MemInst, MemoryInstImpl},
     table::{TableInst, TableInstImpl},
     value::Value,
     Imports,
 };
+use crate::intern_map::InternMap;
 
 pub(super) type InstanceIdx = usize;
 pub(super) type MachineCodeIndex = usize;
@@ -2649,8 +2650,8 @@ impl<'a> Machine<'a> {
         Ok(value_stack)
     }
 
-    pub(crate) fn exports(&self) -> impl Iterator<Item = &str> {
-        self.exports.keys().filter_map(|xs| self.internmap.idx(*xs))
+    pub(crate) fn exports(&self) -> impl Iterator<Item = (&str, &ExportDesc)> {
+        self.exports.iter().filter_map(|(xs, desc)| Some((self.internmap.idx(*xs)?, desc)))
     }
 
     fn compute_constant_expr(
