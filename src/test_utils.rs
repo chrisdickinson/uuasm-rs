@@ -28,7 +28,7 @@ pub(crate) fn declare_module(
         let Some(name_idx) = state.intern_map.get(module) else {
             anyhow::bail!("no provider for {module}");
         };
-        imports.link_instance(module, state.named_instances.get(&name_idx));
+        // imports.link_instance(module, &state.instances[state.named_instances[&name_idx]]);
     }
 
     let instance = imports

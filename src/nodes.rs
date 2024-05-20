@@ -34,7 +34,7 @@ pub(crate) enum ValType {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) struct ResultType(pub(crate) Vec<ValType>);
+pub(crate) struct ResultType(pub(crate) Box<[ValType]>);
 
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) struct Type(pub(crate) ResultType, pub(crate) ResultType);
@@ -377,6 +377,7 @@ pub(crate) struct TypeIdx(pub(crate) u32);
 pub(crate) struct FuncIdx(pub(crate) u32);
 
 #[derive(Debug, PartialEq, Clone, Copy)]
+#[repr(transparent)]
 pub(crate) struct CodeIdx(pub(crate) u32);
 
 #[derive(Debug, PartialEq, Clone, Copy)]

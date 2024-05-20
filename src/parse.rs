@@ -258,7 +258,7 @@ impl<'a> ParseWasmBinary<'a> for ResultType {
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::combinator::map;
-        map(Vec::<ValType>::from_wasm_bytes, ResultType)(b)
+        map(Vec::<ValType>::from_wasm_bytes, |v| ResultType(v.into_boxed_slice()))(b)
     }
 }
 
@@ -1392,8 +1392,8 @@ mod test {
                 ResultType(vec![
                     ValType::NumType(NumType::I32),
                     ValType::NumType(NumType::I32),
-                ]),
-                ResultType(vec![ValType::NumType(NumType::I32)]),
+                ].into_boxed_slice()),
+                ResultType(vec![ValType::NumType(NumType::I32)].into_boxed_slice()),
             )])
             .function_section(vec![TypeIdx(0)])
             .memory_section(vec![MemType(Limits::Min(64))])
