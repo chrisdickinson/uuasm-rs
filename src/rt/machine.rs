@@ -1,4 +1,9 @@
-use std::{collections::{HashMap, HashSet}, mem, ops::{Deref, DerefMut}, sync::{Arc, Mutex}};
+use std::{
+    collections::{HashMap, HashSet},
+    mem::{self},
+    ops::{Deref, DerefMut},
+    sync::{Arc, Mutex},
+};
 
 use anyhow::Context;
 
@@ -317,8 +322,9 @@ impl<'a> Machine<'a> {
         }
     }
 
-    fn typedef(&self, module_idx: GuestIndex, type_idx: TypeIdx) -> Option<&Type> {
-        self.types.get(module_idx)?.get(type_idx.0 as usize)
+    #[inline]
+    fn typedef(&self, guest_idx: GuestIndex, type_idx: TypeIdx) -> Option<&Type> {
+        self.types.get(guest_idx)?.get(type_idx.0 as usize)
     }
 
     pub(crate) fn initialize(&mut self, resources: &mut Resources) -> anyhow::Result<()> {
@@ -327,7 +333,8 @@ impl<'a> Machine<'a> {
                 let Some((global_idx, instrs)) = global.initdata() else {
                     continue;
                 };
-                resources.global_values[global_idx] = self.compute_constant_expr(module_idx, instrs, &mut *resources)?;
+                resources.global_values[global_idx] =
+                    self.compute_constant_expr(module_idx, instrs, &mut *resources)?;
             }
         }
 
@@ -335,7 +342,8 @@ impl<'a> Machine<'a> {
             for (data_idx, data) in data_set.iter().enumerate() {
                 match data {
                     Data::Active(data, memory_idx, expr) => {
-                        let memoffset = self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
+                        let memoffset =
+                            self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
                         let memoffset = memoffset
                             .as_usize()
                             .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
@@ -375,7 +383,8 @@ impl<'a> Machine<'a> {
         for (module_idx, elem) in active_elems {
             match elem {
                 Elem::ActiveSegmentFuncs(expr, func_indices) => {
-                    let offset = self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
+                    let offset =
+                        self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
                     let offset = offset
                         .as_usize()
                         .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
@@ -393,7 +402,8 @@ impl<'a> Machine<'a> {
 
                 // "elemkind" means "funcref" or "externref"
                 Elem::ActiveSegment(table_idx, expr, _elemkind, func_indices) => {
-                    let offset = self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
+                    let offset =
+                        self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
                     let offset = offset
                         .as_usize()
                         .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
@@ -410,7 +420,8 @@ impl<'a> Machine<'a> {
                 }
 
                 Elem::ActiveSegmentExpr(expr, exprs) => {
-                    let offset = self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
+                    let offset =
+                        self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
                     let offset = offset
                         .as_usize()
                         .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
@@ -432,7 +443,8 @@ impl<'a> Machine<'a> {
                 }
 
                 Elem::ActiveSegmentTableAndExpr(table_idx, expr, _ref_type, exprs) => {
-                    let offset = self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
+                    let offset =
+                        self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
                     let offset = offset
                         .as_usize()
                         .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
@@ -464,12 +476,11 @@ impl<'a> Machine<'a> {
 
     pub(crate) fn call(&mut self, funcname: &str, args: &[Value]) -> anyhow::Result<Vec<Value>> {
         let resources = self.resources.clone();
-        let mut resource_lock = resources.try_lock().map_err(|_| {
-            anyhow::anyhow!("failed to lock resources")
-        })?;
+        let mut resource_lock = resources
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("failed to lock resources"))?;
         let resources = resource_lock.deref_mut();
 
-        // eprintln!("call={funcname:?}; args={args:?}");
         if !self.initialized {
             self.initialize(&mut *resources)?;
         }
@@ -534,7 +545,7 @@ impl<'a> Machine<'a> {
 
         let mut value_stack = Vec::<Value>::new();
         let mut frames = Vec::<Frame<'a>>::new();
-        frames.push(Frame {
+        let mut frame = Frame {
             #[cfg(test)]
             name: "init",
             pc: 0,
@@ -545,14 +556,11 @@ impl<'a> Machine<'a> {
             block_type: BlockType::TypeIndex(*function.typeidx()),
             value_stack_offset: 0,
             guest_index: module_idx,
-        });
+        };
 
-        // eprintln!("= = = = {funcname} {code:?}");
         loop {
-            //eprintln!("value_stack={value_stack:?}; frame_idx={}@{}/{} -> {:?}", frames.len()- 1,frames[frames.len() -1].pc,frames[frames.len() -1].instrs.len(), &frames[frames.len() -1].instrs[frames[frames.len() -1].pc..]);
-            let frame_idx = frames.len() - 1;
-            if frames[frame_idx].pc >= frames[frame_idx].instrs.len() {
-                match frames[frame_idx].block_type {
+            if frame.pc >= frame.instrs.len() {
+                match frame.block_type {
                     BlockType::Empty => {}
                     BlockType::Val(val_type) => {
                         let Some(last_value) = value_stack.last() else {
@@ -562,9 +570,7 @@ impl<'a> Machine<'a> {
                         val_type.validate(last_value)?;
                     }
                     BlockType::TypeIndex(type_idx) => {
-                        let Some(ty) =
-                            self.typedef(frames[frame_idx].guest_index, type_idx)
-                        else {
+                        let Some(ty) = self.typedef(frame.guest_index, type_idx) else {
                             anyhow::bail!("could not resolve blocktype");
                         };
                         if value_stack.len() < ty.1 .0.len() {
@@ -587,50 +593,56 @@ impl<'a> Machine<'a> {
                     }
                 };
 
-                locals.shrink_to(frames[frame_idx].locals_base_offset);
-                let _last_frame = frames
-                    .pop()
-                    .expect("we should always be able to pop a frame");
+                locals.shrink_to(frame.locals_base_offset);
 
-                if frames.is_empty() {
-                    break;
-                }
+                let Some(new_frame) = frames.pop() else { break };
 
+                frame = new_frame;
                 continue;
             }
 
-            match &frames[frame_idx].instrs[frames[frame_idx].pc] {
+            match &frame.instrs[frame.pc] {
                 Instr::Unreachable => anyhow::bail!("unreachable"),
                 Instr::Nop => {}
                 Instr::Block(block_type, blockinstrs) => {
-                    let locals_base_offset = frames[frame_idx].locals_base_offset;
-                    frames.push(Frame {
+                    let locals_base_offset = frame.locals_base_offset;
+                    let new_frame = Frame {
                         #[cfg(test)]
                         name: "block",
                         pc: 0,
-                        return_unwind_count: frames[frame_idx].return_unwind_count + 1,
+                        return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
                         jump_to: Some(blockinstrs.len()),
                         block_type: *block_type,
                         locals_base_offset,
                         value_stack_offset: value_stack.len(),
-                        guest_index: frames[frame_idx].guest_index,
-                    });
+                        guest_index: frame.guest_index,
+                    };
+                    frame.pc += 1;
+                    let old_frame = frame;
+                    frames.push(old_frame);
+                    frame = new_frame;
+                    continue;
                 }
 
                 Instr::Loop(block_type, blockinstrs) => {
-                    frames.push(Frame {
+                    let new_frame = Frame {
                         #[cfg(test)]
                         name: "Loop",
                         pc: 0,
-                        return_unwind_count: frames[frame_idx].return_unwind_count + 1,
+                        return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
                         jump_to: Some(0),
                         block_type: *block_type,
-                        locals_base_offset: frames[frame_idx].locals_base_offset,
+                        locals_base_offset: frame.locals_base_offset,
                         value_stack_offset: value_stack.len(),
-                        guest_index: frames[frame_idx].guest_index,
-                    });
+                        guest_index: frame.guest_index,
+                    };
+                    frame.pc += 1;
+                    let old_frame = frame;
+                    frames.push(old_frame);
+                    frame = new_frame;
+                    continue;
                 }
 
                 Instr::If(block_type, consequent) => {
@@ -645,18 +657,23 @@ impl<'a> Machine<'a> {
                         consequent.deref()
                     };
 
-                    frames.push(Frame {
+                    let new_frame = Frame {
                         #[cfg(test)]
                         name: "If",
                         pc: 0,
-                        return_unwind_count: frames[frame_idx].return_unwind_count + 1,
+                        return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
                         jump_to: Some(blockinstrs.len()),
                         block_type: *block_type,
-                        locals_base_offset: frames[frame_idx].locals_base_offset,
+                        locals_base_offset: frame.locals_base_offset,
                         value_stack_offset: value_stack.len(),
-                        guest_index: frames[frame_idx].guest_index,
-                    });
+                        guest_index: frame.guest_index,
+                    };
+                    frame.pc += 1;
+                    let old_frame = frame;
+                    frames.push(old_frame);
+                    frame = new_frame;
+                    continue;
                 }
 
                 Instr::IfElse(block_type, consequent, alternate) => {
@@ -671,39 +688,44 @@ impl<'a> Machine<'a> {
                         consequent.deref()
                     };
 
-                    frames.push(Frame {
+                    let new_frame = Frame {
                         #[cfg(test)]
                         name: "IfElse",
                         pc: 0,
-                        return_unwind_count: frames[frame_idx].return_unwind_count + 1,
+                        return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
                         jump_to: Some(blockinstrs.len()),
                         block_type: *block_type,
-                        locals_base_offset: frames[frame_idx].locals_base_offset,
+                        locals_base_offset: frame.locals_base_offset,
                         value_stack_offset: value_stack.len(),
-                        guest_index: frames[frame_idx].guest_index,
-                    });
+                        guest_index: frame.guest_index,
+                    };
+                    frame.pc += 1;
+                    let old_frame = frame;
+                    frames.push(old_frame);
+                    frame = new_frame;
+                    continue;
                 }
 
                 Instr::Br(idx) => {
                     // look at the arity of the target block type. preserve that many values from
                     // the stack.
                     if idx.0 > 0 {
-                        frames.truncate(frames.len() - idx.0 as usize);
+                        frames.truncate(frames.len() - (idx.0 - 1) as usize);
+                        frame = frames
+                            .pop()
+                            .ok_or_else(|| anyhow::anyhow!("stack underflow"))?;
                     }
 
-                    let frame_idx = frames.len() - 1;
-                    let Some(jump_to) = frames[frame_idx].jump_to else {
+                    let Some(jump_to) = frame.jump_to else {
                         anyhow::bail!("invalid jump target");
                     };
-                    frames[frame_idx].pc = jump_to;
-                    let to_preserve = match frames[frame_idx].block_type {
+                    frame.pc = jump_to;
+                    let to_preserve = match frame.block_type {
                         BlockType::Empty => 0,
                         BlockType::Val(_) => 1,
                         BlockType::TypeIndex(type_idx) => {
-                            let Some(ty) =
-                                self.typedef(frames[frame_idx].guest_index, type_idx)
-                            else {
+                            let Some(ty) = self.typedef(frame.guest_index, type_idx) else {
                                 anyhow::bail!("could not resolve blocktype");
                             };
                             ty.1 .0.len()
@@ -711,7 +733,7 @@ impl<'a> Machine<'a> {
                     };
 
                     let vs = value_stack.split_off(value_stack.len() - to_preserve);
-                    value_stack.truncate(frames[frame_idx].value_stack_offset);
+                    value_stack.truncate(frame.value_stack_offset);
                     value_stack.extend_from_slice(vs.as_slice());
 
                     continue;
@@ -724,27 +746,28 @@ impl<'a> Machine<'a> {
 
                     if !v.is_zero()? {
                         if idx.0 > 0 {
-                            frames.truncate(frames.len() - idx.0 as usize);
+                            frames.truncate(frames.len() - (idx.0 - 1) as usize);
+                            frame = frames
+                                .pop()
+                                .ok_or_else(|| anyhow::anyhow!("stack underflow"))?;
                         }
 
-                        let frame_idx = frames.len() - 1;
-                        let Some(jump_to) = frames[frame_idx].jump_to else {
+                        let Some(jump_to) = frame.jump_to else {
                             anyhow::bail!("invalid jump target");
                         };
-                        frames[frame_idx].pc = jump_to;
+                        frame.pc = jump_to;
 
-                        let to_preserve = match frames[frame_idx].block_type {
+                        let to_preserve = match frame.block_type {
                             BlockType::Empty => 0,
                             BlockType::Val(_) => 1,
                             BlockType::TypeIndex(type_idx) => {
-                                let Some(ty) =
-                                    self.typedef(frames[frame_idx].guest_index, type_idx)
-                                else {
+                                let Some(ty) = self.typedef(frame.guest_index, type_idx) else {
                                     anyhow::bail!("could not resolve blocktype");
                                 };
                                 ty.1 .0.len()
                             }
                         };
+
                         if value_stack.len() < to_preserve {
                             anyhow::bail!(
                                 "block expected at least {} value{} on stack",
@@ -754,7 +777,7 @@ impl<'a> Machine<'a> {
                         }
 
                         let vs = value_stack.split_off(value_stack.len() - to_preserve);
-                        value_stack.truncate(frames[frame_idx].value_stack_offset);
+                        value_stack.truncate(frame.value_stack_offset);
                         value_stack.extend_from_slice(vs.as_slice());
 
                         continue;
@@ -774,22 +797,22 @@ impl<'a> Machine<'a> {
                     } as usize;
 
                     if idx > 0 {
-                        frames.truncate(frames.len() - idx);
+                        frames.truncate(frames.len() - (idx - 1));
+                        frame = frames
+                            .pop()
+                            .ok_or_else(|| anyhow::anyhow!("stack underflow"))?;
                     }
 
-                    let frame_idx = frames.len() - 1;
-                    let Some(jump_to) = frames[frame_idx].jump_to else {
+                    let Some(jump_to) = frame.jump_to else {
                         anyhow::bail!("invalid jump target");
                     };
-                    frames[frame_idx].pc = jump_to;
+                    frame.pc = jump_to;
 
-                    let to_preserve = match frames[frame_idx].block_type {
+                    let to_preserve = match frame.block_type {
                         BlockType::Empty => 0,
                         BlockType::Val(_) => 1,
                         BlockType::TypeIndex(type_idx) => {
-                            let Some(ty) =
-                                self.typedef(frames[frame_idx].guest_index, type_idx)
-                            else {
+                            let Some(ty) = self.typedef(frame.guest_index, type_idx) else {
                                 anyhow::bail!("could not resolve blocktype");
                             };
                             ty.1 .0.len()
@@ -804,34 +827,30 @@ impl<'a> Machine<'a> {
                     }
 
                     let vs = value_stack.split_off(value_stack.len() - to_preserve);
-                    value_stack.truncate(frames[frame_idx].value_stack_offset);
+                    value_stack.truncate(frame.value_stack_offset);
                     value_stack.extend_from_slice(vs.as_slice());
 
                     continue;
                 }
 
                 Instr::Return => {
-                    // TODO: validate result type!
-                    let ruc = frames[frame_idx].return_unwind_count;
+                    let ruc = frame.return_unwind_count;
                     if ruc > 0 {
-                        frames.truncate(frames.len() - ruc);
+                        frames.truncate(frames.len() - (ruc - 1));
+                        frame = frames
+                            .pop()
+                            .ok_or_else(|| anyhow::anyhow!("stack underflow"))?;
                     }
 
-                    if frames.is_empty() {
-                        break;
-                    }
-
-                    let frame_idx = frames.len() - 1;
-                    frames[frame_idx].pc = frames[frame_idx].instrs.len();
-                    let to_preserve = match frames[frame_idx].block_type {
+                    frame.pc = frame.instrs.len();
+                    let to_preserve = match frame.block_type {
                         BlockType::Empty => 0,
                         BlockType::Val(_) => 1,
                         BlockType::TypeIndex(type_idx) => {
-                            let Some(ty) =
-                                self.typedef(frames[frame_idx].guest_index, type_idx)
-                            else {
+                            let Some(ty) = self.typedef(frame.guest_index, type_idx) else {
                                 anyhow::bail!("could not resolve blocktype");
                             };
+
                             ty.1 .0.len()
                         }
                     };
@@ -845,13 +864,13 @@ impl<'a> Machine<'a> {
                     }
 
                     let vs = value_stack.split_off(value_stack.len() - to_preserve);
-                    value_stack.truncate(frames[frame_idx].value_stack_offset);
+                    value_stack.truncate(frame.value_stack_offset);
                     value_stack.extend_from_slice(vs.as_slice());
                     continue;
                 }
 
                 Instr::Call(func_idx) => {
-                    let module_idx = frames[frame_idx].guest_index;
+                    let module_idx = frame.guest_index;
                     let (module_idx, function) = self
                         .function(module_idx, *func_idx)
                         .ok_or_else(|| anyhow::anyhow!("missing function"))?;
@@ -892,7 +911,7 @@ impl<'a> Machine<'a> {
                         }
                     }
 
-                    frames.push(Frame {
+                    let new_frame = Frame {
                         #[cfg(test)]
                         name: "Call",
                         pc: 0,
@@ -903,13 +922,17 @@ impl<'a> Machine<'a> {
                         block_type: BlockType::TypeIndex(*function.typeidx()),
                         value_stack_offset: value_stack.len(),
                         guest_index: module_idx,
-                    });
+                    };
+                    frame.pc += 1;
+                    let old_frame = frame;
+                    frames.push(old_frame);
+                    frame = new_frame;
+                    continue;
                 }
 
                 Instr::CallIndirect(type_idx, table_idx) => {
-                    let table_instance_idx = self.table(frames[frame_idx].guest_index, *table_idx);
-                    let check_type =
-                        self.typedef(frames[frame_idx].guest_index, *type_idx);
+                    let table_instance_idx = self.table(frame.guest_index, *table_idx);
+                    let check_type = self.typedef(frame.guest_index, *type_idx);
 
                     let table = &resources.table_instances[table_instance_idx];
 
@@ -931,7 +954,7 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("expected reffunc value, got {:?}", v);
                     };
 
-                    let module_idx = frames[frame_idx].guest_index;
+                    let module_idx = frame.guest_index;
                     let (module_idx, function) = self
                         .function(module_idx, *v)
                         .ok_or_else(|| anyhow::anyhow!("missing function"))?;
@@ -976,7 +999,7 @@ impl<'a> Machine<'a> {
                         }
                     }
 
-                    frames.push(Frame {
+                    let new_frame = Frame {
                         #[cfg(test)]
                         name: "CallIndirect",
                         pc: 0,
@@ -987,7 +1010,12 @@ impl<'a> Machine<'a> {
                         block_type: BlockType::TypeIndex(*function.typeidx()),
                         value_stack_offset: value_stack.len(),
                         guest_index: module_idx,
-                    });
+                    };
+                    frame.pc += 1;
+                    let old_frame = frame;
+                    frames.push(old_frame);
+                    frame = new_frame;
+                    continue;
                 }
 
                 Instr::RefNull(_ref_type) => value_stack.push(Value::RefNull),
@@ -1000,7 +1028,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::RefFunc(func_idx) => {
-                    if func_idx.0 as usize >= self.functions[frames[frame_idx].guest_index].len() {
+                    if func_idx.0 as usize >= self.functions[frame.guest_index].len() {
                         anyhow::bail!("ref.func: referencing out of bounds function")
                     }
 
@@ -1024,12 +1052,11 @@ impl<'a> Machine<'a> {
                 Instr::Select(_) => todo!("Select"),
 
                 Instr::LocalGet(idx) => {
-                    let Some(v) = locals.get(idx.0 as usize + frames[frame_idx].locals_base_offset)
-                    else {
+                    let Some(v) = locals.get(idx.0 as usize + frame.locals_base_offset) else {
                         anyhow::bail!(
                             "local.get out of range {} + {} > {}",
                             idx.0 as usize,
-                            frames[frame_idx].locals_base_offset,
+                            frame.locals_base_offset,
                             locals.len()
                         )
                     };
@@ -1038,19 +1065,19 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::LocalSet(idx) => {
-                    locals[idx.0 as usize + frames[frame_idx].locals_base_offset] = value_stack
+                    locals[idx.0 as usize + frame.locals_base_offset] = value_stack
                         .pop()
                         .ok_or_else(|| anyhow::anyhow!("ran out of stack"))?;
                 }
 
                 Instr::LocalTee(idx) => {
-                    locals[idx.0 as usize + frames[frame_idx].locals_base_offset] = *value_stack
+                    locals[idx.0 as usize + frame.locals_base_offset] = *value_stack
                         .last()
                         .ok_or_else(|| anyhow::anyhow!("ran out of stack"))?;
                 }
 
                 Instr::GlobalGet(global_idx) => {
-                    let global_value_idx = self.global(frames[frame_idx].guest_index, *global_idx);
+                    let global_value_idx = self.global(frame.guest_index, *global_idx);
 
                     // TODO: respect base globals offset
                     let Some(value) = resources.global_values.get(global_value_idx) else {
@@ -1061,7 +1088,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::GlobalSet(global_idx) => {
-                    let global_value_idx = self.global(frames[frame_idx].guest_index, *global_idx);
+                    let global_value_idx = self.global(frame.guest_index, *global_idx);
                     let Some(value) = resources.global_values.get_mut(global_value_idx) else {
                         anyhow::bail!("global idx out of range");
                     };
@@ -1074,7 +1101,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::TableGet(table_idx) => {
-                    let table_idx = self.table(frames[frame_idx].guest_index, *table_idx);
+                    let table_idx = self.table(frame.guest_index, *table_idx);
                     let Some(offset) = value_stack.pop().and_then(|xs| xs.as_usize()) else {
                         anyhow::bail!("table.get: expected offset value at top of stack");
                     };
@@ -1087,7 +1114,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::TableSet(table_idx) => {
-                    let table_idx = self.table(frames[frame_idx].guest_index, *table_idx);
+                    let table_idx = self.table(frame.guest_index, *table_idx);
                     let Some(
                         value @ Value::RefFunc(_)
                         | value @ Value::RefNull
@@ -1109,7 +1136,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::TableInit(elem_idx, table_idx) => {
-                    let guest_index = frames[frame_idx].guest_index;
+                    let guest_index = frame.guest_index;
 
                     let Some(elem) = self
                         .elements
@@ -1119,7 +1146,7 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("element idx out of range");
                     };
 
-                    let table_idx = self.table(frames[frame_idx].guest_index, *table_idx);
+                    let table_idx = self.table(frame.guest_index, *table_idx);
 
                     let items = value_stack.split_off(value_stack.len() - 3);
                     let Some(count) = items[2].as_usize() else {
@@ -1132,7 +1159,10 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("expected i32 value on the stack")
                     };
 
-                    let elem_len = if resources.dropped_elements.contains(&(frames[frame_idx].guest_index, elem_idx.0 as usize)) {
+                    let elem_len = if resources
+                        .dropped_elements
+                        .contains(&(frame.guest_index, elem_idx.0 as usize))
+                    {
                         0
                     } else {
                         elem.len()
@@ -1171,17 +1201,22 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::ElemDrop(elem_idx) => {
-                    if self.elements[frames[frame_idx].guest_index].get(elem_idx.0 as usize).is_none() {
+                    if self.elements[frame.guest_index]
+                        .get(elem_idx.0 as usize)
+                        .is_none()
+                    {
                         anyhow::bail!("could not fetch element segement by that id")
                     }
 
-                    resources.dropped_elements.insert((frames[frame_idx].guest_index, elem_idx.0 as usize));
+                    resources
+                        .dropped_elements
+                        .insert((frame.guest_index, elem_idx.0 as usize));
                 }
 
                 Instr::TableCopy(from_table_idx, to_table_idx) => {
-                    let from_table_idx = self.table(frames[frame_idx].guest_index, *from_table_idx);
+                    let from_table_idx = self.table(frame.guest_index, *from_table_idx);
 
-                    let to_table_idx = self.table(frames[frame_idx].guest_index, *to_table_idx);
+                    let to_table_idx = self.table(frame.guest_index, *to_table_idx);
 
                     let items = value_stack.split_off(value_stack.len() - 3);
                     let Some(count) = items[2].as_usize() else {
@@ -1211,14 +1246,13 @@ impl<'a> Machine<'a> {
 
                 Instr::TableGrow(_) => todo!("TableGrow"),
                 Instr::TableSize(table_idx) => {
-                    let table_idx = self.table(frames[frame_idx].guest_index, *table_idx);
+                    let table_idx = self.table(frame.guest_index, *table_idx);
                     value_stack.push(Value::I32(resources.table_instances[table_idx].len() as i32));
                 }
                 Instr::TableFill(_) => todo!("TableFill"),
 
                 Instr::I32Load(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1230,8 +1264,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I64Load(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1243,8 +1276,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::F32Load(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1256,8 +1288,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::F64Load(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1269,8 +1300,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I32Load8S(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1282,8 +1312,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I32Load8U(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1295,8 +1324,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I32Load16S(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1308,8 +1336,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I32Load16U(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1321,8 +1348,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I64Load8S(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1334,8 +1360,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I64Load8U(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1347,8 +1372,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I64Load16S(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1360,8 +1384,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I64Load16U(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1373,8 +1396,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I64Load32S(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1386,8 +1408,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I64Load32U(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
                     let v = value_stack
@@ -1399,8 +1420,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I32Store(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
                     let Some(Value::I32(v)) = value_stack.pop() else {
@@ -1416,8 +1436,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I64Store(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
                     let Some(Value::I64(v)) = value_stack.pop() else {
@@ -1433,8 +1452,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::F32Store(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
                     let Some(Value::F32(v)) = value_stack.pop() else {
@@ -1450,8 +1468,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::F64Store(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
                     let Some(Value::F64(v)) = value_stack.pop() else {
@@ -1466,8 +1483,7 @@ impl<'a> Machine<'a> {
                     memory_region.store(offset, &v.to_le_bytes())?;
                 }
                 Instr::I32Store8(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
                     let Some(Value::I32(v)) = value_stack.pop() else {
@@ -1483,8 +1499,7 @@ impl<'a> Machine<'a> {
                     memory_region.store(offset, &[v as u8])?;
                 }
                 Instr::I32Store16(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
                     let Some(Value::I32(v)) = value_stack.pop() else {
@@ -1501,8 +1516,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::I64Store8(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
                     let Some(Value::I64(v)) = value_stack.pop() else {
@@ -1518,8 +1532,7 @@ impl<'a> Machine<'a> {
                     memory_region.store(offset, &[v as u8])?;
                 }
                 Instr::I64Store16(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
                     let Some(Value::I64(v)) = value_stack.pop() else {
@@ -1535,8 +1548,7 @@ impl<'a> Machine<'a> {
                     memory_region.store(offset, &v.to_le_bytes())?;
                 }
                 Instr::I64Store32(mem) => {
-                    let memory_idx =
-                        self.memory(frames[frame_idx].guest_index, MemIdx(mem.memidx() as u32));
+                    let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
                     let Some(Value::I64(v)) = value_stack.pop() else {
@@ -1553,13 +1565,13 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::MemorySize(mem_idx) => {
-                    let memory_idx = self.memory(frames[frame_idx].guest_index, *mem_idx);
+                    let memory_idx = self.memory(frame.guest_index, *mem_idx);
                     let memory_region = &mut resources.memory_regions[memory_idx];
                     value_stack.push(Value::I32(memory_region.page_count() as i32));
                 }
 
                 Instr::MemoryGrow(mem_idx) => {
-                    let memory_idx = self.memory(frames[frame_idx].guest_index, *mem_idx);
+                    let memory_idx = self.memory(frame.guest_index, *mem_idx);
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
                     let Some(Value::I32(v)) = value_stack.pop() else {
@@ -1570,12 +1582,13 @@ impl<'a> Machine<'a> {
                     value_stack.push(Value::I32(page_count as i32));
                 }
                 Instr::MemoryInit(data_idx, mem_idx) => {
-                    let Some(data) =
-                        self.data[frames[frame_idx].guest_index].get(data_idx.0 as usize)
-                    else {
+                    let Some(data) = self.data[frame.guest_index].get(data_idx.0 as usize) else {
                         anyhow::bail!("could not fetch data by that id")
                     };
-                    let data = if resources.dropped_data.contains(&(frames[frame_idx].guest_index, data_idx.0 as usize)) {
+                    let data = if resources
+                        .dropped_data
+                        .contains(&(frame.guest_index, data_idx.0 as usize))
+                    {
                         &[]
                     } else {
                         match data {
@@ -1584,7 +1597,7 @@ impl<'a> Machine<'a> {
                         }
                     };
 
-                    let memory_idx = self.memory(frames[frame_idx].guest_index, *mem_idx);
+                    let memory_idx = self.memory(frame.guest_index, *mem_idx);
 
                     let memory_region = &mut resources.memory_regions[memory_idx];
                     let items = value_stack.split_off(value_stack.len() - 3);
@@ -1618,17 +1631,22 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::DataDrop(data_idx) => {
-                    if self.data[frames[frame_idx].guest_index].get(data_idx.0 as usize).is_none() {
+                    if self.data[frame.guest_index]
+                        .get(data_idx.0 as usize)
+                        .is_none()
+                    {
                         anyhow::bail!("could not fetch data by that id")
                     }
 
-                    resources.dropped_data.insert((frames[frame_idx].guest_index, data_idx.0 as usize));
+                    resources
+                        .dropped_data
+                        .insert((frame.guest_index, data_idx.0 as usize));
                 }
 
                 Instr::MemoryCopy(from_mem_idx, to_mem_idx) => {
-                    let from_memory_idx = self.memory(frames[frame_idx].guest_index, *from_mem_idx);
+                    let from_memory_idx = self.memory(frame.guest_index, *from_mem_idx);
 
-                    let to_memory_idx = self.memory(frames[frame_idx].guest_index, *to_mem_idx);
+                    let to_memory_idx = self.memory(frame.guest_index, *to_mem_idx);
 
                     // if these are the same memory, we're going to borrow it once mutably.
                     if from_memory_idx == to_memory_idx {
@@ -1659,7 +1677,7 @@ impl<'a> Machine<'a> {
                 }
 
                 Instr::MemoryFill(mem_idx) => {
-                    let memory_idx = self.memory(frames[frame_idx].guest_index, *mem_idx);
+                    let memory_idx = self.memory(frame.guest_index, *mem_idx);
 
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
@@ -2666,16 +2684,16 @@ impl<'a> Machine<'a> {
                 Instr::I64UConvertSatF64 => todo!("I64UConvertSatF64"),
                 Instr::CallHostTrampoline => todo!("TKTK Call host trampoline"),
             }
-            frames[frame_idx].pc += 1;
+            frame.pc += 1;
         }
 
-        // TODO: handle multiple return values
-        // eprintln!("call={funcname:?}; args={args:?}; result={value_stack:?}");
         Ok(value_stack)
     }
 
     pub(crate) fn exports(&self) -> impl Iterator<Item = (&str, &ExportDesc)> {
-        self.exports.iter().filter_map(|(xs, desc)| Some((self.internmap.idx(*xs)?, desc)))
+        self.exports
+            .iter()
+            .filter_map(|(xs, desc)| Some((self.internmap.idx(*xs)?, desc)))
     }
 
     fn compute_constant_expr(
@@ -2691,7 +2709,9 @@ impl<'a> Machine<'a> {
             Some(Instr::I64Const(c)) => Value::I64(*c),
             Some(Instr::GlobalGet(c)) => {
                 let globalidx = self.global(module_idx, *c);
-                resources.global_values.get(globalidx)
+                resources
+                    .global_values
+                    .get(globalidx)
                     .cloned()
                     .ok_or_else(|| anyhow::anyhow!("uninitialized global"))?
             }
