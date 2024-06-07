@@ -73,6 +73,9 @@ impl MemoryRegion {
     pub(crate) fn grow_to_fit(&mut self, data: &[u8], offset: usize) -> anyhow::Result<usize> {
         let desired_size = offset + data.len();
         let desired_pages = desired_size >> PAGE_SHIFT;
+        if desired_pages <= self.page_count {
+            return Ok(self.page_count);
+        }
         self.grow(desired_pages)
     }
 

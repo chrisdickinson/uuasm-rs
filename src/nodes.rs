@@ -144,7 +144,7 @@ impl MemArg {
 #[derive(Debug, PartialEq, Clone)]
 pub(crate) enum Instr {
     // Internal (non-wasm) instructions
-    CallHostTrampoline,
+    CallIntrinsic(usize),
 
     // Control Instructions
     Unreachable,

@@ -1,10 +1,15 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     intern_map::InternMap,
-    nodes::{ExportDesc, FuncIdx, GlobalIdx, Import, MemIdx, Module, TableIdx},
+    nodes::{
+        Code, Export, ExportDesc, Expr, Func, FuncIdx, GlobalIdx, Import, Instr, MemIdx, Module,
+        ModuleBuilder, Name, ResultType, TableIdx, Type, TypeIdx,
+    },
     rt::machine::Machine,
 };
+
+use super::{machine::ExternalFunction, Value};
 
 type HostFnIndex = usize;
 pub(super) type GuestIndex = usize;
@@ -26,6 +31,7 @@ pub(crate) struct Imports<'a> {
     pub(crate) guests: Vec<Module<'a>>,
     pub(crate) externs: HashMap<ExternKey, Extern>,
     pub(super) internmap: InternMap,
+    pub(crate) external_functions: HashMap<ExternKey, ExternalFunction>,
 }
 
 impl<'a> Imports<'a> {
@@ -70,6 +76,24 @@ impl<'a> Imports<'a> {
         self.guests.push(module);
     }
 
+    pub(crate) fn link_hostfn(
+        &mut self,
+        modname: &str,
+        funcname: &str,
+        typedef: Type,
+        func: impl Fn(&[Value], &mut [Value]) -> anyhow::Result<()> + Send + Sync + 'static,
+    ) {
+        let modname = self.internmap.insert(modname);
+        let name = self.internmap.insert(funcname);
+
+        let func = ExternalFunction {
+            func: Arc::new(func),
+            typedef,
+        };
+        self.external_functions
+            .insert(ExternKey(modname, name), func);
+    }
+
     pub(crate) fn link_instance(&mut self, modname: &str, instance: Machine<'a>) {
         for (name, desc) in instance.exports() {
             match desc {
@@ -93,10 +117,31 @@ impl<'a> Imports<'a> {
                 ExportDesc::Global(_) => todo!(),
             }
         }
-
     }
 
     pub(crate) fn instantiate(mut self, module: Module<'a>) -> anyhow::Result<Machine<'a>> {
+        // TODO: generate modules for all external functions by module name
+        let mut external_functions = Vec::with_capacity(self.external_functions.len());
+        for (idx, (ExternKey(modname_idx, funcname_idx), external_function)) in
+            self.external_functions.drain().enumerate()
+        {
+            let module = ModuleBuilder::new()
+                .type_section(vec![external_function.typedef.clone()])
+                .function_section(vec![TypeIdx(0)])
+                .code_section(vec![Code(Func {
+                    locals: external_function.typedef.clone().into(),
+                    expr: Expr(vec![Instr::CallIntrinsic(idx), Instr::Return]),
+                })])
+                .build();
+
+            self.externs.insert(
+                ExternKey(modname_idx, funcname_idx),
+                Extern::Func(self.guests.len(), FuncIdx(0)),
+            );
+            self.guests.push(module);
+            external_functions.push(external_function.clone());
+        }
+
         let mut exportmap = HashMap::new();
         for export in module.export_section().unwrap_or_default() {
             exportmap.insert(self.internmap.insert(export.nm.0), export.desc);
@@ -104,7 +149,7 @@ impl<'a> Imports<'a> {
 
         self.guests.push(module);
 
-        Machine::new(self, exportmap)
+        Machine::new(self, exportmap, external_functions)
     }
 }
 
@@ -112,7 +157,11 @@ impl<'a> Imports<'a> {
 mod test {
     use std::mem::size_of;
 
-    use crate::{parse::parse, rt::Value};
+    use crate::{
+        nodes::{NumType, ValType},
+        parse::parse,
+        rt::Value,
+    };
 
     use super::*;
 
@@ -126,6 +175,47 @@ mod test {
         let exports: Vec<_> = machine.exports().collect();
         eprintln!("{exports:?}");
         let result = machine.call("add_i32", &[Value::I32(5), Value::I32(2)])?;
+        eprintln!("{result:?}");
+
+        eprintln!("instr={}", size_of::<Machine>());
+        Ok(())
+    }
+
+    #[test]
+    fn host_imports() -> anyhow::Result<()> {
+        let mut imports = Imports::new();
+        let wasm = parse(include_bytes!("../../example3.wasm"))?;
+
+        imports.link_hostfn(
+            "env",
+            "add",
+            Type(
+                ResultType(
+                    vec![
+                        ValType::NumType(NumType::I32),
+                        ValType::NumType(NumType::I32),
+                    ]
+                    .into(),
+                ),
+                ResultType(vec![ValType::NumType(NumType::I32)].into()),
+            ),
+            |stack: &[Value], results: &mut [Value]| {
+                eprintln!("stack={stack:?}");
+                let Value::I32(lhs) = stack[0] else {
+                    anyhow::bail!("expected i32 value");
+                };
+                let Value::I32(rhs) = stack[1] else {
+                    anyhow::bail!("expected i32 value");
+                };
+                results[0] = Value::I32(lhs + rhs);
+                Ok(())
+            },
+        );
+        let mut machine = imports.instantiate(wasm)?;
+
+        let exports: Vec<_> = machine.exports().collect();
+        eprintln!("{exports:?}");
+        let result = machine.call("foo", &[])?;
         eprintln!("{result:?}");
 
         eprintln!("instr={}", size_of::<Machine>());

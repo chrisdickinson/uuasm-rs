@@ -12,7 +12,7 @@ pub(crate) mod value;
 pub(crate) use imports::Imports;
 pub(crate) use value::Value;
 
-use crate::nodes::{NumType, RefType, ValType, VecType};
+use crate::nodes::{Local, NumType, RefType, Type, ValType, VecType};
 
 impl ValType {
     fn instantiate(&self) -> Value {
@@ -41,6 +41,22 @@ impl ValType {
             | (ValType::RefType(RefType::ExternRef), Value::RefNull) => Ok(()),
             (vt, v) => anyhow::bail!("expected={:?}; got={:?}", vt, v),
         }
+    }
+}
+
+impl Type {
+    pub(crate) fn input_arity(&self) -> usize {
+        self.0 .0.len()
+    }
+
+    pub(crate) fn output_arity(&self) -> usize {
+        self.1 .0.len()
+    }
+}
+
+impl From<Type> for Vec<Local> {
+    fn from(value: Type) -> Self {
+        value.0 .0.into_iter().map(|xs| Local(0, *xs)).collect()
     }
 }
 
