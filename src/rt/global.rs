@@ -1,7 +1,7 @@
 use crate::nodes::{GlobalIdx, GlobalType, Import, Instr, Mutability, ValType};
 
 use super::{
-    imports::{Extern, GuestIndex, Imports},
+    imports::{Extern, GuestIndex, LookupImport},
     machine::MachineGlobalIndex,
 };
 
@@ -21,7 +21,7 @@ impl GlobalInst {
     pub(crate) fn resolve(
         ty: GlobalType,
         import: &Import<'_>,
-        imports: &Imports,
+        imports: &impl LookupImport,
     ) -> anyhow::Result<Self> {
         let Some(ext) = imports.lookup(import) else {
             anyhow::bail!("could not resolve {}/{}", import.r#mod.0, import.nm.0);
@@ -47,6 +47,10 @@ impl GlobalInst {
             GlobalInstImpl::Local(idx, instrs) => Some((*idx, instrs.as_ref())),
             GlobalInstImpl::Remote(_, _) => None,
         }
+    }
+
+    pub(crate) fn typedef(&self) -> &GlobalType {
+        &self.r#type
     }
 
     pub(crate) fn valtype(&self) -> ValType {

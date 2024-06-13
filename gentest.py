@@ -23,10 +23,11 @@ output.append("""
 #![allow(unused_mut)]
 #![allow(unused)]
 use crate::rt::*;
+use crate::test_utils::*;
 
 #[test]
-fn test_0() {
-    let spectest = crate::parse::parse(include_bytes!("../../spectest.wasm")).expect("could not parse spec test");
+fn test_0() -> anyhow::Result<()> {
+    let mut state = TestState::new(); 
 """)
 
 def convf32(f):
@@ -57,22 +58,18 @@ def to_value(desc):
             return f"Value::I64({value}u64 as i64)"
         case "f32":
             if value == 'nan:canonical':
-                value = "f32::NAN"
+                return "Value::F32CanonicalNaN"
             elif value == 'nan:arithmetic':
-                value = "f32::NAN"
+                return "Value::F32ArithmeticNaN"
             else:
-                value = f"unsafe {{ std::mem::transmute::<[u8; 4], f32>({value}u32.to_le_bytes()) }}"
-
-            return f"Value::F32({value})"
+                return f"Value::F32(f32::from_bits({value}u32))"
         case "f64":
             if value == 'nan:canonical':
-                value = "f64::NAN"
+                return "Value::F64CanonicalNaN"
             elif value == 'nan:arithmetic':
-                value = "f64::NAN"
+                return "Value::F64ArithmeticNaN"
             else:
-                value = f"unsafe {{ std::mem::transmute::<[u8; 8], f64>({value}u64.to_le_bytes()) }}"
-
-            return f"Value::F64({value})"
+                return f"Value::F64(f64::from_bits({value}u64))"
         case "v128":
             match desc["lane_type"]:
                 case 'i8':
@@ -110,25 +107,17 @@ for command in data["commands"]:
             filename = command["filename"]
             escaped_filename = json.dumps(command["filename"])
 
+            name = "None"
             if command.get("name", None):
-                named_module_to_varname[command["name"]] = "module%d" % module_count
-
-            extra_imports = "\n".join([f"""
-                imports{module_count}.link_module("{key}", {registered_modules[key]}.clone());
-            """ for key in registered_modules])
+                name = "Some(\"%s\")" % command.get("name")
 
             output.append(f"""
-                let module{module_count} = crate::parse::parse(
-                    include_bytes!({escaped_filename})
-                ).expect("failed to parse \\"{filename}\\" (\\"{source_filename}\\"; line {line})");
-
-                let mut imports{module_count} = Imports::new();
-                imports{module_count}.link_module("spectest", spectest.clone());
-                {extra_imports}
-
-                let mut instance{module_count} = imports{module_count}
-                    .instantiate(module{module_count}.clone())
-                    .expect("could not instantiate module{module_count} (\\"{source_filename}\\"; line {line})"); 
+                declare_module(
+                    &mut state,
+                    include_bytes!({escaped_filename}),
+                    {name},
+                    r#""{source_filename}"; line {line}"#
+                )?;
             """)
 
         case "assert_return":
@@ -143,10 +132,6 @@ for command in data["commands"]:
                     args = ",".join(map(to_value, args))
                     expected = ",".join(map(to_value, expected))
 
-                    instance_name = f"instance{module_count}"
-                    if "module" in command["action"]:
-                            instance_name = named_module_to_varname[command["action"]["module"]].replace("module", "instance")
-
                     field = repr(field)[1:-1]
                     field = re.sub("\\\\u([a-fA-F0-9]{2,4})", "\\\\u{\\1}", field)
                     field = re.sub("\\\\U([a-fA-F0-9]+)", lambda m: re.sub("^0+", "", m.group(1)), field)
@@ -157,15 +142,19 @@ for command in data["commands"]:
                         eprintln(f"skipping invocation \"{source_filename}\"; line {line}: field is invalid unicode...")
                         continue
 
+                    modname = "None"
+                    if command["action"].get("module", None):
+                        modname = 'Some(r#"%s"#)' % command["action"]["module"]
+
                     output.append(f"""
-                    {{
-                        let result = {instance_name}.call("{field}", &[{args}]).expect(r#"failed to call {field} ("{source_filename}"; line {line}")"#);
-                        let expected = &[{expected}];
-                        assert_eq!(result.len(), expected.len());
-                        for (result, expected) in result.iter().zip(expected.iter()) {{
-                            result.bit_eq(expected).expect(r#"result mismatch {field} ("{source_filename}"; line {line}")"#);
-                        }}
-                    }}
+                        assert_return(
+                            &mut state,
+                            {modname},
+                            "{field}",
+                            &[{args}],
+                            &[{expected}],
+                            r#""{source_filename}"; line {line}"#
+                        )?;
                     """)
 
                 case "get":
@@ -183,19 +172,19 @@ for command in data["commands"]:
                     args = ",".join(map(to_value, args))
                     text = command["text"]
 
-                    instance_name = f"instance{module_count}"
-                    if "module" in command["action"]:
-                            instance_name = named_module_to_varname[command["action"]["module"]].replace("module", "instance")
-
-                    field_esc = json.dumps(json.dumps(field))
-                    if '\\u' in field_esc or '\\b' in field_esc:
-                        ...
+                    modname = "None"
+                    if command["action"].get("module", None):
+                        modname = 'Some(r#"%s"#)' % command["action"]["module"]
 
                     output.append(f"""
-                        let field: String = serde_json::from_str({field_esc}).expect("could not decode");
-                        let expectation = format!(r#"expected {"{}"} to fail but got success ("{source_filename}"; line {line}")"#, field.as_str());
-                        let result = {instance_name}.call(field.as_str(), &[{args}]).err().expect(&expectation);
-                        assert!(result.to_string().find("{text}").is_some());
+                        assert_fail(
+                            &mut state,
+                            {modname},
+                            "{field}",
+                            &[{args}],
+                            r#"{text}"#,
+                            r#""{source_filename}"; line {line}"#
+                        )?;
                     """)
 
         case "assert_invalid":
@@ -222,17 +211,29 @@ for command in data["commands"]:
                     if '\\u' in field_esc or '\\b' in field_esc:
                         ...
 
+                    modname = "None"
+                    if command["action"].get("module", None):
+                        modname = 'Some(r#"%s"#)' % command["action"]["module"]
+
                     output.append(f"""
                         let field: String = serde_json::from_str({field_esc}).expect("could not decode");
-                        let expectation = format!(r#"failed to call {"{}"} ("{source_filename}"; line {line}")"#, field.as_str());
-                        instance{module_count}.call(field.as_str(), &[{args}]).expect(&expectation);
+                        invoke_call(
+                            &mut state,
+                            {modname},
+                            field.as_str(),
+                            &[{args}],
+                            r#""{source_filename}"; line {line}"#
+                        )?;
                     """)
 
         case "register":
-            val = named_module_to_varname[command["name"]] if command.get("name", None) else f"module{module_count}"
-            registered_modules[command["as"]] = val
+            name = command["as"]
+            output.append(f"""
+                register(&mut state, r#"{name}"#, r#""{source_filename}"; line {line}"#)?;
+            """)
 
 output.append("""
+    Ok(())
 }
 """)
 

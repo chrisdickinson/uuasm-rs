@@ -19,12 +19,7 @@ setup_tests:
   wait
 
   find src/testsuite -name '*.json' | xargs -P0 -I{} python3 gentest.py {}
-  for mod in $(find src/testsuite -name '*.rs'); do
-    if [ "$(wc -l $mod | awk '{print $1}')" -gt 5000 ]; then
-      echo "skip $mod -- too long"
-      continue
-    fi
-
+  for mod in $(find src/testsuite -name '*.rs' | grep -v simd); do
     mod=${mod%.rs}
 
     mod=$(basename "$mod")

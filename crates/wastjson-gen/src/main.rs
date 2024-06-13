@@ -104,7 +104,14 @@ fn main() -> Result<(), Box<dyn Error>> {
         let location = format!(r#""{}" L{line}"#, input.source_filename);
 
         match &command.kind {
-            CommandKind::Module { name, filename } => todo!(),
+            CommandKind::Module { name, filename } => {
+
+
+                quote! {
+
+                }
+
+            },
             CommandKind::Register { name, as_target } => todo!(),
             CommandKind::AssertReturn { action, expected } => todo!(),
             CommandKind::AssertTrap { action, text, expected } => todo!(),

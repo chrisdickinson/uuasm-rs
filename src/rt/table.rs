@@ -1,7 +1,7 @@
 use crate::nodes::{Import, TableIdx, TableType};
 
 use super::{
-    imports::{Extern, GuestIndex, Imports},
+    imports::{Extern, GuestIndex, Imports, LookupImport},
     machine::MachineTableIndex,
 };
 
@@ -21,7 +21,7 @@ impl TableInst {
     pub(crate) fn resolve(
         ty: TableType,
         import: &Import<'_>,
-        imports: &Imports,
+        imports: &impl LookupImport,
     ) -> anyhow::Result<Self> {
         let Some(ext) = imports.lookup(import) else {
             anyhow::bail!("could not resolve {}/{}", import.r#mod.0, import.nm.0);
@@ -47,6 +47,10 @@ impl TableInst {
             r#type: ty,
             r#impl: TableInstImpl::Local(idx),
         }
+    }
+
+    pub(crate) fn typedef(&self) -> &TableType {
+        &self.r#type
     }
 
     /*

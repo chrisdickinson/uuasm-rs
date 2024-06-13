@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    mem,
+    iter, mem,
     ops::{Deref, DerefMut, Range},
     sync::{Arc, Mutex},
 };
@@ -10,19 +10,19 @@ use anyhow::Context;
 use crate::{
     memory_region::MemoryRegion,
     nodes::{
-        BlockType, ByteVec, Code, CodeIdx, Data, Elem, ExportDesc, Expr, FuncIdx, Global,
-        GlobalIdx, ImportDesc, Instr, MemIdx, Module, TableIdx, TableType, Type, TypeIdx,
+        BlockType, ByteVec, Code, CodeIdx, Data, Elem, Export, ExportDesc, Expr, FuncIdx, Global,
+        GlobalIdx, Import, ImportDesc, Instr, MemIdx, Module, ModuleBuilder, Name, TableIdx,
+        TableType, Type, TypeIdx,
     },
 };
 
 use super::{
     function::FuncInst,
     global::{GlobalInst, GlobalInstImpl},
-    imports::GuestIndex,
+    imports::{Extern, ExternKey, GuestIndex, LookupImport},
     memory::{MemInst, MemoryInstImpl},
     table::{TableInst, TableInstImpl},
     value::Value,
-    Imports,
 };
 use crate::intern_map::InternMap;
 
@@ -141,198 +141,264 @@ impl std::ops::IndexMut<Range<usize>> for Table {
 }
 
 pub(crate) struct Resources {
-    memory_regions: Box<[MemoryRegion]>,
-    global_values: Box<[Value]>,
-    table_instances: Box<[Table]>,
+    memory_regions: Vec<MemoryRegion>,
+    global_values: Vec<Value>,
+    table_instances: Vec<Table>,
 
     dropped_elements: HashSet<(usize, usize)>,
     dropped_data: HashSet<(usize, usize)>,
-    external_functions: Box<[ExternalFunction]>,
+    external_functions: Vec<ExternalFunction>,
 }
 
 pub(crate) struct Machine<'a> {
-    initialized: bool,
+    initialized: HashSet<usize>,
 
-    types: Box<[Box<[Type]>]>,
-    code: Box<[Box<[Code]>]>,
-    data: Box<[Box<[Data<'a>]>]>,
-    elements: Box<[Box<[Elem]>]>,
+    imports: Vec<Box<[Import<'a>]>>,
+    exports: Vec<Box<[Export<'a>]>>,
+    types: Vec<Box<[Type]>>,
+    code: Vec<Box<[Code]>>,
+    data: Vec<Box<[Data<'a>]>>,
+    elements: Vec<Box<[Elem]>>,
 
-    functions: Box<[Box<[FuncInst]>]>,
-    globals: Box<[Box<[GlobalInst]>]>,
-    memories: Box<[Box<[MemInst]>]>,
-    tables: Box<[Box<[TableInst]>]>,
+    functions: Vec<Box<[FuncInst]>>,
+    globals: Vec<Box<[GlobalInst]>>,
+    memories: Vec<Box<[MemInst]>>,
+    tables: Vec<Box<[TableInst]>>,
 
     resources: Arc<Mutex<Resources>>,
 
-    exports: HashMap<usize, ExportDesc>,
+    modname_to_guest_idx: HashMap<usize, HashSet<usize>>,
+    externs: HashMap<ExternKey, Extern>,
     internmap: InternMap,
 }
 
+impl<'a> LookupImport for Machine<'a> {
+    fn lookup(&self, import: &Import) -> Option<Extern> {
+        let modname = self.internmap.get(import.r#mod.0)?;
+        let name = self.internmap.get(import.nm.0)?;
+        let key = ExternKey(modname, name);
+        self.externs.get(&key).copied()
+    }
+}
+
 impl<'a> Machine<'a> {
-    pub(super) fn new(
-        mut imports: Imports<'a>,
-        exports: HashMap<usize, ExportDesc>,
-        external_functions: Vec<ExternalFunction>,
-    ) -> anyhow::Result<Self> {
-        let guests = imports.guests.split_off(0);
+    fn link_extern(&mut self, modname: &str, name: &str, ext: Extern) {
+        let modname = self.internmap.insert(modname);
+        let name = self.internmap.insert(name);
 
-        let mut memory_regions: Vec<MemoryRegion> = Vec::new();
-        let mut table_instances: Vec<Table> = Vec::new();
-        let mut global_values: Vec<Value> = Vec::new();
+        self.externs.insert(ExternKey(modname, name), ext);
+    }
 
-        let mut all_code: Vec<Box<[_]>> = Vec::with_capacity(guests.len());
-        let mut all_data: Vec<Box<[_]>> = Vec::with_capacity(guests.len());
-        let mut all_functions: Vec<Box<[_]>> = Vec::with_capacity(guests.len());
-        let mut all_elements: Vec<Box<[_]>> = Vec::with_capacity(guests.len());
-        let mut all_globals: Vec<Box<[_]>> = Vec::with_capacity(guests.len());
-        let mut all_memories: Vec<Box<[_]>> = Vec::with_capacity(guests.len());
-        let mut all_tables: Vec<Box<[_]>> = Vec::with_capacity(guests.len());
-        let mut all_types: Vec<Box<[_]>> = Vec::with_capacity(guests.len());
+    pub fn link_module(&mut self, modname: &str, module: Module<'a>) -> anyhow::Result<()> {
+        let idx = self.types.len(); // any of these will do.
 
-        for guest in guests {
-            let Module {
-                type_section,
-                function_section,
-                table_section,
-                import_section,
-                memory_section,
-                global_section,
-                element_section,
-                code_section,
-                data_section,
-                ..
-            } = guest;
+        eprintln!("linking module -> {modname}");
+        let modname_idx = self.internmap.insert(modname);
+        self.modname_to_guest_idx
+            .entry(modname_idx)
+            .or_default()
+            .insert(idx);
 
-            let (
-                type_section,
-                function_section,
-                import_section,
-                table_section,
-                memory_section,
-                global_section,
-                element_section,
-                code_section,
-                data_section,
-            ) = (
-                type_section.map(|xs| xs.inner).unwrap_or_default(),
-                function_section.map(|xs| xs.inner).unwrap_or_default(),
-                import_section.map(|xs| xs.inner).unwrap_or_default(),
-                table_section.map(|xs| xs.inner).unwrap_or_default(),
-                memory_section.map(|xs| xs.inner).unwrap_or_default(),
-                global_section.map(|xs| xs.inner).unwrap_or_default(),
-                element_section.map(|xs| xs.inner).unwrap_or_default(),
-                code_section.map(|xs| xs.inner).unwrap_or_default(),
-                data_section.map(|xs| xs.inner).unwrap_or_default(),
-            );
+        let arc_resources = self.resources.clone();
+        let mut resource_lock = arc_resources
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("failed to lock resources"))?;
+        let resources = resource_lock.deref_mut();
 
-            let (import_func_count, import_mem_count, import_table_count, import_global_count) =
-                import_section
-                    .iter()
-                    .fold((0, 0, 0, 0), |(fc, mc, tc, gc), imp| match imp.desc {
-                        ImportDesc::Func(_) => (fc + 1, mc, tc, gc),
-                        ImportDesc::Mem(_) => (fc, mc + 1, tc, gc),
-                        ImportDesc::Table(_) => (fc, mc, tc + 1, gc),
-                        ImportDesc::Global(_) => (fc, mc, tc, gc + 1),
-                    });
-
-            let mut functions = Vec::with_capacity(function_section.len() + import_func_count);
-            let mut globals = Vec::with_capacity(global_section.len() + import_global_count);
-            let mut memories = Vec::with_capacity(memory_section.len() + import_mem_count);
-            let mut tables = Vec::with_capacity(table_section.len() + import_table_count);
-            for imp in import_section {
-                match imp.desc {
-                    ImportDesc::Func(desc) => {
-                        functions.push(FuncInst::resolve(desc, &imp, &imports)?);
-                    }
-                    ImportDesc::Mem(desc) => {
-                        memories.push(MemInst::resolve(desc, &imp, &imports)?);
-                    }
-                    ImportDesc::Table(desc) => {
-                        tables.push(TableInst::resolve(desc, &imp, &imports)?);
-                    }
-                    ImportDesc::Global(desc) => {
-                        globals.push(GlobalInst::resolve(desc, &imp, &imports)?);
-                    }
+        for export in module.export_section().unwrap_or_default() {
+            match export.desc {
+                ExportDesc::Func(func_idx) => {
+                    self.link_extern(modname, export.nm.0, Extern::Func(idx, func_idx));
+                }
+                ExportDesc::Table(table_idx) => {
+                    self.link_extern(modname, export.nm.0, Extern::Table(idx, table_idx));
+                }
+                ExportDesc::Mem(mem_idx) => {
+                    self.link_extern(modname, export.nm.0, Extern::Memory(idx, mem_idx));
+                }
+                ExportDesc::Global(global_idx) => {
+                    self.link_extern(modname, export.nm.0, Extern::Global(idx, global_idx));
                 }
             }
-
-            let mut saw_error = false;
-            let code_max = code_section.len();
-            functions.extend(
-                function_section
-                    .into_iter()
-                    .enumerate()
-                    .map(|(code_idx, xs)| {
-                        if code_idx >= code_max {
-                            saw_error = true;
-                        }
-                        FuncInst::new(xs, CodeIdx(code_idx as u32))
-                    }),
-            );
-
-            if saw_error {
-                anyhow::bail!("code idx out of range");
-            }
-
-            memories.extend(memory_section.into_iter().map(|memtype| {
-                let memory_region_idx = memory_regions.len();
-                memory_regions.push(MemoryRegion::new(memtype.0));
-                MemInst::new(memtype, memory_region_idx)
-            }));
-
-            tables.extend(table_section.into_iter().map(|tabletype| {
-                let table_instance_idx = table_instances.len();
-                table_instances.push(Table {
-                    values: vec![Value::RefNull; tabletype.1.min() as usize],
-                    kind: tabletype,
-                });
-                TableInst::new(tabletype, table_instance_idx)
-            }));
-
-            let global_base_offset = global_values.len();
-            global_values.reserve(global_section.len());
-            globals.extend(global_section.into_iter().enumerate().map(|(idx, global)| {
-                let Global(global_type, Expr(instrs)) = global;
-                global_values.push(global_type.0.instantiate());
-                GlobalInst::new(
-                    global_type,
-                    global_base_offset + idx,
-                    instrs.into_boxed_slice(),
-                )
-            }));
-
-            all_code.push(code_section.into_boxed_slice());
-            all_data.push(data_section.into_boxed_slice());
-            all_elements.push(element_section.into_boxed_slice());
-            all_functions.push(functions.into_boxed_slice());
-            all_globals.push(globals.into_boxed_slice());
-            all_memories.push(memories.into_boxed_slice());
-            all_tables.push(tables.into_boxed_slice());
-            all_types.push(type_section.into_boxed_slice());
         }
 
-        Ok(Self {
-            initialized: false,
-            types: all_types.into_boxed_slice(),
-            code: all_code.into_boxed_slice(),
-            data: all_data.into_boxed_slice(),
-            elements: all_elements.into_boxed_slice(),
-            functions: all_functions.into_boxed_slice(),
-            globals: all_globals.into_boxed_slice(),
-            memories: all_memories.into_boxed_slice(),
-            tables: all_tables.into_boxed_slice(),
-            resources: Arc::new(Mutex::new(Resources {
-                memory_regions: memory_regions.into_boxed_slice(),
-                global_values: global_values.into_boxed_slice(),
-                table_instances: table_instances.into_boxed_slice(),
-                dropped_data: HashSet::new(),
-                dropped_elements: HashSet::new(),
-                external_functions: external_functions.into_boxed_slice(),
-            })),
-            exports,
-            internmap: imports.internmap,
-        })
+        self.link_guest(module, resources)
+    }
+
+    fn link_guest(&mut self, guest: Module<'a>, resources: &mut Resources) -> anyhow::Result<()> {
+        let Module {
+            type_section,
+            function_section,
+            table_section,
+            import_section,
+            memory_section,
+            global_section,
+            element_section,
+            code_section,
+            data_section,
+            export_section,
+            ..
+        } = guest;
+
+        let (
+            type_section,
+            function_section,
+            import_section,
+            export_section,
+            table_section,
+            memory_section,
+            global_section,
+            element_section,
+            code_section,
+            data_section,
+        ) = (
+            type_section.map(|xs| xs.inner).unwrap_or_default(),
+            function_section.map(|xs| xs.inner).unwrap_or_default(),
+            import_section.map(|xs| xs.inner).unwrap_or_default(),
+            export_section.map(|xs| xs.inner).unwrap_or_default(),
+            table_section.map(|xs| xs.inner).unwrap_or_default(),
+            memory_section.map(|xs| xs.inner).unwrap_or_default(),
+            global_section.map(|xs| xs.inner).unwrap_or_default(),
+            element_section.map(|xs| xs.inner).unwrap_or_default(),
+            code_section.map(|xs| xs.inner).unwrap_or_default(),
+            data_section.map(|xs| xs.inner).unwrap_or_default(),
+        );
+
+        let (import_func_count, import_mem_count, import_table_count, import_global_count) =
+            import_section
+                .iter()
+                .fold((0, 0, 0, 0), |(fc, mc, tc, gc), imp| match imp.desc {
+                    ImportDesc::Func(_) => (fc + 1, mc, tc, gc),
+                    ImportDesc::Mem(_) => (fc, mc + 1, tc, gc),
+                    ImportDesc::Table(_) => (fc, mc, tc + 1, gc),
+                    ImportDesc::Global(_) => (fc, mc, tc, gc + 1),
+                });
+
+        let mut functions = Vec::with_capacity(function_section.len() + import_func_count);
+        let mut globals = Vec::with_capacity(global_section.len() + import_global_count);
+        let mut memories = Vec::with_capacity(memory_section.len() + import_mem_count);
+        let mut tables = Vec::with_capacity(table_section.len() + import_table_count);
+        for imp in &import_section {
+            match imp.desc {
+                ImportDesc::Func(desc) => {
+                    functions.push(FuncInst::resolve(desc, imp, self)?);
+                }
+                ImportDesc::Mem(desc) => {
+                    memories.push(MemInst::resolve(desc, imp, self)?);
+                }
+                ImportDesc::Table(desc) => {
+                    tables.push(TableInst::resolve(desc, imp, self)?);
+                }
+                ImportDesc::Global(desc) => {
+                    globals.push(GlobalInst::resolve(desc, imp, self)?);
+                }
+            }
+        }
+
+        let mut saw_error = false;
+        let code_max = code_section.len();
+        functions.extend(
+            function_section
+                .into_iter()
+                .enumerate()
+                .map(|(code_idx, xs)| {
+                    if code_idx >= code_max {
+                        saw_error = true;
+                    }
+                    FuncInst::new(xs, CodeIdx(code_idx as u32))
+                }),
+        );
+
+        if saw_error {
+            anyhow::bail!("code idx out of range");
+        }
+
+        memories.extend(memory_section.into_iter().map(|memtype| {
+            let memory_region_idx = resources.memory_regions.len();
+            resources.memory_regions.push(MemoryRegion::new(memtype.0));
+            MemInst::new(memtype, memory_region_idx)
+        }));
+
+        tables.extend(table_section.into_iter().map(|tabletype| {
+            let table_instance_idx = resources.table_instances.len();
+            eprintln!("initializing {table_instance_idx:?}");
+            resources.table_instances.push(Table {
+                values: vec![Value::RefNull; tabletype.1.min() as usize],
+                kind: tabletype,
+            });
+            TableInst::new(tabletype, table_instance_idx)
+        }));
+
+        let global_base_offset = resources.global_values.len();
+        resources.global_values.reserve(global_section.len());
+        globals.extend(global_section.into_iter().enumerate().map(|(idx, global)| {
+            let Global(global_type, Expr(instrs)) = global;
+            resources.global_values.push(global_type.0.instantiate());
+            GlobalInst::new(
+                global_type,
+                global_base_offset + idx,
+                instrs.into_boxed_slice(),
+            )
+        }));
+
+        self.imports.push(import_section.into_boxed_slice());
+        self.exports.push(export_section.into_boxed_slice());
+        self.code.push(code_section.into_boxed_slice());
+        self.data.push(data_section.into_boxed_slice());
+        self.elements.push(element_section.into_boxed_slice());
+        self.functions.push(functions.into_boxed_slice());
+        self.globals.push(globals.into_boxed_slice());
+        self.memories.push(memories.into_boxed_slice());
+        self.tables.push(tables.into_boxed_slice());
+        self.types.push(type_section.into_boxed_slice());
+        Ok(())
+    }
+
+    pub(super) fn new(
+        guests: Vec<Module<'a>>,
+        exports: HashMap<ExternKey, Extern>,
+        intern_map: InternMap,
+        external_functions: Vec<ExternalFunction>,
+        modname_to_guest_idx: HashMap<usize, HashSet<usize>>,
+    ) -> anyhow::Result<Self> {
+        let resources = Arc::new(Mutex::new(Resources {
+            memory_regions: Vec::with_capacity(4),
+            global_values: Vec::with_capacity(4),
+            table_instances: Vec::with_capacity(4),
+            dropped_data: HashSet::new(),
+            dropped_elements: HashSet::new(),
+            external_functions,
+        }));
+        let mut machine = Self {
+            initialized: HashSet::new(),
+            exports: Vec::with_capacity(guests.len()),
+            imports: Vec::with_capacity(guests.len()),
+            code: Vec::with_capacity(guests.len()),
+            data: Vec::with_capacity(guests.len()),
+            functions: Vec::with_capacity(guests.len()),
+            elements: Vec::with_capacity(guests.len()),
+            globals: Vec::with_capacity(guests.len()),
+            memories: Vec::with_capacity(guests.len()),
+            tables: Vec::with_capacity(guests.len()),
+            types: Vec::with_capacity(guests.len()),
+            resources,
+            externs: exports,
+            modname_to_guest_idx,
+            internmap: intern_map,
+        };
+
+        let arc_resources = machine.resources.clone();
+        let mut resource_lock = arc_resources
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("failed to lock resources"))?;
+        let resources = resource_lock.deref_mut();
+
+        for guest in guests {
+            machine.link_guest(guest, resources)?;
+        }
+
+        // TODO: flatten references!
+        Ok(machine)
     }
 
     fn memory(&self, mut module_idx: usize, mut memory_idx: MemIdx) -> MachineMemoryIndex {
@@ -404,134 +470,153 @@ impl<'a> Machine<'a> {
         self.types.get(guest_idx)?.get(type_idx.0 as usize)
     }
 
-    pub(crate) fn initialize(&mut self, resources: &mut Resources) -> anyhow::Result<()> {
-        for (module_idx, global_set) in self.globals.iter().enumerate() {
-            for global in global_set.iter() {
-                let Some((global_idx, instrs)) = global.initdata() else {
-                    continue;
-                };
-                resources.global_values[global_idx] =
-                    self.compute_constant_expr(module_idx, instrs, &mut *resources)?;
-            }
+    pub(crate) fn initialize(
+        &mut self,
+        at_idx: usize,
+        resources: &mut Resources,
+    ) -> anyhow::Result<()> {
+        if self.initialized.contains(&at_idx) {
+            return Ok(());
+        }
+        self.initialized.insert(at_idx);
+
+        let mut initializers = Vec::new();
+        for import in self.imports[at_idx].iter() {
+            let Some(idx) = self.internmap.get(import.r#mod.0) else {
+                continue;
+            };
+            let Some(guest_indices) = self.modname_to_guest_idx.get(&idx) else {
+                continue;
+            };
+            initializers.extend(guest_indices.iter().copied());
+        }
+        for guest_idx in initializers {
+            self.initialize(guest_idx, resources)?;
         }
 
-        for (module_idx, data_set) in self.data.iter().enumerate() {
-            for (data_idx, data) in data_set.iter().enumerate() {
-                match data {
-                    Data::Active(data, memory_idx, expr) => {
-                        let memoffset =
-                            self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
-                        let memoffset = memoffset
-                            .as_usize()
-                            .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
+        // loop over the imports of the current idx. call initialize on them, then init ourselves.
 
-                        let memoryidx = self.memory(module_idx, *memory_idx);
-                        let memory = resources
-                            .memory_regions
-                            .get_mut(memoryidx)
-                            .ok_or_else(|| anyhow::anyhow!("no such memory"))?;
+        for global in self.globals[at_idx].iter() {
+            let Some((global_idx, instrs)) = global.initdata() else {
+                continue;
+            };
+            eprintln!("{global_idx}");
+            resources.global_values[global_idx] =
+                self.compute_constant_expr(at_idx, instrs, &mut *resources)?;
+        }
 
-                        memory.grow_to_fit(data.0, memoffset)?;
-                        memory.copy_data(data.0, memoffset);
-                        resources.dropped_data.insert((module_idx, data_idx));
-                    }
-                    Data::Passive(_) => continue,
+        for (data_idx, data) in self.data[at_idx].iter().enumerate() {
+            match data {
+                Data::Active(data, memory_idx, expr) => {
+                    let memoffset = self.compute_constant_expr(at_idx, &expr.0, &mut *resources)?;
+                    let memoffset = memoffset
+                        .as_usize()
+                        .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
+
+                    let memoryidx = self.memory(at_idx, *memory_idx);
+                    let memory = resources
+                        .memory_regions
+                        .get_mut(memoryidx)
+                        .ok_or_else(|| anyhow::anyhow!("no such memory"))?;
+
+                    memory.grow_to_fit(data.0, memoffset)?;
+                    memory.copy_data(data.0, memoffset);
+                    resources.dropped_data.insert((at_idx, data_idx));
                 }
+                Data::Passive(_) => continue,
             }
         }
 
         let mut active_elems = Vec::new();
-        for (module_idx, elem_set) in self.elements.iter_mut().enumerate() {
-            for elem in elem_set.iter_mut() {
-                if matches!(
-                    elem,
-                    Elem::ActiveSegmentFuncs(_, _)
-                        | Elem::ActiveSegment(_, _, _, _)
-                        | Elem::ActiveSegmentExpr(_, _)
-                        | Elem::ActiveSegmentTableAndExpr(_, _, _, _)
-                ) {
-                    let mut empty = Elem::PassiveSegment(0, vec![]);
-                    mem::swap(elem, &mut empty);
-                    active_elems.push((module_idx, empty));
-                }
+        for elem in self.elements[at_idx].iter_mut() {
+            if matches!(
+                elem,
+                Elem::ActiveSegmentFuncs(_, _)
+                    | Elem::ActiveSegment(_, _, _, _)
+                    | Elem::ActiveSegmentExpr(_, _)
+                    | Elem::ActiveSegmentTableAndExpr(_, _, _, _)
+            ) {
+                let mut empty = Elem::PassiveSegment(0, vec![]);
+                mem::swap(elem, &mut empty);
+                active_elems.push(empty);
             }
         }
 
-        for (module_idx, elem) in active_elems {
+        for elem in active_elems {
             match elem {
                 Elem::ActiveSegmentFuncs(expr, func_indices) => {
-                    let offset =
-                        self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
+                    let offset = self.compute_constant_expr(at_idx, &expr.0, &mut *resources)?;
                     let offset = offset
                         .as_usize()
                         .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
 
-                    let tableidx = self.table(module_idx, TableIdx(0));
+                    let tableidx = self.table(at_idx, TableIdx(0));
                     let table = resources
                         .table_instances
                         .get_mut(tableidx)
                         .ok_or_else(|| anyhow::anyhow!("no such table"))?;
 
+                    eprintln!("activating offset={offset:?}; funcindexes={func_indices:?} tableidx={tableidx:?}");
                     for (idx, xs) in func_indices.iter().enumerate() {
                         table[idx + offset] = Value::RefFunc(*xs);
                     }
+                    eprintln!("table={:?}", &table.values);
                 }
 
                 // "elemkind" means "funcref" or "externref"
                 Elem::ActiveSegment(table_idx, expr, _elemkind, func_indices) => {
-                    let offset =
-                        self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
+                    let offset = self.compute_constant_expr(at_idx, &expr.0, &mut *resources)?;
                     let offset = offset
                         .as_usize()
                         .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
 
-                    let tableidx = self.table(module_idx, table_idx);
+                    let tableidx = self.table(at_idx, table_idx);
                     let table = resources
                         .table_instances
                         .get_mut(tableidx)
                         .ok_or_else(|| anyhow::anyhow!("no such table"))?;
 
+                    eprintln!("activating activesegment offset={offset:?}; funcindexes={func_indices:?} tableidx={tableidx:?}");
                     for (idx, xs) in func_indices.iter().enumerate() {
                         table[idx + offset] = Value::RefFunc(*xs);
                     }
                 }
 
                 Elem::ActiveSegmentExpr(expr, exprs) => {
-                    let offset =
-                        self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
+                    let offset = self.compute_constant_expr(at_idx, &expr.0, &mut *resources)?;
                     let offset = offset
                         .as_usize()
                         .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
 
                     let values = exprs
                         .iter()
-                        .map(|xs| self.compute_constant_expr(module_idx, &xs.0, &mut *resources))
+                        .map(|xs| self.compute_constant_expr(at_idx, &xs.0, &mut *resources))
                         .collect::<anyhow::Result<Vec<_>>>()?;
 
-                    let tableidx = self.table(module_idx, TableIdx(0));
+                    let tableidx = self.table(at_idx, TableIdx(0));
                     let table = resources
                         .table_instances
                         .get_mut(tableidx)
                         .ok_or_else(|| anyhow::anyhow!("no such table"))?;
 
+                    eprintln!("activating activesegment offset={offset:?}; values={values:?} tableidx={tableidx:?}");
                     for (idx, xs) in values.iter().enumerate() {
                         table[idx + offset] = *xs;
                     }
                 }
 
                 Elem::ActiveSegmentTableAndExpr(table_idx, expr, _ref_type, exprs) => {
-                    let offset =
-                        self.compute_constant_expr(module_idx, &expr.0, &mut *resources)?;
+                    let offset = self.compute_constant_expr(at_idx, &expr.0, &mut *resources)?;
                     let offset = offset
                         .as_usize()
                         .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
 
                     let values = exprs
                         .iter()
-                        .map(|xs| self.compute_constant_expr(module_idx, &xs.0, &mut *resources))
+                        .map(|xs| self.compute_constant_expr(at_idx, &xs.0, &mut *resources))
                         .collect::<anyhow::Result<Vec<_>>>()?;
 
-                    let tableidx = self.table(module_idx, table_idx);
+                    let tableidx = self.table(at_idx, table_idx);
                     let table = resources
                         .table_instances
                         .get_mut(tableidx)
@@ -547,39 +632,178 @@ impl<'a> Machine<'a> {
             }
         }
 
-        self.initialized = true;
+        // TODO: do we have a start section? an initialize export? call them.
+
         Ok(())
     }
 
-    pub(crate) fn call(&mut self, funcname: &str, args: &[Value]) -> anyhow::Result<Vec<Value>> {
+    pub(crate) fn alias<'b: 'a>(
+        &mut self,
+        modname: &'b str,
+        to_modname: &str,
+    ) -> anyhow::Result<()> {
+        // get all of the exports of "modname" and create
+        let modname_idx = self
+            .internmap
+            .get(modname)
+            .ok_or_else(|| anyhow::anyhow!("no such instance {modname}"))?;
+
+        let module_indices = self
+            .modname_to_guest_idx
+            .get(&modname_idx)
+            .into_iter()
+            .map(|xs| xs.iter())
+            .flat_map(|xs| xs.copied());
+
+        let mut seen_names = HashSet::new();
+
+        let mut types = Vec::new();
+        let mut imports = Vec::new();
+        let mut exports = Vec::new();
+
+        // The relative object indices in our new module will correspond to these counts; since
+        // we may be aliasing across multiple modules we need to keep track of these ourselves (we
+        // can't just clone the export desc.)
+        let mut func_count = 0;
+        let mut table_count = 0;
+        let mut mem_count = 0;
+        let mut global_count = 0;
+        for idx in module_indices {
+            for export in self.exports[idx].iter() {
+                if !seen_names.insert(self.internmap.get(export.nm.0).unwrap()) {
+                    anyhow::bail!("cannot alias; {} is exported multiple times", export.nm.0);
+                }
+                let (export_desc, import_desc) = match export.desc {
+                    ExportDesc::Func(func_idx) => {
+                        let func = &self.functions[idx][func_idx.0 as usize];
+                        let type_idx = func.typeidx();
+
+                        let type_idx_out = types.len();
+                        types.push(self.types[idx][type_idx.0 as usize].clone());
+                        func_count += 1;
+                        (
+                            ExportDesc::Func(FuncIdx(func_count - 1)),
+                            ImportDesc::Func(TypeIdx(type_idx_out as u32)),
+                        )
+                    }
+                    ExportDesc::Table(table_idx) => {
+                        let table = &self.tables[idx][table_idx.0 as usize];
+
+                        table_count += 1;
+                        (
+                            ExportDesc::Table(TableIdx(table_count - 1)),
+                            ImportDesc::Table(*table.typedef()),
+                        )
+                    }
+                    ExportDesc::Mem(mem_idx) => {
+                        let memory = &self.memories[idx][mem_idx.0 as usize];
+                        mem_count += 1;
+                        (
+                            ExportDesc::Mem(MemIdx(mem_count - 1)),
+                            ImportDesc::Mem(*memory.typedef()),
+                        )
+                    }
+                    ExportDesc::Global(global_idx) => {
+                        let global = &self.globals[idx][global_idx.0 as usize];
+                        global_count += 1;
+                        (
+                            ExportDesc::Global(GlobalIdx(global_count - 1)),
+                            ImportDesc::Global(*global.typedef()),
+                        )
+                    }
+                };
+
+                imports.push(Import {
+                    r#mod: Name(modname),
+                    nm: export.nm.clone(),
+                    desc: import_desc,
+                });
+                exports.push(Export {
+                    nm: export.nm.clone(),
+                    desc: export_desc,
+                });
+            }
+        }
+
+        // TODO: do we clone the "start" section?
+        let module = ModuleBuilder::new()
+            .type_section(types)
+            .import_section(imports)
+            .export_section(exports)
+            .build();
+
+        self.link_module(to_modname, module)
+    }
+
+    pub(crate) fn init(&mut self, modname: &str) -> anyhow::Result<()> {
         let arc_resources = self.resources.clone();
         let mut resource_lock = arc_resources
             .try_lock()
             .map_err(|_| anyhow::anyhow!("failed to lock resources"))?;
         let mut resources = resource_lock.deref_mut();
 
-        if !self.initialized {
-            self.initialize(&mut *resources)?;
+        let modname_idx = self
+            .internmap
+            .get(modname)
+            .ok_or_else(|| anyhow::anyhow!("no such instance {modname}"))?;
+
+        let mod_indices = self
+            .modname_to_guest_idx
+            .get(&modname_idx)
+            .map(|xs| xs.iter().copied().collect::<Vec<_>>())
+            .unwrap_or_default();
+
+        for module_idx in mod_indices {
+            self.initialize(module_idx, resources)?;
         }
 
-        // how to get lookup funcname? (have to preserve the last module's externs)
-        let func_name_idx = self
+        Ok(())
+    }
+
+    pub(crate) fn call(
+        &mut self,
+        modname: &str,
+        funcname: &str,
+        args: &[Value],
+    ) -> anyhow::Result<Vec<Value>> {
+        let arc_resources = self.resources.clone();
+        let mut resource_lock = arc_resources
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("failed to lock resources"))?;
+        let mut resources = resource_lock.deref_mut();
+
+        let modname_idx = self
+            .internmap
+            .get(modname)
+            .ok_or_else(|| anyhow::anyhow!("no such instance {modname}"))?;
+
+        let mod_indices = self
+            .modname_to_guest_idx
+            .get(&modname_idx)
+            .map(|xs| xs.iter().copied().collect::<Vec<_>>())
+            .unwrap_or_default();
+
+        for module_idx in mod_indices {
+            self.initialize(module_idx, resources)?;
+        }
+
+        let funcname_idx = self
             .internmap
             .get(funcname)
             .ok_or_else(|| anyhow::anyhow!("no such export {funcname}"))?;
 
-        let ExportDesc::Func(func_idx) = self
-            .exports
-            .get(&func_name_idx)
+        let Extern::Func(module_idx, func_idx) = self
+            .externs
+            .get(&ExternKey(modname_idx, funcname_idx))
             .ok_or_else(|| anyhow::anyhow!("no such export {funcname}"))?
         else {
             anyhow::bail!("export {funcname} is not a function");
         };
 
-        let module_idx = self.functions.len() - 1;
         let (module_idx, function) = self
-            .function(module_idx, *func_idx)
+            .function(*module_idx, *func_idx)
             .ok_or_else(|| anyhow::anyhow!("missing final module"))?;
+
         let typedef = self
             .typedef(module_idx, *function.typeidx())
             .ok_or_else(|| anyhow::anyhow!("missing typedef"))?;
@@ -1050,10 +1274,15 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("undefined element: table index out of range");
                     };
 
+                    eprintln!("{idx:?} {v:?} tbl={table_instance_idx:?} values={:?}", &table.values);
                     if let Value::RefNull = &v {
                         anyhow::bail!("uninitialized element {idx}");
                     };
 
+                    // TKTK: tomorrow-chris, RefFunc _might_ point at a function from another
+                    // instance. (E.g., we could initialize a table in module A using module B,
+                    // with pointers into module B's functions.) It might be that tables need to
+                    // track the GuestIndex along with the ref value.
                     let Value::RefFunc(v) = v else {
                         anyhow::bail!("expected reffunc value, got {:?}", v);
                     };
@@ -1327,7 +1556,7 @@ impl<'a> Machine<'a> {
                         .insert((frame.guest_index, elem_idx.0 as usize));
                 }
 
-                Instr::TableCopy(from_table_idx, to_table_idx) => {
+                Instr::TableCopy(to_table_idx, from_table_idx) => {
                     let from_table_idx = self.table(frame.guest_index, *from_table_idx);
 
                     let to_table_idx = self.table(frame.guest_index, *to_table_idx);
@@ -1346,6 +1575,12 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("out of bounds table access");
                     }
                     if destaddr > resources.table_instances[to_table_idx].len() {
+                        anyhow::bail!("out of bounds table access");
+                    }
+                    if destaddr.saturating_add(count) > resources.table_instances[to_table_idx].len() {
+                        anyhow::bail!("out of bounds table access");
+                    }
+                    if srcaddr.saturating_add(count) > resources.table_instances[from_table_idx].len() {
                         anyhow::bail!("out of bounds table access");
                     }
 
@@ -1837,6 +2072,12 @@ impl<'a> Machine<'a> {
                             anyhow::bail!("out of bounds memory access");
                         }
                         if destaddr > memory_region.len() {
+                            anyhow::bail!("out of bounds memory access");
+                        }
+                        if destaddr.saturating_add(count) > memory_region.len() {
+                            anyhow::bail!("out of bounds memory access");
+                        }
+                        if srcaddr.saturating_add(count) > memory_region.len() {
                             anyhow::bail!("out of bounds memory access");
                         }
                         memory_region.copy_overlapping_data(destaddr, srcaddr, count);
@@ -2556,6 +2797,7 @@ impl<'a> Machine<'a> {
                     else {
                         anyhow::bail!("f32.add: not enough operands");
                     };
+
                     value_stack.push(Value::F32(lhs + rhs));
                 }
                 Instr::F32Sub => {
@@ -2719,9 +2961,20 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("i32.trunc_f32_s: not enough operands");
                     };
 
-                    if op.is_nan() || op.is_infinite() {
+                    if op.is_nan() {
                         anyhow::bail!("i32.trunc_f32_s: invalid conversion to integer");
                     }
+
+                    if op.is_infinite() {
+                        anyhow::bail!("i32.trunc_f32_s: integer overflow");
+                    }
+
+                    let op = op.trunc();
+
+                    if op >= (i32::MAX as f32) || op < (i32::MIN as f32) {
+                        anyhow::bail!("i32.trunc_f32_s: integer overflow");
+                    }
+
                     value_stack.push(Value::I32(op as i32));
                 }
                 Instr::I32UConvertF32 => {
@@ -2729,8 +2982,18 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("i32.trunc_f32_u: not enough operands");
                     };
 
-                    if op.is_nan() || op.is_infinite() {
+                    if op.is_nan() {
                         anyhow::bail!("i32.trunc_f32_u: invalid conversion to integer");
+                    }
+
+                    if op.is_infinite() {
+                        anyhow::bail!("i32.trunc_f32_u: integer overflow");
+                    }
+
+                    let op = op.trunc();
+
+                    if op >= (u32::MAX as f32) || op < (u32::MIN as f32) {
+                        anyhow::bail!("i32.trunc_f32_u: integer overflow");
                     }
 
                     value_stack.push(Value::I32(op as u32 as i32));
@@ -2740,8 +3003,18 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("i32.trunc_f64_s: not enough operands");
                     };
 
-                    if op.is_nan() || op.is_infinite() {
+                    if op.is_nan() {
                         anyhow::bail!("i32.trunc_f64_s: invalid conversion to integer");
+                    }
+
+                    if op.is_infinite() {
+                        anyhow::bail!("i32.trunc_f64_s: integer overflow");
+                    }
+
+                    let op = op as i64;
+
+                    if op > (i32::MAX as i64) || op < (i32::MIN as i64) {
+                        anyhow::bail!("i32.trunc_f64_s: integer overflow");
                     }
 
                     value_stack.push(Value::I32(op as i32));
@@ -2751,8 +3024,18 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("i32.trunc_f64_u: not enough operands");
                     };
 
-                    if op.is_nan() || op.is_infinite() {
+                    if op.is_nan() {
                         anyhow::bail!("i32.trunc_f64_u: invalid conversion to integer");
+                    }
+
+                    if op.is_infinite() {
+                        anyhow::bail!("i32.trunc_f64_u: integer overflow");
+                    }
+
+                    let op = op as i64;
+
+                    if op > (u32::MAX as i64) || op < (u32::MIN as i64) {
+                        anyhow::bail!("i32.trunc_f64_u: integer overflow");
                     }
 
                     value_stack.push(Value::I32(op as u32 as i32));
@@ -2776,8 +3059,18 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("i64.trunc_f32_s: not enough operands");
                     };
 
-                    if op.is_nan() || op.is_infinite() {
+                    if op.is_nan() {
                         anyhow::bail!("i64.trunc_f32_s: invalid conversion to integer");
+                    }
+
+                    if op.is_infinite() {
+                        anyhow::bail!("i64.trunc_f32_s: integer overflow");
+                    }
+
+                    let op = op.trunc();
+
+                    if op >= (i64::MAX as f32) || op < (i64::MIN as f32) {
+                        anyhow::bail!("i64.trunc_f32_s: integer overflow");
                     }
 
                     value_stack.push(Value::I64(op as i64));
@@ -2787,30 +3080,60 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("i64.trunc_f32_u: not enough operands");
                     };
 
-                    if op.is_nan() || op.is_infinite() {
+                    if op.is_nan() {
                         anyhow::bail!("i64.trunc_f32_u: invalid conversion to integer");
                     }
 
-                    value_stack.push(Value::I64(op as u32 as i64));
+                    if op.is_infinite() {
+                        anyhow::bail!("i64.trunc_f32_u: integer overflow");
+                    }
+
+                    let op = op.trunc();
+
+                    if op >= (u64::MAX as f32) || op < (u64::MIN as f32) {
+                        anyhow::bail!("i64.trunc_f32_u: integer overflow");
+                    }
+
+                    value_stack.push(Value::I64(op as u64 as i64));
                 }
                 Instr::I64SConvertF64 => {
                     let Some(Value::F64(op)) = value_stack.pop() else {
                         anyhow::bail!("i64.trunc_f64_s: not enough operands");
                     };
 
-                    if op.is_nan() || op.is_infinite() {
+                    if op.is_nan() {
                         anyhow::bail!("i64.trunc_f64_s: invalid conversion to integer");
+                    }
+
+                    if op.is_infinite() {
+                        anyhow::bail!("i64.trunc_f64_s: integer overflow");
+                    }
+
+                    let op = op.trunc();
+
+                    if op >= (i64::MAX as f64) || op < (i64::MIN as f64) {
+                        anyhow::bail!("i64.trunc_f64_s: integer overflow");
                     }
 
                     value_stack.push(Value::I64(op as i64));
                 }
                 Instr::I64UConvertF64 => {
                     let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.TKTK: not enough operands");
+                        anyhow::bail!("i64.trunc_f64_u: not enough operands");
                     };
 
-                    if op.is_nan() || op.is_infinite() {
+                    if op.is_nan() {
                         anyhow::bail!("i64.trunc_f64_u: invalid conversion to integer");
+                    }
+
+                    if op.is_infinite() {
+                        anyhow::bail!("i64.trunc_f64_u: integer overflow");
+                    }
+
+                    let op = op.trunc();
+
+                    if op >= (u64::MAX as f64) || op < (u64::MIN as f64) {
+                        anyhow::bail!("i64.trunc_f64_u: integer overflow");
                     }
 
                     value_stack.push(Value::I64(op as u64 as i64));
@@ -2853,7 +3176,17 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("f32.demote_f64: not enough operands");
                     };
 
-                    value_stack.push(Value::F32(op as f32));
+                    let mut op = op as f32;
+                    if op.is_nan() {
+                        op = f32::from_bits(match op.to_bits() {
+                            0x7fe00000 => 0x7fc00000,
+                            0xffc00000 => 0x7fc00000,
+                            0xffe00000 => 0x7fc00000,
+                            passthru => passthru,
+                        });
+                    }
+
+                    value_stack.push(Value::F32(op));
                 }
 
                 Instr::F64SConvertI32 => {
@@ -2889,7 +3222,17 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("f64.promote_f32: not enough operands");
                     };
 
-                    value_stack.push(Value::F64(op as f64));
+                    let mut op = op as f64;
+                    if op.is_nan() {
+                        op = f64::from_bits(match op.to_bits() {
+                            0x7ffc000000000000 => 0x7ff8000000000000,
+                            0xfff8000000000000 => 0x7ff8000000000000,
+                            0xfffc000000000000 => 0x7ff8000000000000,
+                            passthru => passthru,
+                        });
+                    }
+
+                    value_stack.push(Value::F64(op));
                 }
                 Instr::I32ReinterpretF32 => {
                     let Some(Value::F32(op)) = value_stack.pop() else {
@@ -3128,11 +3471,11 @@ impl<'a> Machine<'a> {
         Ok(value_stack)
     }
 
-    pub(crate) fn exports(&self) -> impl Iterator<Item = (&str, &ExportDesc)> {
+    /*pub(crate) fn exports(&self) -> impl Iterator<Item = (&str, &ExportDesc)> {
         self.exports
             .iter()
             .filter_map(|(xs, desc)| Some((self.internmap.idx(*xs)?, desc)))
-    }
+    }*/
 
     fn compute_constant_expr(
         &self,
@@ -3161,6 +3504,8 @@ impl<'a> Machine<'a> {
     }
 }
 
+static CANON_32BIT_NAN: u32 = 0b01111111110000000000000000000000;
+static CANON_64BIT_NAN: u64 = 0b0111111111111000000000000000000000000000000000000000000000000000;
 // Portions copied from wasmtime: https://github.com/bytecodealliance/wasmtime/blob/main/crates/wasmtime/src/runtime/vm/libcalls.rs#L709
 const TOINT_32: f32 = 1.0 / f32::EPSILON;
 const TOINT_64: f64 = 1.0 / f64::EPSILON;

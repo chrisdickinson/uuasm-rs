@@ -10,6 +10,14 @@ pub enum Value {
     RefNull,
     RefFunc(FuncIdx),
     RefExtern(u32),
+    #[cfg(test)]
+    F32CanonicalNaN,
+    #[cfg(test)]
+    F64CanonicalNaN,
+    #[cfg(test)]
+    F32ArithmeticNaN,
+    #[cfg(test)]
+    F64ArithmeticNaN,
 }
 
 impl PartialEq for Value {
@@ -30,19 +38,62 @@ impl PartialEq for Value {
 impl Value {
     #[cfg(test)]
     pub(crate) fn bit_eq(&self, rhs: &Self) -> anyhow::Result<()> {
-        if match (self, rhs) {
-            (Self::F32(l0), Self::F32(r0)) => unsafe {
-                std::mem::transmute::<&f32, &u32>(l0) == std::mem::transmute::<&f32, &u32>(r0)
+        let (lbits, rbits) = match (self, rhs) {
+            (Self::F32(l0f), Self::F32(r0f)) => {
+                (l0f.to_bits() as u64, r0f.to_bits() as u64)
             },
-            (Self::F64(l0), Self::F64(r0)) => unsafe {
-                std::mem::transmute::<&f64, &u64>(l0) == std::mem::transmute::<&f64, &u64>(r0)
+            (Self::F64(l0f), Self::F64(r0f)) => {
+                (l0f.to_bits(), r0f.to_bits())
             },
-            (lhs, rhs) => lhs == rhs,
-        } {
-            Ok(())
-        } else {
-            anyhow::bail!("{self:?} != {rhs:?}");
+            (Self::F32(l0f), Self::F32CanonicalNaN) => {
+                let l0 = l0f.to_bits();
+                if (l0 & 0x7fff_ffff) == 0x7fc0_0000 {
+                    return Ok(())
+                } else {
+                    anyhow::bail!("F32({l0f}) ({l0:x}) not canonical nan");
+                }
+            },
+            (Self::F64(l0f), Self::F64CanonicalNaN) => {
+                let l0 = l0f.to_bits();
+                if (l0 & 0x7fff_ffff_ffff_ffff) == 0x7ff8_0000_0000_0000 {
+                    return Ok(())
+                } else {
+                    anyhow::bail!("F64({l0f}) ({l0:x}) not canonical nan");
+                }
+            },
+            (Self::F32(l0f), Self::F32ArithmeticNaN) => {
+                let l0 = l0f.to_bits();
+                if (l0 & 0x7f80_0000) == 0x7f80_0000 && (l0 & 0x0040_0000) == 0x0040_0000 {
+                    return Ok(())
+                } else {
+                    anyhow::bail!("F32({l0f}) ({l0:x}) not arithmetic nan");
+                }
+            },
+            (Self::F64(l0f), Self::F64ArithmeticNaN) => {
+                let l0 = l0f.to_bits();
+                if (l0 & 0x7ff0_0000_0000_0000) == 0x7ff0_0000_0000_0000 && (l0 & 0x0008_0000_0000_0000) == 0x0008_0000_0000_0000 {
+                    return Ok(())
+                } else {
+                    anyhow::bail!("F64({l0f}) ({l0:x}) not arithmetic nan");
+                }
+            },
+            (Self::I32(l0), Self::I32(r0)) => (*l0 as u64, *r0 as u64),
+            (Self::I64(l0), Self::I32(r0)) => (*l0 as u64, *r0 as u64),
+            (Self::I32(l0), Self::I64(r0)) => (*l0 as u64, *r0 as u64),
+            (Self::I64(l0), Self::I64(r0)) => (*l0 as u64, *r0 as u64),
+            (lhs, rhs) => {
+                if lhs == rhs {
+                    return Ok(());
+                } else {
+                    anyhow::bail!("{self:?} != {rhs:?}");
+                }
+            }
+        };
+
+        if lbits != rbits {
+            anyhow::bail!("{self:?} ({lbits:x}) != {rhs:?} ({rbits:x})");
         }
+        Ok(())
     }
 
     pub(crate) fn as_usize(&self) -> Option<usize> {

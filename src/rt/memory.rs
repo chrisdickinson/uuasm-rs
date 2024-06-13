@@ -1,7 +1,7 @@
 use crate::nodes::{Import, MemIdx, MemType};
 
 use super::{
-    imports::{Extern, GuestIndex, Imports},
+    imports::{Extern, GuestIndex, Imports, LookupImport},
     machine::MachineMemoryIndex,
 };
 
@@ -21,7 +21,7 @@ impl MemInst {
     pub(crate) fn resolve(
         ty: MemType,
         import: &Import<'_>,
-        imports: &Imports,
+        imports: &impl LookupImport,
     ) -> anyhow::Result<Self> {
         let Some(ext) = imports.lookup(import) else {
             anyhow::bail!("could not resolve {}/{}", import.r#mod.0, import.nm.0);
@@ -46,6 +46,10 @@ impl MemInst {
             r#type: ty,
             r#impl: MemoryInstImpl::Local(idx),
         }
+    }
+
+    pub(crate) fn typedef(&self) -> &MemType {
+        &self.r#type
     }
 
     /*

@@ -1,6 +1,6 @@
 use crate::nodes::{CodeIdx, FuncIdx, Import, TypeIdx};
 
-use super::imports::{Extern, GuestIndex, Imports};
+use super::imports::{Extern, GuestIndex, LookupImport};
 
 #[derive(Debug, Clone)]
 pub(crate) enum FuncInstImpl {
@@ -18,7 +18,7 @@ impl FuncInst {
     pub(crate) fn resolve(
         ty: TypeIdx,
         import: &Import<'_>,
-        imports: &Imports,
+        imports: &impl LookupImport,
     ) -> anyhow::Result<Self> {
         let Some(ext) = imports.lookup(import) else {
             anyhow::bail!("could not resolve {}/{}", import.r#mod.0, import.nm.0);
