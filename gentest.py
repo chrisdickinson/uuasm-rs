@@ -188,13 +188,55 @@ for command in data["commands"]:
                     """)
 
         case "assert_invalid":
-            ...
+            if command["module_type"] == "text":
+                continue
+
+            filename = command["filename"]
+            escaped_filename = json.dumps(command["filename"])
+            text = command["text"]
+
+            output.append(f"""
+                assert_invalid(
+                    include_bytes!({escaped_filename}),
+                    r#"{text}"#,
+                    r#""{source_filename}"; line {line}"#
+                )?;
+            """)
+
+
         case "assert_malformed":
-            ...
+            if command["module_type"] == "text":
+                continue
+
+            filename = command["filename"]
+            escaped_filename = json.dumps(command["filename"])
+            text = command["text"]
+
+            output.append(f"""
+                assert_malformed(
+                    include_bytes!({escaped_filename}),
+                    r#"{text}"#,
+                    r#""{source_filename}"; line {line}"#
+                )?;
+            """)
+
         case "assert_uninstantiable":
-            ...
+            filename = command["filename"]
+            escaped_filename = json.dumps(command["filename"])
+            text = command["text"]
+
+            output.append(f"""
+                assert_uninstantiable(
+                    &mut state,
+                    include_bytes!({escaped_filename}),
+                    r#"{text}"#,
+                    r#""{source_filename}"; line {line}"#
+                )?;
+            """)
+
         case "assert_exhaustion":
             ...
+
         case "assert_unlinkable":
             ...
         case "action":

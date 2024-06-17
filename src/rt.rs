@@ -6,6 +6,7 @@ pub(crate) mod global;
 pub(crate) mod imports;
 pub(crate) mod machine;
 pub(crate) mod memory;
+pub(crate) mod stack;
 pub(crate) mod table;
 pub(crate) mod value;
 

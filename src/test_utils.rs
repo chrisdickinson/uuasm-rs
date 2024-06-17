@@ -102,6 +102,88 @@ pub(crate) fn assert_return(
     Ok(())
 }
 
+pub(crate) fn assert_uninstantiable(
+    state: &mut TestState,
+    bytes: &'static [u8],
+    text: &str,
+    location: &str,
+) -> anyhow::Result<()> {
+    let module = parse(bytes)
+        .map_err(|e| anyhow::anyhow!(r#"failed to parse module ({location}); error="{e:?}""#))?;
+
+    let name = format!("@instance{}", state.decl_count);
+    state.names.push(name.as_str().into());
+    state.decl_count += 1;
+
+    state
+        .machine
+        .link_module(state.last_name(), module)
+        .map_err(|e| anyhow::anyhow!("could not instantiate module ({location}); err={e:?}"))?;
+
+    match state.machine.init(state.last_name()) {
+        Ok(result) => {
+            anyhow::bail!(
+                r#"expected module instantiation to fail but got success; {result:?} ({location})"#
+            )
+        }
+        Err(e) => {
+            if !e.to_string().contains(text) {
+                anyhow::bail!(
+                    r#"expected module instantiation to fail with "{text}" but got "{e:?}" ({location})"#
+                )
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn assert_invalid(
+    bytes: &'static [u8],
+    text: &str,
+    location: &str,
+) -> anyhow::Result<()> {
+    match parse(bytes)?.validate() {
+        Ok(result) => {
+            anyhow::bail!(
+                r#"expected module validation to fail but got success; {result:?} ({location})"#
+            )
+        }
+        Err(e) => {
+            if !e.to_string().contains(text) {
+                anyhow::bail!(
+                    r#"expected module validation to fail with "{text}" but got "{e:?}" ({location})"#
+                )
+            }
+        }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn assert_malformed(
+    bytes: &'static [u8],
+    text: &str,
+    location: &str,
+) -> anyhow::Result<()> {
+    match parse(bytes) {
+        Ok(result) => {
+            anyhow::bail!(
+                r#"expected module instantiation to fail but got success; {result:?} ({location})"#
+            )
+        }
+        Err(e) => {
+            if !e.to_string().contains(text) {
+                anyhow::bail!(
+                    r#"expected module instantiation to fail with "{text}" but got "{e:?}" ({location})"#
+                )
+            }
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) fn assert_fail(
     state: &mut TestState,
     modname: Option<&str>,

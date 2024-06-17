@@ -740,7 +740,7 @@ impl<'a> Machine<'a> {
         let mut resource_lock = arc_resources
             .try_lock()
             .map_err(|_| anyhow::anyhow!("failed to lock resources"))?;
-        let mut resources = resource_lock.deref_mut();
+        let resources = resource_lock.deref_mut();
 
         let modname_idx = self
             .internmap
@@ -1274,7 +1274,10 @@ impl<'a> Machine<'a> {
                         anyhow::bail!("undefined element: table index out of range");
                     };
 
-                    eprintln!("{idx:?} {v:?} tbl={table_instance_idx:?} values={:?}", &table.values);
+                    eprintln!(
+                        "{idx:?} {v:?} tbl={table_instance_idx:?} values={:?}",
+                        &table.values
+                    );
                     if let Value::RefNull = &v {
                         anyhow::bail!("uninitialized element {idx}");
                     };
@@ -1577,10 +1580,14 @@ impl<'a> Machine<'a> {
                     if destaddr > resources.table_instances[to_table_idx].len() {
                         anyhow::bail!("out of bounds table access");
                     }
-                    if destaddr.saturating_add(count) > resources.table_instances[to_table_idx].len() {
+                    if destaddr.saturating_add(count)
+                        > resources.table_instances[to_table_idx].len()
+                    {
                         anyhow::bail!("out of bounds table access");
                     }
-                    if srcaddr.saturating_add(count) > resources.table_instances[from_table_idx].len() {
+                    if srcaddr.saturating_add(count)
+                        > resources.table_instances[from_table_idx].len()
+                    {
                         anyhow::bail!("out of bounds table access");
                     }
 

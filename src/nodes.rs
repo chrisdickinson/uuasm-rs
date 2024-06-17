@@ -642,6 +642,10 @@ impl<'a> ModuleBuilder<'a> {
 }
 
 impl<'a> Module<'a> {
+    pub(crate) fn validate(self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     pub(crate) fn custom_sections(&self) -> impl Iterator<Item = &[u8]> {
         self.custom_sections.iter().map(|xs| xs.inner)
     }
