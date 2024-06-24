@@ -1,7 +1,7 @@
 use crate::nodes::{Import, MemIdx, MemType};
 
 use super::{
-    imports::{Extern, GuestIndex, Imports, LookupImport},
+    imports::{Extern, GuestIndex, LookupImport},
     machine::MachineMemoryIndex,
 };
 
@@ -20,7 +20,7 @@ pub(crate) struct MemInst {
 impl MemInst {
     pub(crate) fn resolve(
         ty: MemType,
-        import: &Import<'_>,
+        import: &Import,
         imports: &impl LookupImport,
     ) -> anyhow::Result<Self> {
         let Some(ext) = imports.lookup(import) else {
@@ -53,7 +53,7 @@ impl MemInst {
     }
 
     /*
-    pub(crate) fn copy_data(&mut self, byte_vec: &ByteVec<'_>, offset: usize) -> anyhow::Result<()> {
+    pub(crate) fn copy_data(&mut self, byte_vec: &ByteVec, offset: usize) -> anyhow::Result<()> {
         match &mut self.r#impl {
             MemoryInstImpl::Local(region) => region.copy_data(byte_vec.0, offset)?,
             MemoryInstImpl::Remote(_tktk) => todo!(),

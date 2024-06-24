@@ -17,7 +17,7 @@ pub(crate) struct FuncInst {
 impl FuncInst {
     pub(crate) fn resolve(
         ty: TypeIdx,
-        import: &Import<'_>,
+        import: &Import,
         imports: &impl LookupImport,
     ) -> anyhow::Result<Self> {
         let Some(ext) = imports.lookup(import) else {

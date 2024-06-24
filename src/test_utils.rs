@@ -8,7 +8,7 @@ use crate::{
 };
 
 pub(crate) struct TestState {
-    machine: Machine<'static>,
+    machine: Machine,
     names: Vec<Arc<str>>,
     decl_count: usize,
 }

@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    iter, mem,
+    mem,
     ops::{Deref, DerefMut, Range},
     sync::{Arc, Mutex},
 };
@@ -37,7 +37,7 @@ impl Elem {
         &self,
         idx: usize,
         module_idx: usize,
-        machine: &Machine<'_>,
+        machine: &Machine,
         resources: &mut Resources,
     ) -> anyhow::Result<Value> {
         Ok(match self {
@@ -150,14 +150,14 @@ pub(crate) struct Resources {
     external_functions: Vec<ExternalFunction>,
 }
 
-pub(crate) struct Machine<'a> {
+pub(crate) struct Machine {
     initialized: HashSet<usize>,
 
-    imports: Vec<Box<[Import<'a>]>>,
-    exports: Vec<Box<[Export<'a>]>>,
+    imports: Vec<Box<[Import]>>,
+    exports: Vec<Box<[Export]>>,
     types: Vec<Box<[Type]>>,
     code: Vec<Box<[Code]>>,
-    data: Vec<Box<[Data<'a>]>>,
+    data: Vec<Box<[Data]>>,
     elements: Vec<Box<[Elem]>>,
 
     functions: Vec<Box<[FuncInst]>>,
@@ -172,16 +172,16 @@ pub(crate) struct Machine<'a> {
     internmap: InternMap,
 }
 
-impl<'a> LookupImport for Machine<'a> {
+impl LookupImport for Machine {
     fn lookup(&self, import: &Import) -> Option<Extern> {
-        let modname = self.internmap.get(import.r#mod.0)?;
-        let name = self.internmap.get(import.nm.0)?;
+        let modname = self.internmap.get(&import.r#mod.0)?;
+        let name = self.internmap.get(&import.nm.0)?;
         let key = ExternKey(modname, name);
         self.externs.get(&key).copied()
     }
 }
 
-impl<'a> Machine<'a> {
+impl Machine {
     fn link_extern(&mut self, modname: &str, name: &str, ext: Extern) {
         let modname = self.internmap.insert(modname);
         let name = self.internmap.insert(name);
@@ -189,7 +189,7 @@ impl<'a> Machine<'a> {
         self.externs.insert(ExternKey(modname, name), ext);
     }
 
-    pub fn link_module(&mut self, modname: &str, module: Module<'a>) -> anyhow::Result<()> {
+    pub fn link_module(&mut self, modname: &str, module: Module) -> anyhow::Result<()> {
         let idx = self.types.len(); // any of these will do.
 
         eprintln!("linking module -> {modname}");
@@ -208,16 +208,16 @@ impl<'a> Machine<'a> {
         for export in module.export_section().unwrap_or_default() {
             match export.desc {
                 ExportDesc::Func(func_idx) => {
-                    self.link_extern(modname, export.nm.0, Extern::Func(idx, func_idx));
+                    self.link_extern(modname, &export.nm.0, Extern::Func(idx, func_idx));
                 }
                 ExportDesc::Table(table_idx) => {
-                    self.link_extern(modname, export.nm.0, Extern::Table(idx, table_idx));
+                    self.link_extern(modname, &export.nm.0, Extern::Table(idx, table_idx));
                 }
                 ExportDesc::Mem(mem_idx) => {
-                    self.link_extern(modname, export.nm.0, Extern::Memory(idx, mem_idx));
+                    self.link_extern(modname, &export.nm.0, Extern::Memory(idx, mem_idx));
                 }
                 ExportDesc::Global(global_idx) => {
-                    self.link_extern(modname, export.nm.0, Extern::Global(idx, global_idx));
+                    self.link_extern(modname, &export.nm.0, Extern::Global(idx, global_idx));
                 }
             }
         }
@@ -225,7 +225,7 @@ impl<'a> Machine<'a> {
         self.link_guest(module, resources)
     }
 
-    fn link_guest(&mut self, guest: Module<'a>, resources: &mut Resources) -> anyhow::Result<()> {
+    fn link_guest(&mut self, guest: Module, resources: &mut Resources) -> anyhow::Result<()> {
         let Module {
             type_section,
             function_section,
@@ -350,12 +350,12 @@ impl<'a> Machine<'a> {
         self.globals.push(globals.into_boxed_slice());
         self.memories.push(memories.into_boxed_slice());
         self.tables.push(tables.into_boxed_slice());
-        self.types.push(type_section.into_boxed_slice());
+        self.types.push(type_section);
         Ok(())
     }
 
     pub(super) fn new(
-        guests: Vec<Module<'a>>,
+        guests: Vec<Module>,
         exports: HashMap<ExternKey, Extern>,
         intern_map: InternMap,
         external_functions: Vec<ExternalFunction>,
@@ -482,7 +482,7 @@ impl<'a> Machine<'a> {
 
         let mut initializers = Vec::new();
         for import in self.imports[at_idx].iter() {
-            let Some(idx) = self.internmap.get(import.r#mod.0) else {
+            let Some(idx) = self.internmap.get(&import.r#mod.0) else {
                 continue;
             };
             let Some(guest_indices) = self.modname_to_guest_idx.get(&idx) else {
@@ -519,8 +519,8 @@ impl<'a> Machine<'a> {
                         .get_mut(memoryidx)
                         .ok_or_else(|| anyhow::anyhow!("no such memory"))?;
 
-                    memory.grow_to_fit(data.0, memoffset)?;
-                    memory.copy_data(data.0, memoffset);
+                    memory.grow_to_fit(&data.0, memoffset)?;
+                    memory.copy_data(&data.0, memoffset);
                     resources.dropped_data.insert((at_idx, data_idx));
                 }
                 Data::Passive(_) => continue,
@@ -637,11 +637,7 @@ impl<'a> Machine<'a> {
         Ok(())
     }
 
-    pub(crate) fn alias<'b: 'a>(
-        &mut self,
-        modname: &'b str,
-        to_modname: &str,
-    ) -> anyhow::Result<()> {
+    pub(crate) fn alias(&mut self, modname: &str, to_modname: &str) -> anyhow::Result<()> {
         // get all of the exports of "modname" and create
         let modname_idx = self
             .internmap
@@ -670,7 +666,7 @@ impl<'a> Machine<'a> {
         let mut global_count = 0;
         for idx in module_indices {
             for export in self.exports[idx].iter() {
-                if !seen_names.insert(self.internmap.get(export.nm.0).unwrap()) {
+                if !seen_names.insert(self.internmap.get(&export.nm.0).unwrap()) {
                     anyhow::bail!("cannot alias; {} is exported multiple times", export.nm.0);
                 }
                 let (export_desc, import_desc) = match export.desc {
@@ -714,7 +710,7 @@ impl<'a> Machine<'a> {
                 };
 
                 imports.push(Import {
-                    r#mod: Name(modname),
+                    r#mod: Name(modname.to_string()),
                     nm: export.nm.clone(),
                     desc: import_desc,
                 });
@@ -727,7 +723,7 @@ impl<'a> Machine<'a> {
 
         // TODO: do we clone the "start" section?
         let module = ModuleBuilder::new()
-            .type_section(types)
+            .type_section(types.into())
             .import_section(imports)
             .export_section(exports)
             .build();
@@ -845,7 +841,7 @@ impl<'a> Machine<'a> {
             .collect();
 
         let mut value_stack = Vec::<Value>::new();
-        let mut frames = Vec::<Frame<'a>>::new();
+        let mut frames = Vec::<Frame<'_>>::new();
         let mut frame = Frame {
             #[cfg(test)]
             name: "init",
@@ -2006,8 +2002,8 @@ impl<'a> Machine<'a> {
                         &[]
                     } else {
                         match data {
-                            Data::Active(ByteVec(v), _, _) => *v,
-                            Data::Passive(ByteVec(v)) => *v,
+                            Data::Active(ByteVec(v), _, _) => &**v,
+                            Data::Passive(ByteVec(v)) => &**v,
                         }
                     };
 

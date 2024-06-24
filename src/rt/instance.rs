@@ -1,8 +1,14 @@
 use anyhow::Context;
 use std::collections::HashMap;
 
-use crate::{nodes::{ExportDesc, Instr, BlockType}, rt::function::FuncInstImpl};
-use super::{module::Module, value::Value, global::GlobalInst, memory::MemInst, table::TableInst, function::FuncInst, imports::GuestIndex};
+use super::{
+    function::FuncInst, global::GlobalInst, imports::GuestIndex, memory::MemInst, module::Module,
+    table::TableInst, value::Value,
+};
+use crate::{
+    nodes::{BlockType, ExportDesc, Instr},
+    rt::function::FuncInstImpl,
+};
 
 #[derive(Debug, Clone)]
 pub(crate) struct ModuleInstance {
@@ -23,8 +29,8 @@ impl ModuleInstance {
             tables,
         } = self;
 
-        struct ModuleInstanceLocal<'a> {
-            module: &'a Module<'a>,
+        struct ModuleInstanceLocal {
+            module: &'a Module,
             functions: &'a Vec<FuncInst>,
             globals: &'a mut Vec<GlobalInst>,
             memories: &'a mut Vec<MemInst>,
@@ -63,7 +69,7 @@ impl ModuleInstance {
             anyhow::bail!("could not find code for function");
         };
 
-        let param_types = typedef.0.0.as_slice();
+        let param_types = typedef.0 .0.as_slice();
         if args.len() < param_types.len() {
             anyhow::bail!(
                 "not enough arguments to call {}; expected {} args",
@@ -81,7 +87,9 @@ impl ModuleInstance {
         }
 
         for (idx, (param_type, value)) in param_types.iter().zip(args.iter()).enumerate() {
-            param_type.validate(value).with_context(|| format!("bad argument at {}", idx))?;
+            param_type
+                .validate(value)
+                .with_context(|| format!("bad argument at {}", idx))?;
         }
 
         let FuncInstImpl::Local(_func_inst_impl) = func.r#impl else {
@@ -97,7 +105,7 @@ impl ModuleInstance {
 
         // TODO: the reference to the ModuleInstance needs to be mostly-immutable but
         // sometimes-mutable.
-        struct Frame<'a> {
+        struct Frame {
             #[cfg(test)]
             name: &'static str,
             pc: usize,
@@ -106,11 +114,11 @@ impl ModuleInstance {
             jump_to: Option<usize>,
             block_type: BlockType,
             locals_base_offset: usize,
-            instance: Option<ModuleInstanceLocal<'a>>,
+            instance: Option<ModuleInstanceLocal>,
         }
 
         let mut value_stack = Vec::<Value>::new();
-        let mut frames = Vec::<Frame<'a>>::new();
+        let mut frames = Vec::<Frame>::new();
         frames.push(Frame {
             #[cfg(test)]
             name: "init",
@@ -139,7 +147,9 @@ impl ModuleInstance {
             let frame_idx = frames.len() - 1;
             if frames[frame_idx].pc >= frames[frame_idx].instrs.len() {
                 locals.shrink_to(frames[frame_idx].locals_base_offset);
-                let last_frame = frames.pop().expect("we should always be able to pop a frame");
+                let last_frame = frames
+                    .pop()
+                    .expect("we should always be able to pop a frame");
 
                 if frames.is_empty() {
                     break;
@@ -296,19 +306,17 @@ impl ModuleInstance {
                     // TODO: validate result type!
                     frames.truncate(frames.len() - frames[frame_idx].return_unwind_count);
                     if frames.is_empty() {
-                        break
+                        break;
                     }
 
                     let new_frame_idx = frames.len() - 1;
                     frames[new_frame_idx].pc = frames[new_frame_idx].instrs.len();
-                    continue
+                    continue;
                 }
 
                 Instr::Call(func_idx) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.take()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.take() else {
                         anyhow::bail!("call: could not access instance");
                     };
 
@@ -349,7 +357,9 @@ impl ModuleInstance {
                     for (idx, (param_type, value)) in
                         param_types.iter().zip(args.iter()).enumerate()
                     {
-                        param_type.validate(value).with_context(|| format!("bad argument at {}", idx))?;
+                        param_type
+                            .validate(value)
+                            .with_context(|| format!("bad argument at {}", idx))?;
                         locals.push(*value);
                     }
 
@@ -379,9 +389,7 @@ impl ModuleInstance {
 
                 Instr::CallIndirect(_type_idx, table_idx) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.take()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.take() else {
                         anyhow::bail!("call_indirect: could not access instance");
                     };
 
@@ -440,7 +448,9 @@ impl ModuleInstance {
                     for (idx, (param_type, value)) in
                         param_types.iter().zip(args.iter()).enumerate()
                     {
-                        param_type.validate(value).with_context(|| format!("bad argument at {}", idx))?;
+                        param_type
+                            .validate(value)
+                            .with_context(|| format!("bad argument at {}", idx))?;
                         locals.push(*value);
                     }
 
@@ -483,7 +493,12 @@ impl ModuleInstance {
                 Instr::LocalGet(idx) => {
                     let Some(v) = locals.get(idx.0 as usize + frames[frame_idx].locals_base_offset)
                     else {
-                        anyhow::bail!("local.get out of range {} + {} > {}", idx.0 as usize, frames[frame_idx].locals_base_offset, locals.len())
+                        anyhow::bail!(
+                            "local.get out of range {} + {} > {}",
+                            idx.0 as usize,
+                            frames[frame_idx].locals_base_offset,
+                            locals.len()
+                        )
                     };
 
                     value_stack.push(*v);
@@ -503,9 +518,7 @@ impl ModuleInstance {
 
                 Instr::GlobalGet(global_idx) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -517,12 +530,9 @@ impl ModuleInstance {
                     value_stack.push(global.value());
                 }
 
-
                 Instr::GlobalSet(global_idx) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.take()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.take() else {
                         anyhow::bail!("call: could not access instance");
                     };
 
@@ -535,9 +545,11 @@ impl ModuleInstance {
                         anyhow::bail!("drop out of range")
                     };
 
-                    global.assign(&v).context("global type value type mismatch")?;
+                    global
+                        .assign(&v)
+                        .context("global type value type mismatch")?;
                     frames[instance_offset].instance.replace(instance);
-                },
+                }
 
                 Instr::TableGet(_) => todo!("TableGet"),
                 Instr::TableSet(_) => todo!("TableSet"),
@@ -550,9 +562,7 @@ impl ModuleInstance {
 
                 Instr::I32Load(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -566,9 +576,7 @@ impl ModuleInstance {
 
                 Instr::I64Load(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -582,9 +590,7 @@ impl ModuleInstance {
 
                 Instr::F32Load(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -598,9 +604,7 @@ impl ModuleInstance {
 
                 Instr::F64Load(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -614,9 +618,7 @@ impl ModuleInstance {
 
                 Instr::I32Load8S(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -630,9 +632,7 @@ impl ModuleInstance {
 
                 Instr::I32Load8U(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -646,9 +646,7 @@ impl ModuleInstance {
 
                 Instr::I32Load16S(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -662,9 +660,7 @@ impl ModuleInstance {
 
                 Instr::I32Load16U(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -678,9 +674,7 @@ impl ModuleInstance {
 
                 Instr::I64Load8S(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -694,9 +688,7 @@ impl ModuleInstance {
 
                 Instr::I64Load8U(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -710,9 +702,7 @@ impl ModuleInstance {
 
                 Instr::I64Load16S(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -726,9 +716,7 @@ impl ModuleInstance {
 
                 Instr::I64Load16U(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -742,9 +730,7 @@ impl ModuleInstance {
 
                 Instr::I64Load32S(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -758,9 +744,7 @@ impl ModuleInstance {
 
                 Instr::I64Load32U(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.as_ref()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.as_ref() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -774,9 +758,7 @@ impl ModuleInstance {
 
                 Instr::I32Store(mem) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.take()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.take() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -791,7 +773,7 @@ impl ModuleInstance {
                     let offset = mem.offset().saturating_add(t as usize);
                     instance.memories[mem.memidx()].write(offset, &v.to_le_bytes())?;
                     frames[instance_offset].instance.replace(instance);
-                },
+                }
 
                 Instr::I64Store(_) => todo!("I64Store"),
                 Instr::F32Store(_) => todo!("F32Store"),
@@ -804,9 +786,7 @@ impl ModuleInstance {
                 Instr::MemorySize(_) => todo!("MemorySize"),
                 Instr::MemoryGrow(mem_idx) => {
                     let instance_offset = frames.len() - frames[frame_idx].return_unwind_count;
-                    let Some(instance) =
-                        frames[instance_offset].instance.take()
-                    else {
+                    let Some(instance) = frames[instance_offset].instance.take() else {
                         anyhow::bail!("could not access instance");
                     };
 
@@ -818,7 +798,7 @@ impl ModuleInstance {
                     let page_count = memory.grow(v as usize)?;
                     value_stack.push(Value::I32(page_count as i32));
                     frames[instance_offset].instance.replace(instance);
-                },
+                }
                 Instr::MemoryInit(_, _) => todo!("MemoryInit"),
                 Instr::DataDrop(_) => todo!("DataDrop"),
                 Instr::MemoryCopy(_, _) => todo!("MemoryCopy"),
@@ -1610,7 +1590,7 @@ impl ModuleInstance {
                     };
 
                     value_stack.push(Value::I64(op as i64));
-                },
+                }
                 Instr::I64UConvertI32 => todo!("I64UConvertI32"),
                 Instr::I64SConvertF32 => todo!("I64SConvertF32"),
                 Instr::I64UConvertF32 => todo!("I64UConvertF32"),
@@ -1643,4 +1623,3 @@ impl ModuleInstance {
         Ok(value_stack)
     }
 }
-

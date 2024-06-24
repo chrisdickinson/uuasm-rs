@@ -20,7 +20,7 @@ pub(crate) struct TableInst {
 impl TableInst {
     pub(crate) fn resolve(
         ty: TableType,
-        import: &Import<'_>,
+        import: &Import,
         imports: &impl LookupImport,
     ) -> anyhow::Result<Self> {
         let Some(ext) = imports.lookup(import) else {

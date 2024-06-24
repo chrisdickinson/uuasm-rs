@@ -6,8 +6,8 @@ use std::{
 use crate::{
     intern_map::InternMap,
     nodes::{
-        Code, Export, ExportDesc, Expr, Func, FuncIdx, GlobalIdx, Import, Instr, MemIdx, Module,
-        ModuleBuilder, Name, ResultType, TableIdx, Type, TypeIdx,
+        Code, ExportDesc, Expr, Func, FuncIdx, GlobalIdx, Import, Instr, MemIdx, Module,
+        ModuleBuilder, TableIdx, Type, TypeIdx,
     },
     rt::machine::Machine,
 };
@@ -29,9 +29,9 @@ pub(crate) enum Extern {
 }
 
 #[derive(Debug, Default, Clone)]
-pub(crate) struct Imports<'a> {
+pub(crate) struct Imports {
     // borrow a page from wasmtime!
-    pub(crate) guests: Vec<Module<'a>>,
+    pub(crate) guests: Vec<Module>,
     pub(crate) externs: HashMap<ExternKey, Extern>,
     pub(super) internmap: InternMap,
     pub(super) modname_to_guest_idx: HashMap<usize, HashSet<usize>>,
@@ -42,16 +42,16 @@ pub(crate) trait LookupImport {
     fn lookup(&self, import: &Import) -> Option<Extern>;
 }
 
-impl<'a> LookupImport for Imports<'a> {
+impl LookupImport for Imports {
     fn lookup(&self, import: &Import) -> Option<Extern> {
-        let modname = self.internmap.get(import.r#mod.0)?;
-        let name = self.internmap.get(import.nm.0)?;
+        let modname = self.internmap.get(&import.r#mod.0)?;
+        let name = self.internmap.get(&import.nm.0)?;
         let key = ExternKey(modname, name);
         self.externs.get(&key).copied()
     }
 }
 
-impl<'a> Imports<'a> {
+impl Imports {
     pub(crate) fn new() -> Self {
         Self {
             ..Default::default()
@@ -65,27 +65,27 @@ impl<'a> Imports<'a> {
         self.externs.insert(ExternKey(modname, name), ext);
     }
 
-    pub(crate) fn link_module(&mut self, modname: &str, module: Module<'a>) {
+    pub(crate) fn link_module(&mut self, modname: &str, module: Module) {
         let idx = self.guests.len();
         let modname_idx = self.internmap.insert(modname);
         self.modname_to_guest_idx
             .entry(modname_idx)
-            .or_insert_with(HashSet::new)
+            .or_default()
             .insert(idx);
 
         for export in module.export_section().unwrap_or_default() {
             match export.desc {
                 ExportDesc::Func(func_idx) => {
-                    self.link_extern(modname, export.nm.0, Extern::Func(idx, func_idx));
+                    self.link_extern(modname, &export.nm.0, Extern::Func(idx, func_idx));
                 }
                 ExportDesc::Table(table_idx) => {
-                    self.link_extern(modname, export.nm.0, Extern::Table(idx, table_idx));
+                    self.link_extern(modname, &export.nm.0, Extern::Table(idx, table_idx));
                 }
                 ExportDesc::Mem(mem_idx) => {
-                    self.link_extern(modname, export.nm.0, Extern::Memory(idx, mem_idx));
+                    self.link_extern(modname, &export.nm.0, Extern::Memory(idx, mem_idx));
                 }
                 ExportDesc::Global(global_idx) => {
-                    self.link_extern(modname, export.nm.0, Extern::Global(idx, global_idx));
+                    self.link_extern(modname, &export.nm.0, Extern::Global(idx, global_idx));
                 }
             }
         }
@@ -105,7 +105,7 @@ impl<'a> Imports<'a> {
         let idx = self.guests.len();
 
         let module = ModuleBuilder::new()
-            .type_section(vec![typedef.clone()])
+            .type_section(vec![typedef.clone()].into())
             .function_section(vec![TypeIdx(0)])
             .code_section(vec![Code(Func {
                 locals: typedef.clone().into(),
@@ -126,7 +126,7 @@ impl<'a> Imports<'a> {
         });
     }
 
-    pub(crate) fn instantiate(self) -> anyhow::Result<Machine<'a>> {
+    pub(crate) fn instantiate(self) -> anyhow::Result<Machine> {
         Machine::new(
             self.guests,
             self.externs,
@@ -142,7 +142,7 @@ mod test {
     use std::mem::size_of;
 
     use crate::{
-        nodes::{NumType, ValType},
+        nodes::{NumType, ResultType, ValType},
         parse::parse,
         rt::Value,
     };

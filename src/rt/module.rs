@@ -1,17 +1,30 @@
 use anyhow::Context;
 use std::collections::HashMap;
 
-use crate::nodes::{ ImportDesc, Module as ParsedModule, Global, Expr, Instr, GlobalIdx, FuncIdx, Data, Elem, CodeIdx, TypeIdx, Type, Code, Export };
+use crate::nodes::{
+    Code, CodeIdx, Data, Elem, Export, Expr, FuncIdx, Global, GlobalIdx, ImportDesc, Instr,
+    Module as ParsedModule, Type, TypeIdx,
+};
 
-use super::{imports::{Imports, GuestIndex}, instance::ModuleInstance, global::GlobalInst, TKTK, value::Value, function::FuncInst, memory::MemInst, table::TableInst, machine::MachineBuilder};
+use super::{
+    function::FuncInst,
+    global::GlobalInst,
+    imports::{GuestIndex, Imports},
+    instance::ModuleInstance,
+    machine::MachineBuilder,
+    memory::MemInst,
+    table::TableInst,
+    value::Value,
+    TKTK,
+};
 
 #[derive(Debug, Clone)]
-pub(crate) struct Module<'a> {
-    parsed_module: ParsedModule<'a>,
+pub(crate) struct Module {
+    parsed_module: ParsedModule,
 }
 
-impl<'a> Module<'a> {
-    pub(crate) fn new<'b: 'a>(module: ParsedModule<'b>) -> Self {
+impl Module {
+    pub(crate) fn new<'b: 'a>(module: ParsedModule) -> Self {
         Self {
             parsed_module: module,
         }
@@ -22,26 +35,31 @@ impl<'a> Module<'a> {
     }
 
     pub(crate) fn typedef(&self, idx: &TypeIdx) -> Option<&Type> {
-        self
-            .parsed_module
+        self.parsed_module
             .type_section()
             .and_then(|types| types.get(idx.0 as usize))
     }
 
     pub(crate) fn instrs(&self, idx: CodeIdx) -> Option<&Code> {
-        self.parsed_module.code_section()
+        self.parsed_module
+            .code_section()
             .iter()
             .flat_map(|xs| xs.iter())
             .nth(idx.0 as usize)
     }
 
-    pub(crate) fn resolve(&self, builder: &mut MachineBuilder<'a>) -> anyhow::Result<ModuleInstance> {
-        for imp in self.parsed_module.import_section().iter().flat_map(|xs| xs.iter()) {
+    pub(crate) fn resolve(&self, builder: &mut MachineBuilder) -> anyhow::Result<ModuleInstance> {
+        for imp in self
+            .parsed_module
+            .import_section()
+            .iter()
+            .flat_map(|xs| xs.iter())
+        {
             match imp.desc {
-                ImportDesc::Func(desc) => builder.define_function_import(desc, imp)
-                ImportDesc::Mem(desc) => builder.define_memory_import(desc, imp)
-                ImportDesc::Table(desc) => builder.define_table_import(desc, imp)
-                ImportDesc::Global(desc) => builder.define_global_import(desc, imp)
+                ImportDesc::Func(desc) => builder.define_function_import(desc, imp),
+                ImportDesc::Mem(desc) => builder.define_memory_import(desc, imp),
+                ImportDesc::Table(desc) => builder.define_table_import(desc, imp),
+                ImportDesc::Global(desc) => builder.define_global_import(desc, imp),
             }
         }
 
@@ -71,7 +89,10 @@ impl<'a> Module<'a> {
                     _ => anyhow::bail!("unsupported global initializer instruction"),
                 };
 
-                global_type.0.validate(&global).context("global type does not accept this value")?;
+                global_type
+                    .0
+                    .validate(&global)
+                    .context("global type does not accept this value")?;
                 globals.push(GlobalInst::new(*global_type, global)?);
                 Ok(globals)
             })?;
@@ -201,4 +222,3 @@ fn compute_constant_expr(expr: &Expr, globals: &[GlobalInst]) -> anyhow::Result<
         _ => anyhow::bail!("unsupported instruction"),
     })
 }
-

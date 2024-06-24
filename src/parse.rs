@@ -41,18 +41,19 @@ impl<'a, T: Debug + ParseWasmBinary<'a>> ParseWasmBinary<'a> for Vec<T> {
     }
 }
 
-impl<'a> ParseWasmBinary<'a> for ByteVec<'a> {
+impl<'a> ParseWasmBinary<'a> for ByteVec {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::bytes::complete::take;
         let (input, sz) = <u32 as ParseWasmBinary>::from_wasm_bytes(input)?;
         let (input, span) = take(sz as usize)(input)?;
-        Ok((input, ByteVec(span.deref())))
+        let span = *span.deref();
+        Ok((input, ByteVec(span.into())))
     }
 }
 
-impl<'a> ParseWasmBinary<'a> for &'a str {
+impl<'a> ParseWasmBinary<'a> for String {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
@@ -63,15 +64,15 @@ impl<'a> ParseWasmBinary<'a> for &'a str {
             return nom::combinator::fail(input);
         };
 
-        Ok((input, xs))
+        Ok((input, xs.to_string()))
     }
 }
 
-impl<'a> ParseWasmBinary<'a> for Name<'a> {
+impl<'a> ParseWasmBinary<'a> for Name {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
-        let (input, sz) = <&'a str>::from_wasm_bytes(input)?;
+        let (input, sz) = String::from_wasm_bytes(input)?;
 
         Ok((input, Name(sz)))
     }
@@ -177,10 +178,10 @@ impl<'a> ParseWasmBinary<'a> for NumType {
         Ok((
             input,
             match byte[0] {
-                0x7f => NumType::I32,
-                0x7e => NumType::I64,
-                0x7d => NumType::F32,
                 0x7c => NumType::F64,
+                0x7d => NumType::F32,
+                0x7e => NumType::I64,
+                0x7f => NumType::I32,
                 _ => {
                     return Err(nom::Err::Error(nom::error::make_error(
                         input,
@@ -258,7 +259,9 @@ impl<'a> ParseWasmBinary<'a> for ResultType {
         b: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
         use nom::combinator::map;
-        map(Vec::<ValType>::from_wasm_bytes, |v| ResultType(v.into_boxed_slice()))(b)
+        map(Vec::<ValType>::from_wasm_bytes, |v| {
+            ResultType(v.into_boxed_slice())
+        })(b)
     }
 }
 
@@ -927,7 +930,7 @@ impl_parse_for_newtype!(DataIdx, u32);
 impl_parse_for_newtype!(LocalIdx, u32);
 impl_parse_for_newtype!(LabelIdx, u32);
 
-impl<'a> ParseWasmBinary<'a> for Import<'a> {
+impl<'a> ParseWasmBinary<'a> for Import {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
@@ -971,7 +974,7 @@ impl<'a> ParseWasmBinary<'a> for ImportDesc {
     }
 }
 
-impl<'a> ParseWasmBinary<'a> for Export<'a> {
+impl<'a> ParseWasmBinary<'a> for Export {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
@@ -1128,7 +1131,7 @@ impl<'a> ParseWasmBinary<'a> for Code {
     }
 }
 
-impl<'a> ParseWasmBinary<'a> for Data<'a> {
+impl<'a> ParseWasmBinary<'a> for Data {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
@@ -1158,7 +1161,7 @@ impl<'a> ParseWasmBinary<'a> for Data<'a> {
     }
 }
 
-impl<'a> ParseWasmBinary<'a> for SectionType<'a> {
+impl<'a> ParseWasmBinary<'a> for SectionType {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
@@ -1168,8 +1171,8 @@ impl<'a> ParseWasmBinary<'a> for SectionType<'a> {
         let (input, section) = take(size as usize)(input)?;
 
         let section = match section_id[0] {
-            0x0 => SectionType::Custom(&section[..]),
-            0x1 => SectionType::Type(Vec::<Type>::from_wasm_bytes(section)?.1),
+            0x0 => SectionType::Custom(section[..].into()),
+            0x1 => SectionType::Type(Vec::<Type>::from_wasm_bytes(section)?.1.into()),
             0x2 => SectionType::Import(Vec::<Import>::from_wasm_bytes(section)?.1),
             0x3 => SectionType::Function(Vec::<TypeIdx>::from_wasm_bytes(section)?.1),
             0x4 => SectionType::Table(Vec::<TableType>::from_wasm_bytes(section)?.1),
@@ -1188,7 +1191,7 @@ impl<'a> ParseWasmBinary<'a> for SectionType<'a> {
     }
 }
 
-impl<'a> ParseWasmBinary<'a> for Module<'a> {
+impl<'a> ParseWasmBinary<'a> for Module {
     fn from_wasm_bytes<E: Debug + ParseError<Span<'a>>>(
         input: Span<'a>,
     ) -> nom::IResult<Span<'a>, Self, E> {
@@ -1204,8 +1207,7 @@ impl<'a> ParseWasmBinary<'a> for Module<'a> {
             match section {
                 SectionType::Custom(xs) => module_builder = module_builder.custom_section(xs),
 
-                SectionType::Type(mut xs) => {
-                    xs.shrink_to_fit();
+                SectionType::Type(xs) => {
                     module_builder = module_builder.type_section(xs);
                 }
 
@@ -1271,7 +1273,7 @@ impl<'a> ParseWasmBinary<'a> for Module<'a> {
     }
 }
 
-pub(crate) fn parse(input: &[u8]) -> anyhow::Result<Module> {
+pub fn parse(input: &[u8]) -> anyhow::Result<Module> {
     match Module::from_wasm_bytes::<nom::error::VerboseError<Span>>(Span::new(input)) {
         Ok((_, wasm)) => Ok(wasm),
         Err(err) => {
@@ -1365,7 +1367,7 @@ mod test {
     }
 
     #[test]
-    fn test_read_str() {
+    fn test_read_string() {
         use leb128;
         let xs = "hello world!";
         let mut v = Vec::new();
@@ -1373,7 +1375,7 @@ mod test {
         write!(&mut v, "{}", xs).unwrap();
 
         let (rest, v) =
-            <&str>::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
+            String::from_wasm_bytes::<nom::error::Error<Span>>(Span::new(&v[..])).unwrap();
         assert_eq!(v, "hello world!");
         assert_eq!(&rest[..], &[] as &[u8]);
     }
@@ -1388,17 +1390,23 @@ mod test {
         assert!(input.is_empty());
 
         let cmp = ModuleBuilder::new()
-            .type_section(vec![Type(
-                ResultType(vec![
-                    ValType::NumType(NumType::I32),
-                    ValType::NumType(NumType::I32),
-                ].into_boxed_slice()),
-                ResultType(vec![ValType::NumType(NumType::I32)].into_boxed_slice()),
-            )])
+            .type_section(
+                vec![Type(
+                    ResultType(
+                        vec![
+                            ValType::NumType(NumType::I32),
+                            ValType::NumType(NumType::I32),
+                        ]
+                        .into_boxed_slice(),
+                    ),
+                    ResultType(vec![ValType::NumType(NumType::I32)].into_boxed_slice()),
+                )]
+                .into(),
+            )
             .function_section(vec![TypeIdx(0)])
             .memory_section(vec![MemType(Limits::Min(64))])
             .export_section(vec![Export {
-                nm: Name("add_i32"),
+                nm: Name("add_i32".to_string()),
                 desc: ExportDesc::Func(FuncIdx(0)),
             }])
             .code_section(vec![Code(Func {

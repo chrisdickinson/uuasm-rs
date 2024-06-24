@@ -20,7 +20,7 @@ pub(crate) struct GlobalInst {
 impl GlobalInst {
     pub(crate) fn resolve(
         ty: GlobalType,
-        import: &Import<'_>,
+        import: &Import,
         imports: &impl LookupImport,
     ) -> anyhow::Result<Self> {
         let Some(ext) = imports.lookup(import) else {
