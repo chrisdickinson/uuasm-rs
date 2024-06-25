@@ -33,7 +33,7 @@ pub(crate) enum ValType {
     RefType(RefType),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Clone, Default)]
 pub(crate) struct ResultType(pub(crate) Box<[ValType]>);
 
 #[derive(Debug, PartialEq, Clone)]

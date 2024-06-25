@@ -1,8 +1,10 @@
-use std::{cmp::min, marker::PhantomData, ops::RangeTo};
+use std::{cmp::min, marker::PhantomData, mem, ops::RangeTo};
 
 use thiserror::Error;
 
-use crate::nodes::{Module, ModuleBuilder, SectionType, Type};
+use crate::nodes::{
+    Module, ModuleBuilder, NumType, RefType, ResultType, SectionType, Type, ValType, VecType,
+};
 
 #[derive(Error, Debug, Clone)]
 pub enum ParseError {
@@ -12,8 +14,14 @@ pub enum ParseError {
     #[error("unexpected end of stream: expected {0} bytes")]
     Expected(usize),
 
-    #[error("Bad magic number (expected 0061736DH ('\\0asm'), got {0:x}")]
+    #[error("Bad magic number (expected 0061736DH ('\\0asm'), got {0:X}H")]
     BadMagic(u32),
+
+    #[error("Bad type prefix (expected 60H, got {0:X}H)")]
+    BadTypePrefix(u8),
+
+    #[error("Bad type (got {0:X}H)")]
+    BadType(u8),
 
     #[error("Unexpected version {0}")]
     UnexpectedVersion(u32),
@@ -81,8 +89,7 @@ enum ParseState {
     LEBI64(LEBParser<i64>),
     LEBU32(LEBParser<u32>),
     LEBU64(LEBParser<u64>),
-    Type(TypeParser),
-    TypeSequence(TypeSequence),
+    TypeSection(Take<TypeParser>),
     Accumulate(Take<Accumulator>),
     Section(SectionParser),
     Module(ModuleParser),
@@ -100,8 +107,7 @@ impl Parse for ParseState {
             ParseState::LEBI64(p) => p.advance(window),
             ParseState::LEBU32(p) => p.advance(window),
             ParseState::LEBU64(p) => p.advance(window),
-            ParseState::Type(p) => p.advance(window),
-            ParseState::TypeSequence(p) => p.advance(window),
+            ParseState::TypeSection(p) => p.advance(window),
             ParseState::Accumulate(p) => p.advance(window),
             ParseState::Section(p) => p.advance(window),
             ParseState::Module(p) => p.advance(window),
@@ -114,22 +120,6 @@ impl Parse for ParseState {
         };
 
         module.production()
-    }
-}
-
-struct Take<P: Parse> {
-    inner: P,
-    offset: usize,
-    limit: usize,
-}
-
-impl<P: Parse> Take<P> {
-    fn new(parser: P, limit: usize) -> Self {
-        Self {
-            inner: parser,
-            offset: 0,
-            limit,
-        }
     }
 }
 
@@ -307,7 +297,7 @@ impl SectionParser {
 
             (
                 ParseState::Section(SectionParser::SectionContent(0x1, _)),
-                ParseState::TypeSequence(TypeSequence(ts)),
+                ParseState::TypeSection(ts),
             ) => ParseState::Section(SectionParser::Done(SectionType::Type(ts.production()?))),
             _ => unreachable!(),
         })
@@ -323,7 +313,7 @@ impl Parse for SectionParser {
                 SectionParser::ParseType => {
                     *self = SectionParser::ParseLength(window.take()?);
                 }
-                SectionParser::ParseLength(xs) => {
+                SectionParser::ParseLength(_xs) => {
                     return Ok(Advancement::YieldTo(
                         window.offset(),
                         ParseState::LEBU32(LEBParser::new()),
@@ -355,7 +345,7 @@ impl Parse for SectionParser {
 
                         0x1 => Advancement::YieldTo(
                             window.offset(),
-                            ParseState::TypeSequence(TypeSequence::new()),
+                            ParseState::TypeSection(Take::new(TypeParser::default(), length)),
                             SectionParser::resume_after_section_body,
                         ),
 
@@ -382,147 +372,230 @@ impl Parse for SectionParser {
     }
 }
 
+enum TypeParser {
+    Init(Vec<Type>),
+    InputSize(Vec<Type>, u32),
+    Input(Vec<Type>, Option<ResultType>),
+    OutputSize(Vec<Type>, Option<ResultType>, u32),
+    Output(Vec<Type>, Option<ResultType>, Option<ResultType>),
+}
+
+impl Default for TypeParser {
+    fn default() -> Self {
+        Self::Init(vec![])
+    }
+}
+
+impl TypeParser {
+    fn map_buffer_to_result_type(input_buf: Box<[u8]>) -> Result<ResultType, ParseError> {
+        let mut types = Vec::with_capacity(input_buf.len());
+        for item in &*input_buf {
+            types.push(match item {
+                0x6f => ValType::RefType(RefType::ExternRef),
+                0x70 => ValType::RefType(RefType::FuncRef),
+                0x7b => ValType::VecType(VecType::V128),
+                0x7c => ValType::NumType(NumType::F64),
+                0x7d => ValType::NumType(NumType::F32),
+                0x7e => ValType::NumType(NumType::I64),
+                0x7f => ValType::NumType(NumType::I32),
+                byte => return Err(ParseError::BadType(*byte)),
+            })
+        }
+        Ok(ResultType(types.into()))
+    }
+}
+
+impl Parse for TypeParser {
+    type Production = Box<[Type]>;
+
+    fn advance(&mut self, mut window: ParserWindow) -> ParseResult {
+        loop {
+            *self = match self {
+                TypeParser::Init(_) => {
+                    match window.peek() {
+                        Err(ParseError::Expected(1)) => {
+                            return Ok(Advancement::Ready(window.offset()));
+                        }
+                        Err(err) => return Err(err),
+                        _ => {}
+                    }
+
+                    let tag = window.take()?;
+                    if tag != 0x60 {
+                        return Err(ParseError::BadTypePrefix(tag));
+                    }
+
+                    return Ok(Advancement::YieldTo(
+                        window.offset(),
+                        ParseState::LEBU32(LEBParser::default()),
+                        |last_state, this_state| {
+                            let ParseState::LEBU32(leb) = last_state else {
+                                unreachable!();
+                            };
+
+                            let ParseState::TypeSection(take) = this_state else {
+                                unreachable!();
+                            };
+
+                            let entry_count = leb.production()?;
+                            Ok(ParseState::TypeSection(take.map(|this_state| {
+                                let Self::Init(v) = this_state else {
+                                    unreachable!();
+                                };
+                                Ok(if entry_count == 0 {
+                                    Self::Input(v, None)
+                                } else {
+                                    Self::InputSize(v, entry_count)
+                                })
+                            })?))
+                        },
+                    ));
+                }
+                TypeParser::InputSize(_, size) => {
+                    let size = *size as usize;
+
+                    return Ok(Advancement::YieldTo(
+                        window.offset(),
+                        ParseState::Accumulate(Take::new(Accumulator::new(size), size)),
+                        |last_state, this_state| {
+                            let ParseState::Accumulate(accum) = last_state else {
+                                unreachable!()
+                            };
+                            let ParseState::TypeSection(take) = this_state else {
+                                unreachable!();
+                            };
+
+                            let input_buf = accum.production()?;
+                            let result_type = TypeParser::map_buffer_to_result_type(input_buf)?;
+                            Ok(ParseState::TypeSection(take.map(|this_state| {
+                                let Self::InputSize(v, _) = this_state else {
+                                    unreachable!();
+                                };
+                                Ok(Self::Input(v, Some(result_type)))
+                            })?))
+                        },
+                    ));
+                }
+
+                TypeParser::Input(_, _) => {
+                    return Ok(Advancement::YieldTo(
+                        window.offset(),
+                        ParseState::LEBU32(LEBParser::default()),
+                        |last_state, this_state| {
+                            let ParseState::LEBU32(leb) = last_state else {
+                                unreachable!();
+                            };
+
+                            let ParseState::TypeSection(take) = this_state else {
+                                unreachable!();
+                            };
+
+                            let entry_count = leb.production()?;
+
+                            Ok(ParseState::TypeSection(take.map(|this_state| {
+                                let Self::Input(v, result_type) = this_state else {
+                                    unreachable!();
+                                };
+                                Ok(if entry_count == 0 {
+                                    Self::Output(v, result_type, None)
+                                } else {
+                                    Self::OutputSize(v, result_type, entry_count)
+                                })
+                            })?))
+                        },
+                    ));
+                }
+                TypeParser::OutputSize(_, _, size) => {
+                    let size = *size as usize;
+
+                    return Ok(Advancement::YieldTo(
+                        window.offset(),
+                        ParseState::Accumulate(Take::new(Accumulator::new(size), size)),
+                        |last_state, this_state| {
+                            let ParseState::Accumulate(accum) = last_state else {
+                                unreachable!()
+                            };
+                            let ParseState::TypeSection(take) = this_state else {
+                                unreachable!();
+                            };
+
+                            let output_buf = accum.production()?;
+                            let result_type = TypeParser::map_buffer_to_result_type(output_buf)?;
+
+                            Ok(ParseState::TypeSection(take.map(|this_state| {
+                                let Self::OutputSize(v, input_result_type, _) = this_state else {
+                                    unreachable!();
+                                };
+                                Ok(Self::Output(v, input_result_type, Some(result_type)))
+                            })?))
+                        },
+                    ));
+                }
+                TypeParser::Output(v, input_type, output_type) => {
+                    v.push(Type(
+                        input_type.take().unwrap_or_default(),
+                        output_type.take().unwrap_or_default(),
+                    ));
+                    TypeParser::Init(mem::take(v))
+                }
+            }
+        }
+    }
+
+    fn production(self) -> Result<Self::Production, ParseError> {
+        let Self::Init(v) = self else {
+            unreachable!();
+        };
+
+        Ok(v.into_boxed_slice())
+    }
+}
+
+struct Take<P: Parse> {
+    inner: P,
+    offset: usize,
+    limit: usize,
+}
+
+impl<P: Parse> Take<P> {
+    fn new(parser: P, limit: usize) -> Self {
+        Self {
+            inner: parser,
+            offset: 0,
+            limit,
+        }
+    }
+
+    fn map<F: FnOnce(P) -> Result<P, ParseError>>(self, mapper: F) -> Result<Self, ParseError> {
+        let Self {
+            inner,
+            offset,
+            limit,
+        } = self;
+
+        Ok(Self {
+            inner: mapper(inner)?,
+            offset,
+            limit,
+        })
+    }
+}
+
 impl<P: Parse> Parse for Take<P> {
     type Production = P::Production;
 
     fn advance(&mut self, mut window: ParserWindow) -> ParseResult {
-        if self.offset + window.available() > self.limit {
-            let offset = window.offset();
-            window = window.slice(..(self.limit - offset));
+        if self.offset + window.available() >= self.limit {
+            window = window.slice(self.limit - self.offset);
+            self.offset = self.limit;
+        } else {
+            self.offset += window.available();
         }
         self.inner.advance(window)
     }
 
     fn production(self) -> Result<Self::Production, ParseError> {
         self.inner.production()
-    }
-}
-
-#[derive(Default)]
-struct TypeParser;
-
-impl Parse for TypeParser {
-    type Production = Type;
-
-    fn advance(&mut self, _window: ParserWindow) -> ParseResult {
-        todo!()
-    }
-
-    fn production(self) -> Result<Self::Production, ParseError> {
-        todo!()
-    }
-}
-
-struct TypeSequence(Sequence<TypeParser>);
-
-impl TypeSequence {
-    fn new() -> Self {
-        Self(Sequence::Init(
-            |lhs, rhs| {
-                let ParseState::TypeSequence(xs) = rhs else {
-                    unreachable!()
-                };
-                Ok(ParseState::TypeSequence(TypeSequence(
-                    Sequence::<TypeParser>::resume_after_parse_len(lhs, xs.0)?,
-                )))
-            },
-            |lhs, rhs| {
-                let ParseState::Type(lhs) = lhs else {
-                    unreachable!()
-                };
-                let ParseState::TypeSequence(rhs) = rhs else {
-                    unreachable!()
-                };
-                Ok(ParseState::TypeSequence(TypeSequence(Sequence::<
-                    TypeParser,
-                >::resume_after_item(
-                    lhs, rhs.0
-                )?)))
-            },
-        ))
-    }
-}
-
-impl Parse for TypeSequence {
-    type Production = <Sequence<TypeParser> as Parse>::Production;
-
-    fn advance(&mut self, window: ParserWindow) -> ParseResult {
-        self.0.advance(window)
-    }
-
-    fn production(self) -> Result<Self::Production, ParseError> {
-        self.0.production()
-    }
-}
-
-impl From<TypeParser> for ParseState {
-    fn from(value: TypeParser) -> Self {
-        ParseState::Type(value)
-    }
-}
-
-enum Sequence<P: Parse> {
-    Init(ResumeFunc, ResumeFunc),
-    Allocated(Vec<P::Production>, usize, ResumeFunc),
-    Ready(Box<[P::Production]>),
-}
-
-impl<P: Parse> Sequence<P> {
-    fn resume_after_parse_len(
-        last_state: ParseState,
-        this_seq: Sequence<P>,
-    ) -> Result<Self, ParseError> {
-        let ParseState::LEBU32(leb) = last_state else {
-            unreachable!();
-        };
-        let count = leb.production()? as usize;
-        let Sequence::Init(_, resume_on_item) = this_seq else {
-            unreachable!();
-        };
-        Ok(Sequence::Allocated(
-            Vec::with_capacity(count),
-            count,
-            resume_on_item,
-        ))
-    }
-
-    fn resume_after_item(last_parser: P, this_seq: Sequence<P>) -> Result<Self, ParseError> {
-        let Sequence::Allocated(mut v, target, resume_on_item) = this_seq else {
-            unreachable!();
-        };
-        v.push(last_parser.production()?);
-        Ok(if v.len() == target {
-            Sequence::Ready(v.into())
-        } else {
-            Sequence::Allocated(v, target, resume_on_item)
-        })
-    }
-}
-
-impl<P: Parse + Default + Into<ParseState>> Parse for Sequence<P> {
-    type Production = Box<[P::Production]>;
-
-    fn advance(&mut self, window: ParserWindow) -> ParseResult {
-        match self {
-            Sequence::Init(resume_after_len, _) => Ok(Advancement::YieldTo(
-                window.offset(),
-                ParseState::LEBU32(LEBParser::new()),
-                *resume_after_len,
-            )),
-            Sequence::Allocated(_, _, resume_after_item) => Ok(Advancement::YieldTo(
-                window.offset(),
-                P::default().into(),
-                *resume_after_item,
-            )),
-            Sequence::Ready(_) => todo!(),
-        }
-    }
-
-    fn production(self) -> Result<Self::Production, ParseError> {
-        let Sequence::Ready(result) = self else {
-            unreachable!();
-        };
-        Ok(result)
     }
 }
 
@@ -611,7 +684,7 @@ impl Parser {
                         chunk,
                         offset,
                         start_pos: self.position,
-                        eos: false,
+                        eos,
                     };
                 }
 
@@ -622,7 +695,7 @@ impl Parser {
                         chunk,
                         offset,
                         start_pos: self.position,
-                        eos: false,
+                        eos,
                     };
                 }
 
@@ -674,9 +747,9 @@ impl<'a> ParserWindow<'a> {
         self.offset + self.start_pos
     }
 
-    fn slice(self, range: RangeTo<usize>) -> Self {
+    fn slice(self, take: usize) -> Self {
         Self {
-            chunk: &self.chunk[..range.end],
+            chunk: &self.chunk[..self.offset + take],
             offset: self.offset,
             start_pos: self.start_pos,
             eos: true,
@@ -730,9 +803,11 @@ mod test {
 
         let preamble = b"\x00asm\x01\0\0\0";
         let custom = b"\x00\x04abcd";
+        let types = b"\x01\x06\x60\x02\x7f\x7f\x01\x7f";
 
-        dbg!(parser.write(preamble));
-        dbg!(parser.write(custom));
+        parser.write(preamble);
+        parser.write(custom);
+        parser.write(types);
         dbg!(parser.flush());
 
         Ok(())
