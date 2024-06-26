@@ -4,18 +4,28 @@
 pub(crate) mod function;
 pub(crate) mod global;
 pub(crate) mod imports;
+pub(crate) mod intern_map;
 pub(crate) mod machine;
 pub(crate) mod memory;
+pub(crate) mod memory_region;
 pub(crate) mod stack;
 pub(crate) mod table;
 pub(crate) mod value;
 
-pub(crate) use imports::Imports;
 pub(crate) use value::Value;
 
-use crate::nodes::{Local, NumType, RefType, Type, ValType, VecType};
+use uuasm_nodes::{Local, NumType, RefType, Type, ValType, VecType};
 
-impl ValType {
+pub(crate) mod prelude {
+    use crate::Value;
+
+    pub(crate) trait ValTypeExtras {
+        fn instantiate(&self) -> Value;
+        fn validate(&self, value: &Value) -> anyhow::Result<()>;
+    }
+}
+
+impl prelude::ValTypeExtras for ValType {
     fn instantiate(&self) -> Value {
         match self {
             ValType::NumType(NumType::I32) => Value::I32(Default::default()),
@@ -42,22 +52,6 @@ impl ValType {
             | (ValType::RefType(RefType::ExternRef), Value::RefNull) => Ok(()),
             (vt, v) => anyhow::bail!("expected={:?}; got={:?}", vt, v),
         }
-    }
-}
-
-impl Type {
-    pub(crate) fn input_arity(&self) -> usize {
-        self.0 .0.len()
-    }
-
-    pub(crate) fn output_arity(&self) -> usize {
-        self.1 .0.len()
-    }
-}
-
-impl From<Type> for Vec<Local> {
-    fn from(value: Type) -> Self {
-        value.0 .0.into_iter().map(|xs| Local(0, *xs)).collect()
     }
 }
 
@@ -266,11 +260,11 @@ pub(crate) struct TKTK;
 #[cfg(test)]
 mod test {
 
-    use crate::parse::parse;
+    use uuasm_codec::parse;
 
     #[test]
     fn test_create_store() {
-        let bytes = include_bytes!("../example2.wasm");
+        let bytes = include_bytes!("../../../example2.wasm");
 
         let _wasm = parse(bytes).unwrap();
 
@@ -286,4 +280,3 @@ mod test {
         */
     }
 }
-

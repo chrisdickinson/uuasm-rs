@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/wastjson-gen"]
+members = ["crates/codec", "crates/nodes", "crates/rt", "crates/wastjson-gen"]
 resolver = "2"
 
 [package]
@@ -9,16 +9,19 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
+[workspace.dependencies]
+uuasm-nodes = { version = "0.1.0", path = "crates/nodes" }
+uuasm-codec = { version = "0.1.0", path = "crates/codec" }
 anyhow = "1.0.75"
-divrem = "1.0.0"
+thiserror = "1.0.61"
+
+[dependencies]
 leb128 = "0.2.5"
 nom = "7.1.3"
 nom_locate = "4.2.0"
 num = "0.4.3"
-rustix = { version = "0.38.14", features = ["mm"] }
 scopeguard = "1.2.0"
-thiserror = "1.0.61"
+divrem = "1.0.0"
 
 [dev-dependencies]
 serde = "1.0.197"

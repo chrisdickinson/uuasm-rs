@@ -1,0 +1,11 @@
+[package]
+name = "uuasm-rt"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = { workspace = true }
+num = "0.4.3"
+thiserror = { workspace = true }
+uuasm-nodes = { workspace = true }
+uuasm-codec = { workspace = true }

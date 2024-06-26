@@ -1,8 +1,8 @@
-use std::{cmp::min, marker::PhantomData, mem, ops::RangeTo};
+use std::{cmp::min, marker::PhantomData, mem};
 
 use thiserror::Error;
 
-use crate::nodes::{
+use uuasm_nodes::{
     Module, ModuleBuilder, NumType, RefType, ResultType, SectionType, Type, ValType, VecType,
 };
 
@@ -387,9 +387,9 @@ impl Default for TypeParser {
 }
 
 impl TypeParser {
-    fn map_buffer_to_result_type(input_buf: Box<[u8]>) -> Result<ResultType, ParseError> {
+    fn map_buffer_to_result_type(input_buf: &[u8]) -> Result<ResultType, ParseError> {
         let mut types = Vec::with_capacity(input_buf.len());
-        for item in &*input_buf {
+        for item in input_buf {
             types.push(match item {
                 0x6f => ValType::RefType(RefType::ExternRef),
                 0x70 => ValType::RefType(RefType::FuncRef),
@@ -466,7 +466,7 @@ impl Parse for TypeParser {
                             };
 
                             let input_buf = accum.production()?;
-                            let result_type = TypeParser::map_buffer_to_result_type(input_buf)?;
+                            let result_type = TypeParser::map_buffer_to_result_type(&input_buf)?;
                             Ok(ParseState::TypeSection(take.map(|this_state| {
                                 let Self::InputSize(v, _) = this_state else {
                                     unreachable!();
@@ -520,7 +520,7 @@ impl Parse for TypeParser {
                             };
 
                             let output_buf = accum.production()?;
-                            let result_type = TypeParser::map_buffer_to_result_type(output_buf)?;
+                            let result_type = TypeParser::map_buffer_to_result_type(&output_buf)?;
 
                             Ok(ParseState::TypeSection(take.map(|this_state| {
                                 let Self::OutputSize(v, input_result_type, _) = this_state else {
@@ -813,4 +813,3 @@ mod test {
         Ok(())
     }
 }
-
