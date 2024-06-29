@@ -1,7 +1,12 @@
+use std::marker::PhantomData;
+
 use uuasm_nodes::Module;
 
 use crate::{
-    parser::{module::ModuleParser, state::ParseState},
+    parser::{
+        module::ModuleParser,
+        state::{AnyState, AnyStateProduction},
+    },
     window::DecodeWindow,
     Advancement, Parse, ParseError, ResumeFunc,
 };
@@ -12,44 +17,46 @@ use crate::{
  * item processes them. If it is complete, it returns control to the next stack state along with
  * the production. The stack state can `take(N)`, `peek(N)`, `skip(N)`.
  */
-pub struct Decoder {
-    state: Vec<(ParseState, ResumeFunc)>,
+pub struct Decoder<T: TryFrom<AnyStateProduction>> {
+    state: Vec<(AnyState, ResumeFunc)>,
     position: usize,
+    _marker: PhantomData<T>,
 }
 
-fn noop_resume(_last_state: ParseState, _this_state: ParseState) -> Result<ParseState, ParseError> {
+fn noop_resume(_last_state: AnyState, _this_state: AnyState) -> Result<AnyState, ParseError> {
     Err(ParseError::InvalidState("this state should be unreachable"))
 }
 
-impl Default for Decoder {
+impl Default for Decoder<Module> {
     fn default() -> Self {
-        let mut state = Vec::with_capacity(16);
-        state.push((
-            ParseState::Module(ModuleParser::default()),
-            noop_resume as ResumeFunc,
-        ));
-        Self { state, position: 0 }
+        Self::new(AnyState::Module(ModuleParser::default()))
     }
 }
 
-impl Decoder {
-    pub fn new() -> Self {
-        Default::default()
+impl<T: TryFrom<AnyStateProduction, Error = ParseError>> Decoder<T> {
+    pub fn new(parser: AnyState) -> Self {
+        let mut state = Vec::with_capacity(16);
+        state.push((parser, noop_resume as ResumeFunc));
+        Self {
+            state,
+            position: 0,
+            _marker: PhantomData,
+        }
     }
 
     fn write_inner<'a>(
         &'_ mut self,
         chunk: &'a [u8],
         eos: bool,
-    ) -> Result<(Module, &'a [u8]), ParseError> {
+    ) -> Result<(T, &'a [u8]), ParseError> {
         let mut window = DecodeWindow::new(chunk, 0, self.position, eos);
         loop {
             let (mut state, resume) = self.state.pop().unwrap();
             let offset = match state.advance(window) {
                 Ok(Advancement::Ready(offset)) => {
                     if self.state.is_empty() {
-                        let module = state.production()?;
-                        return Ok((module, &chunk[offset..]));
+                        let output = state.production()?.try_into()?;
+                        return Ok((output, &chunk[offset..]));
                     }
 
                     let (receiver, last_resume) = self.state.pop().unwrap();
@@ -71,7 +78,7 @@ impl Decoder {
 
                 Err(e) => {
                     self.state
-                        .push((ParseState::Failed(e.clone()), noop_resume as ResumeFunc));
+                        .push((AnyState::Failed(e.clone()), noop_resume as ResumeFunc));
                     return Err(e);
                 }
             };
@@ -79,13 +86,13 @@ impl Decoder {
         }
     }
 
-    pub fn write<'a>(&'_ mut self, chunk: &'a [u8]) -> Result<(Module, &'a [u8]), ParseError> {
+    pub fn write<'a>(&'_ mut self, chunk: &'a [u8]) -> Result<(T, &'a [u8]), ParseError> {
         self.write_inner(chunk, false)
     }
 
-    pub fn flush(&mut self) -> Result<Module, ParseError> {
-        let (module, _) = self.write_inner(&[], true)?;
-        Ok(module)
+    pub fn flush(&mut self) -> Result<T, ParseError> {
+        let (output, _) = self.write_inner(&[], true)?;
+        Ok(output)
     }
 }
 

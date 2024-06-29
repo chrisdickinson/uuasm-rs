@@ -3,7 +3,7 @@ use uuasm_nodes::SectionType;
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
 use super::{
-    accumulator::Accumulator, leb::LEBParser, state::ParseState, take::Take, types::TypeParser,
+    accumulator::Accumulator, leb::LEBParser, state::AnyState, take::Take, types::TypeParser,
 };
 
 #[derive(Default)]
@@ -24,23 +24,22 @@ impl Parse for SectionParser {
                 SectionParser::ParseType => {
                     *self = SectionParser::ParseLength(window.take()?);
                 }
+
                 SectionParser::ParseLength(_xs) => {
                     return Ok(Advancement::YieldTo(
                         window.offset(),
-                        ParseState::LEBU32(LEBParser::new()),
+                        AnyState::LEBU32(LEBParser::new()),
                         |last_state, this_state| {
-                            let ParseState::LEBU32(leb) = last_state else {
+                            let AnyState::LEBU32(leb) = last_state else {
                                 unreachable!()
                             };
-                            let ParseState::Section(SectionParser::ParseLength(kind)) = this_state
+                            let AnyState::Section(SectionParser::ParseLength(kind)) = this_state
                             else {
                                 unreachable!()
                             };
 
                             let len = leb.production()?;
-                            Ok(ParseState::Section(SectionParser::SectionContent(
-                                kind, len,
-                            )))
+                            Ok(AnyState::Section(SectionParser::SectionContent(kind, len)))
                         },
                     ));
                 }
@@ -50,27 +49,27 @@ impl Parse for SectionParser {
                     return Ok(match *kind {
                         0x0 => Advancement::YieldTo(
                             window.offset(),
-                            ParseState::Accumulate(Take::new(Accumulator::new(length), length)),
+                            AnyState::Accumulate(Take::new(Accumulator::new(length), length)),
                             |last_state, _| {
-                                let ParseState::Accumulate(acc @ Take { .. }) = last_state else {
+                                let AnyState::Accumulate(acc @ Take { .. }) = last_state else {
                                     unreachable!();
                                 };
 
-                                Ok(ParseState::Section(SectionParser::Done(
-                                    SectionType::Custom(acc.production()?),
-                                )))
+                                Ok(AnyState::Section(SectionParser::Done(SectionType::Custom(
+                                    acc.production()?,
+                                ))))
                             },
                         ),
 
                         0x1 => Advancement::YieldTo(
                             window.offset(),
-                            ParseState::TypeSection(Take::new(TypeParser::default(), length)),
+                            AnyState::TypeSection(Take::new(TypeParser::default(), length)),
                             |last_state, _| {
-                                let ParseState::TypeSection(ts) = last_state else {
+                                let AnyState::TypeSection(ts) = last_state else {
                                     unreachable!();
                                 };
 
-                                Ok(ParseState::Section(SectionParser::Done(SectionType::Type(
+                                Ok(AnyState::Section(SectionParser::Done(SectionType::Type(
                                     ts.production()?,
                                 ))))
                             },

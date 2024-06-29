@@ -1,6 +1,6 @@
 use crate::{window::DecodeWindow, Parse, ParseError, ParseResult};
 
-pub(crate) struct Take<P: Parse> {
+pub struct Take<P: Parse> {
     inner: P,
     offset: usize,
     limit: usize,

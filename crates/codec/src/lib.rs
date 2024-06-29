@@ -2,7 +2,7 @@ pub(crate) mod decoder;
 pub(crate) mod parser;
 pub(crate) mod window;
 
-use crate::parser::state::ParseState;
+use crate::parser::state::AnyState;
 
 pub use decoder::Decoder;
 
@@ -34,17 +34,20 @@ pub enum ParseError {
 
     #[error("invalid parser state: {0}")]
     InvalidState(&'static str),
+
+    #[error("invalid production")]
+    InvalidProduction,
 }
 
-enum Advancement {
+pub enum Advancement {
     Ready(usize),
-    YieldTo(usize, ParseState, ResumeFunc),
+    YieldTo(usize, AnyState, ResumeFunc),
 }
 
-type ResumeFunc = fn(ParseState, ParseState) -> Result<ParseState, ParseError>;
-type ParseResult = Result<Advancement, ParseError>;
+pub type ResumeFunc = fn(AnyState, AnyState) -> Result<AnyState, ParseError>;
+pub type ParseResult = Result<Advancement, ParseError>;
 
-trait Parse {
+pub trait Parse {
     type Production: Sized;
 
     fn advance(&mut self, window: DecodeWindow) -> ParseResult;

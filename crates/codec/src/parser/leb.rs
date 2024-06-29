@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
 #[derive(Default)]
-pub(crate) struct LEBParser<T> {
+pub struct LEBParser<T> {
     repr: u64,
     offs: usize,
     _marker: PhantomData<T>,

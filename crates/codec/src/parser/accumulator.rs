@@ -1,6 +1,6 @@
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
-pub(crate) struct Accumulator(usize, Box<[u8]>);
+pub struct Accumulator(usize, Box<[u8]>);
 
 impl Accumulator {
     pub(crate) fn new(expected: usize) -> Self {

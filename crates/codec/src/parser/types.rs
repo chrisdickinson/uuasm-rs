@@ -4,9 +4,9 @@ use uuasm_nodes::{NumType, RefType, ResultType, Type, ValType, VecType};
 
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
-use super::{accumulator::Accumulator, leb::LEBParser, state::ParseState, take::Take};
+use super::{accumulator::Accumulator, leb::LEBParser, state::AnyState, take::Take};
 
-pub(crate) enum TypeParser {
+pub enum TypeParser {
     Init(Vec<Type>),
     InputSize(Vec<Type>, u32),
     Input(Vec<Type>, Option<ResultType>),
@@ -61,18 +61,18 @@ impl Parse for TypeParser {
 
                     return Ok(Advancement::YieldTo(
                         window.offset(),
-                        ParseState::LEBU32(LEBParser::default()),
+                        AnyState::LEBU32(LEBParser::default()),
                         |last_state, this_state| {
-                            let ParseState::LEBU32(leb) = last_state else {
+                            let AnyState::LEBU32(leb) = last_state else {
                                 unreachable!();
                             };
 
-                            let ParseState::TypeSection(take) = this_state else {
+                            let AnyState::TypeSection(take) = this_state else {
                                 unreachable!();
                             };
 
                             let entry_count = leb.production()?;
-                            Ok(ParseState::TypeSection(take.map(|this_state| {
+                            Ok(AnyState::TypeSection(take.map(|this_state| {
                                 let Self::Init(v) = this_state else {
                                     unreachable!();
                                 };
@@ -90,18 +90,18 @@ impl Parse for TypeParser {
 
                     return Ok(Advancement::YieldTo(
                         window.offset(),
-                        ParseState::Accumulate(Take::new(Accumulator::new(size), size)),
+                        AnyState::Accumulate(Take::new(Accumulator::new(size), size)),
                         |last_state, this_state| {
-                            let ParseState::Accumulate(accum) = last_state else {
+                            let AnyState::Accumulate(accum) = last_state else {
                                 unreachable!()
                             };
-                            let ParseState::TypeSection(take) = this_state else {
+                            let AnyState::TypeSection(take) = this_state else {
                                 unreachable!();
                             };
 
                             let input_buf = accum.production()?;
                             let result_type = TypeParser::map_buffer_to_result_type(&input_buf)?;
-                            Ok(ParseState::TypeSection(take.map(|this_state| {
+                            Ok(AnyState::TypeSection(take.map(|this_state| {
                                 let Self::InputSize(v, _) = this_state else {
                                     unreachable!();
                                 };
@@ -114,19 +114,19 @@ impl Parse for TypeParser {
                 TypeParser::Input(_, _) => {
                     return Ok(Advancement::YieldTo(
                         window.offset(),
-                        ParseState::LEBU32(LEBParser::default()),
+                        AnyState::LEBU32(LEBParser::default()),
                         |last_state, this_state| {
-                            let ParseState::LEBU32(leb) = last_state else {
+                            let AnyState::LEBU32(leb) = last_state else {
                                 unreachable!();
                             };
 
-                            let ParseState::TypeSection(take) = this_state else {
+                            let AnyState::TypeSection(take) = this_state else {
                                 unreachable!();
                             };
 
                             let entry_count = leb.production()?;
 
-                            Ok(ParseState::TypeSection(take.map(|this_state| {
+                            Ok(AnyState::TypeSection(take.map(|this_state| {
                                 let Self::Input(v, result_type) = this_state else {
                                     unreachable!();
                                 };
@@ -144,19 +144,19 @@ impl Parse for TypeParser {
 
                     return Ok(Advancement::YieldTo(
                         window.offset(),
-                        ParseState::Accumulate(Take::new(Accumulator::new(size), size)),
+                        AnyState::Accumulate(Take::new(Accumulator::new(size), size)),
                         |last_state, this_state| {
-                            let ParseState::Accumulate(accum) = last_state else {
+                            let AnyState::Accumulate(accum) = last_state else {
                                 unreachable!()
                             };
-                            let ParseState::TypeSection(take) = this_state else {
+                            let AnyState::TypeSection(take) = this_state else {
                                 unreachable!();
                             };
 
                             let output_buf = accum.production()?;
                             let result_type = TypeParser::map_buffer_to_result_type(&output_buf)?;
 
-                            Ok(ParseState::TypeSection(take.map(|this_state| {
+                            Ok(AnyState::TypeSection(take.map(|this_state| {
                                 let Self::OutputSize(v, input_result_type, _) = this_state else {
                                     unreachable!();
                                 };
