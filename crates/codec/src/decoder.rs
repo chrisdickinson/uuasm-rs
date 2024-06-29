@@ -4,8 +4,8 @@ use uuasm_nodes::Module;
 
 use crate::{
     parser::{
+        any::{AnyParser, AnyProduction},
         module::ModuleParser,
-        state::{AnyState, AnyStateProduction},
     },
     window::DecodeWindow,
     Advancement, Parse, ParseError, ResumeFunc,
@@ -17,24 +17,24 @@ use crate::{
  * item processes them. If it is complete, it returns control to the next stack state along with
  * the production. The stack state can `take(N)`, `peek(N)`, `skip(N)`.
  */
-pub struct Decoder<T: TryFrom<AnyStateProduction>> {
-    state: Vec<(AnyState, ResumeFunc)>,
+pub struct Decoder<T: TryFrom<AnyProduction>> {
+    state: Vec<(AnyParser, ResumeFunc)>,
     position: usize,
     _marker: PhantomData<T>,
 }
 
-fn noop_resume(_last_state: AnyState, _this_state: AnyState) -> Result<AnyState, ParseError> {
+fn noop_resume(_last_state: AnyParser, _this_state: AnyParser) -> Result<AnyParser, ParseError> {
     Err(ParseError::InvalidState("this state should be unreachable"))
 }
 
 impl Default for Decoder<Module> {
     fn default() -> Self {
-        Self::new(AnyState::Module(ModuleParser::default()))
+        Self::new(AnyParser::Module(ModuleParser::default()))
     }
 }
 
-impl<T: TryFrom<AnyStateProduction, Error = ParseError>> Decoder<T> {
-    pub fn new(parser: AnyState) -> Self {
+impl<T: TryFrom<AnyProduction, Error = ParseError>> Decoder<T> {
+    pub fn new(parser: AnyParser) -> Self {
         let mut state = Vec::with_capacity(16);
         state.push((parser, noop_resume as ResumeFunc));
         Self {
@@ -78,7 +78,7 @@ impl<T: TryFrom<AnyStateProduction, Error = ParseError>> Decoder<T> {
 
                 Err(e) => {
                     self.state
-                        .push((AnyState::Failed(e.clone()), noop_resume as ResumeFunc));
+                        .push((AnyParser::Failed(e.clone()), noop_resume as ResumeFunc));
                     return Err(e);
                 }
             };

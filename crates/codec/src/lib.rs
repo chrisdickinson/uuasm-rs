@@ -2,7 +2,7 @@ pub(crate) mod decoder;
 pub(crate) mod parser;
 pub(crate) mod window;
 
-use crate::parser::state::AnyState;
+use crate::parser::any::AnyParser;
 
 pub use decoder::Decoder;
 
@@ -41,10 +41,10 @@ pub enum ParseError {
 
 pub enum Advancement {
     Ready(usize),
-    YieldTo(usize, AnyState, ResumeFunc),
+    YieldTo(usize, AnyParser, ResumeFunc),
 }
 
-pub type ResumeFunc = fn(AnyState, AnyState) -> Result<AnyState, ParseError>;
+pub type ResumeFunc = fn(AnyParser, AnyParser) -> Result<AnyParser, ParseError>;
 pub type ParseResult = Result<Advancement, ParseError>;
 
 pub trait Parse {

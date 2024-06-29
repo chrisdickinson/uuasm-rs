@@ -2,7 +2,7 @@ use uuasm_nodes::{Module, ModuleBuilder, SectionType};
 
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
-use super::{accumulator::Accumulator, state::AnyState, take::Take};
+use super::{accumulator::Accumulator, any::AnyParser, take::Take};
 
 #[derive(Default)]
 pub enum ModuleParser {
@@ -19,12 +19,12 @@ impl Parse for ModuleParser {
         match self {
             ModuleParser::Magic => Ok(Advancement::YieldTo(
                 window.offset(),
-                AnyState::Accumulate(Take::new(Accumulator::new(8), 8)),
+                AnyParser::Accumulate(Take::new(Accumulator::new(8), 8)),
                 |last_state, this_state| {
-                    let AnyState::Accumulate(accum) = last_state else {
+                    let AnyParser::Accumulate(accum) = last_state else {
                         unreachable!()
                     };
-                    let AnyState::Module(_) = this_state else {
+                    let AnyParser::Module(_) = this_state else {
                         unreachable!()
                     };
                     let production = accum.production()?;
@@ -43,9 +43,9 @@ impl Parse for ModuleParser {
                         )));
                     }
 
-                    Ok(AnyState::Module(ModuleParser::TakeSection(Box::new(Some(
-                        ModuleBuilder::new(),
-                    )))))
+                    Ok(AnyParser::Module(ModuleParser::TakeSection(Box::new(
+                        Some(ModuleBuilder::new()),
+                    ))))
                 },
             )),
 
@@ -62,12 +62,12 @@ impl Parse for ModuleParser {
 
                 Ok(Advancement::YieldTo(
                     window.offset(),
-                    AnyState::Section(Default::default()),
+                    AnyParser::Section(Default::default()),
                     |last_state, this_state| {
-                        let AnyState::Section(section) = last_state else {
+                        let AnyParser::Section(section) = last_state else {
                             unreachable!();
                         };
-                        let AnyState::Module(ModuleParser::TakeSection(mut builder_box)) =
+                        let AnyParser::Module(ModuleParser::TakeSection(mut builder_box)) =
                             this_state
                         else {
                             unreachable!();
@@ -91,7 +91,7 @@ impl Parse for ModuleParser {
                             SectionType::DataCount(_) => todo!(),
                         });
 
-                        Ok(AnyState::Module(ModuleParser::TakeSection(builder_box)))
+                        Ok(AnyParser::Module(ModuleParser::TakeSection(builder_box)))
                     },
                 ))
             }
