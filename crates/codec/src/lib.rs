@@ -40,6 +40,9 @@ pub enum ParseError {
     #[error("Invalid utf-8 in name")]
     InvalidUTF8(#[from] Utf8Error),
 
+    #[error("Invalid import descriptor: {0}")]
+    InvalidImportDescriptor(u8),
+
     #[error("invalid production")]
     InvalidProduction,
 }

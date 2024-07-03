@@ -9,23 +9,22 @@ use super::{
 };
 
 pub enum AnyParser {
-    Name(NameParser),
     LEBI32(LEBParser<i32>),
     LEBI64(LEBParser<i64>),
     LEBU32(LEBParser<u32>),
     LEBU64(LEBParser<u64>),
+    Accumulate(Accumulator),
+    Failed(ParseError),
 
+    Name(NameParser),
     ImportDesc(ImportDescParser),
     Import(ImportParser),
     ImportSection(Repeated<ImportParser>),
 
     Type(TypeParser),
     TypeSection(Repeated<TypeParser>),
-    Accumulate(Accumulator),
     Section(SectionParser),
     Module(ModuleParser),
-
-    Failed(ParseError),
 }
 
 macro_rules! repeated_impls {
