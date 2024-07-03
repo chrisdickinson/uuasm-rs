@@ -2,7 +2,7 @@ use uuasm_nodes::{Module, ModuleBuilder, SectionType};
 
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
-use super::{accumulator::Accumulator, any::AnyParser, take::Take};
+use super::{accumulator::Accumulator, any::AnyParser};
 
 #[derive(Default)]
 pub enum ModuleParser {
@@ -19,7 +19,7 @@ impl Parse for ModuleParser {
         match self {
             ModuleParser::Magic => Ok(Advancement::YieldTo(
                 window.offset(),
-                AnyParser::Accumulate(Take::new(Accumulator::new(8), 8)),
+                AnyParser::Accumulate(Accumulator::new(8)),
                 |last_state, this_state| {
                     let AnyParser::Accumulate(accum) = last_state else {
                         unreachable!()

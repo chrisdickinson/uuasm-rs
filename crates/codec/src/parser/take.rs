@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::{window::DecodeWindow, Parse, ParseError, ParseResult};
 
 pub struct Take<P: Parse> {

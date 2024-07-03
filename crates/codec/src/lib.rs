@@ -2,6 +2,8 @@ pub(crate) mod decoder;
 pub(crate) mod parser;
 pub(crate) mod window;
 
+use std::str::Utf8Error;
+
 use crate::parser::any::AnyParser;
 
 pub use decoder::Decoder;
@@ -34,6 +36,9 @@ pub enum ParseError {
 
     #[error("invalid parser state: {0}")]
     InvalidState(&'static str),
+
+    #[error("Invalid utf-8 in name")]
+    InvalidUTF8(#[from] Utf8Error),
 
     #[error("invalid production")]
     InvalidProduction,

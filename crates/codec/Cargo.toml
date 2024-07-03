@@ -6,5 +6,6 @@ edition = "2021"
 [dependencies]
 anyhow = { workspace = true }
 num = "0.4.3"
+paste = "1.0.15"
 thiserror = { workspace = true }
 uuasm-nodes = { workspace = true }

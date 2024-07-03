@@ -29,6 +29,7 @@ impl<T: LEBConstants> Parse for LEBParser<T> {
             next = window.peek()?;
 
             self.repr |= ((next & 0x7f) as u64) << shift;
+            self.offs += 1;
             shift += 7;
 
             next & 0x80 != 0

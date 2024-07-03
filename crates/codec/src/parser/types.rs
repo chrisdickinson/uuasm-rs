@@ -1,23 +1,17 @@
-use std::mem;
-
 use uuasm_nodes::{NumType, RefType, ResultType, Type, ValType, VecType};
 
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
-use super::{accumulator::Accumulator, any::AnyParser, leb::LEBParser, take::Take};
+use super::{accumulator::Accumulator, any::AnyParser, leb::LEBParser};
 
+#[derive(Default)]
 pub enum TypeParser {
-    Init(Vec<Type>),
-    InputSize(Vec<Type>, u32),
-    Input(Vec<Type>, Option<ResultType>),
-    OutputSize(Vec<Type>, Option<ResultType>, u32),
-    Output(Vec<Type>, Option<ResultType>, Option<ResultType>),
-}
-
-impl Default for TypeParser {
-    fn default() -> Self {
-        Self::Init(vec![])
-    }
+    #[default]
+    Init,
+    InputSize(u32),
+    Input(Option<ResultType>),
+    OutputSize(Option<ResultType>, u32),
+    Output(Option<ResultType>, Option<ResultType>),
 }
 
 impl TypeParser {
@@ -40,147 +34,125 @@ impl TypeParser {
 }
 
 impl Parse for TypeParser {
-    type Production = Box<[Type]>;
+    type Production = Type;
 
     fn advance(&mut self, mut window: DecodeWindow) -> ParseResult {
-        loop {
-            *self = match self {
-                TypeParser::Init(_) => {
-                    match window.peek() {
-                        Err(ParseError::Expected(1)) => {
-                            return Ok(Advancement::Ready(window.offset()));
-                        }
-                        Err(err) => return Err(err),
-                        _ => {}
+        match self {
+            TypeParser::Init => {
+                match window.peek() {
+                    Err(ParseError::Expected(1)) => {
+                        return Ok(Advancement::Ready(window.offset()));
                     }
-
-                    let tag = window.take()?;
-                    if tag != 0x60 {
-                        return Err(ParseError::BadTypePrefix(tag));
-                    }
-
-                    return Ok(Advancement::YieldTo(
-                        window.offset(),
-                        AnyParser::LEBU32(LEBParser::default()),
-                        |last_state, this_state| {
-                            let AnyParser::LEBU32(leb) = last_state else {
-                                unreachable!();
-                            };
-
-                            let AnyParser::TypeSection(take) = this_state else {
-                                unreachable!();
-                            };
-
-                            let entry_count = leb.production()?;
-                            Ok(AnyParser::TypeSection(take.map(|this_state| {
-                                let Self::Init(v) = this_state else {
-                                    unreachable!();
-                                };
-                                Ok(if entry_count == 0 {
-                                    Self::Input(v, None)
-                                } else {
-                                    Self::InputSize(v, entry_count)
-                                })
-                            })?))
-                        },
-                    ));
-                }
-                TypeParser::InputSize(_, size) => {
-                    let size = *size as usize;
-
-                    return Ok(Advancement::YieldTo(
-                        window.offset(),
-                        AnyParser::Accumulate(Take::new(Accumulator::new(size), size)),
-                        |last_state, this_state| {
-                            let AnyParser::Accumulate(accum) = last_state else {
-                                unreachable!()
-                            };
-                            let AnyParser::TypeSection(take) = this_state else {
-                                unreachable!();
-                            };
-
-                            let input_buf = accum.production()?;
-                            let result_type = TypeParser::map_buffer_to_result_type(&input_buf)?;
-                            Ok(AnyParser::TypeSection(take.map(|this_state| {
-                                let Self::InputSize(v, _) = this_state else {
-                                    unreachable!();
-                                };
-                                Ok(Self::Input(v, Some(result_type)))
-                            })?))
-                        },
-                    ));
+                    Err(err) => return Err(err),
+                    _ => {}
                 }
 
-                TypeParser::Input(_, _) => {
-                    return Ok(Advancement::YieldTo(
-                        window.offset(),
-                        AnyParser::LEBU32(LEBParser::default()),
-                        |last_state, this_state| {
-                            let AnyParser::LEBU32(leb) = last_state else {
-                                unreachable!();
-                            };
-
-                            let AnyParser::TypeSection(take) = this_state else {
-                                unreachable!();
-                            };
-
-                            let entry_count = leb.production()?;
-
-                            Ok(AnyParser::TypeSection(take.map(|this_state| {
-                                let Self::Input(v, result_type) = this_state else {
-                                    unreachable!();
-                                };
-                                Ok(if entry_count == 0 {
-                                    Self::Output(v, result_type, None)
-                                } else {
-                                    Self::OutputSize(v, result_type, entry_count)
-                                })
-                            })?))
-                        },
-                    ));
+                let tag = window.take()?;
+                if tag != 0x60 {
+                    return Err(ParseError::BadTypePrefix(tag));
                 }
-                TypeParser::OutputSize(_, _, size) => {
-                    let size = *size as usize;
 
-                    return Ok(Advancement::YieldTo(
-                        window.offset(),
-                        AnyParser::Accumulate(Take::new(Accumulator::new(size), size)),
-                        |last_state, this_state| {
-                            let AnyParser::Accumulate(accum) = last_state else {
-                                unreachable!()
-                            };
-                            let AnyParser::TypeSection(take) = this_state else {
-                                unreachable!();
-                            };
+                return Ok(Advancement::YieldTo(
+                    window.offset(),
+                    AnyParser::LEBU32(LEBParser::default()),
+                    |last_state, this_state| {
+                        let AnyParser::LEBU32(leb) = last_state else {
+                            unreachable!();
+                        };
 
-                            let output_buf = accum.production()?;
-                            let result_type = TypeParser::map_buffer_to_result_type(&output_buf)?;
+                        let AnyParser::Type(Self::Init) = this_state else {
+                            unreachable!();
+                        };
 
-                            Ok(AnyParser::TypeSection(take.map(|this_state| {
-                                let Self::OutputSize(v, input_result_type, _) = this_state else {
-                                    unreachable!();
-                                };
-                                Ok(Self::Output(v, input_result_type, Some(result_type)))
-                            })?))
-                        },
-                    ));
-                }
-                TypeParser::Output(v, input_type, output_type) => {
-                    v.push(Type(
-                        input_type.take().unwrap_or_default(),
-                        output_type.take().unwrap_or_default(),
-                    ));
-                    TypeParser::Init(mem::take(v))
-                }
+                        let entry_count = leb.production()?;
+                        Ok(AnyParser::Type(if entry_count == 0 {
+                            Self::Input(None)
+                        } else {
+                            Self::InputSize(entry_count)
+                        }))
+                    },
+                ));
             }
+            TypeParser::InputSize(size) => {
+                let size = *size as usize;
+
+                return Ok(Advancement::YieldTo(
+                    window.offset(),
+                    AnyParser::Accumulate(Accumulator::new(size)),
+                    |last_state, this_state| {
+                        let AnyParser::Accumulate(accum) = last_state else {
+                            unreachable!()
+                        };
+                        let AnyParser::Type(Self::InputSize(_)) = this_state else {
+                            unreachable!();
+                        };
+
+                        let input_buf = accum.production()?;
+                        let result_type = TypeParser::map_buffer_to_result_type(&input_buf)?;
+                        Ok(AnyParser::Type(Self::Input(Some(result_type))))
+                    },
+                ));
+            }
+
+            TypeParser::Input(_) => {
+                return Ok(Advancement::YieldTo(
+                    window.offset(),
+                    AnyParser::LEBU32(LEBParser::default()),
+                    |last_state, this_state| {
+                        let AnyParser::LEBU32(leb) = last_state else {
+                            unreachable!();
+                        };
+
+                        let AnyParser::Type(Self::Input(result_type)) = this_state else {
+                            unreachable!();
+                        };
+                        let entry_count = leb.production()?;
+
+                        Ok(AnyParser::Type(if entry_count == 0 {
+                            Self::Output(result_type, None)
+                        } else {
+                            Self::OutputSize(result_type, entry_count)
+                        }))
+                    },
+                ));
+            }
+            TypeParser::OutputSize(_, size) => {
+                let size = *size as usize;
+
+                return Ok(Advancement::YieldTo(
+                    window.offset(),
+                    AnyParser::Accumulate(Accumulator::new(size)),
+                    |last_state, this_state| {
+                        let AnyParser::Accumulate(accum) = last_state else {
+                            unreachable!()
+                        };
+                        let AnyParser::Type(Self::OutputSize(input_result_type, _)) = this_state
+                        else {
+                            unreachable!();
+                        };
+
+                        let output_buf = accum.production()?;
+                        let result_type = TypeParser::map_buffer_to_result_type(&output_buf)?;
+
+                        Ok(AnyParser::Type(Self::Output(
+                            input_result_type,
+                            Some(result_type),
+                        )))
+                    },
+                ));
+            }
+            TypeParser::Output(_, _) => return Ok(Advancement::Ready(window.offset())),
         }
     }
 
     fn production(self) -> Result<Self::Production, ParseError> {
-        let Self::Init(v) = self else {
+        let Self::Output(params, returns) = self else {
             unreachable!();
         };
 
-        Ok(v.into_boxed_slice())
+        Ok(Type(
+            params.unwrap_or_default(),
+            returns.unwrap_or_default(),
+        ))
     }
 }

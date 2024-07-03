@@ -3,7 +3,7 @@ use uuasm_nodes::SectionType;
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
 use super::{
-    accumulator::Accumulator, any::AnyParser, leb::LEBParser, take::Take, types::TypeParser,
+    accumulator::Accumulator, any::AnyParser, leb::LEBParser, repeated::Repeated, types::TypeParser,
 };
 
 #[derive(Default)]
@@ -49,9 +49,9 @@ impl Parse for SectionParser {
                     return Ok(match *kind {
                         0x0 => Advancement::YieldTo(
                             window.offset(),
-                            AnyParser::Accumulate(Take::new(Accumulator::new(length), length)),
+                            AnyParser::Accumulate(Accumulator::new(length)),
                             |last_state, _| {
-                                let AnyParser::Accumulate(acc @ Take { .. }) = last_state else {
+                                let AnyParser::Accumulate(acc) = last_state else {
                                     unreachable!();
                                 };
 
@@ -63,7 +63,7 @@ impl Parse for SectionParser {
 
                         0x1 => Advancement::YieldTo(
                             window.offset(),
-                            AnyParser::TypeSection(Take::new(TypeParser::default(), length)),
+                            AnyParser::TypeSection(Repeated::<TypeParser>::default()),
                             |last_state, _| {
                                 let AnyParser::TypeSection(ts) = last_state else {
                                     unreachable!();

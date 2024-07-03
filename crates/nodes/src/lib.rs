@@ -419,10 +419,10 @@ pub struct Import {
 }
 
 impl Import {
-    pub fn new(module: String, name: String, desc: ImportDesc) -> Self {
+    pub fn new(module: Name, name: Name, desc: ImportDesc) -> Self {
         Self {
-            r#mod: Name(module),
-            nm: Name(name),
+            r#mod: module,
+            nm: name,
             desc,
         }
     }
