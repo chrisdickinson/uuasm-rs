@@ -1,6 +1,14 @@
 use std::cmp::min;
 
-use crate::ParseError;
+use thiserror::Error;
+
+#[derive(Error, Debug, Clone, Copy)]
+pub enum AdvancementError {
+    #[error("incomplete stream: {0} bytes")]
+    Expected(usize),
+    #[error("unexpected end of stream: expected {0} bytes")]
+    Incomplete(usize),
+}
 
 #[derive(Debug)]
 pub struct DecodeWindow<'a> {
@@ -43,21 +51,21 @@ impl<'a> DecodeWindow<'a> {
         }
     }
 
-    pub fn take(&mut self) -> Result<u8, ParseError> {
+    pub fn take(&mut self) -> Result<u8, AdvancementError> {
         let next = self.peek()?;
         self.offset += 1;
         Ok(next)
     }
 
-    pub fn take_n(&mut self, into: &mut [u8]) -> Result<usize, ParseError> {
+    pub fn take_n(&mut self, into: &mut [u8]) -> Result<usize, AdvancementError> {
         let dstlen = into.len();
 
         let src = &self.chunk[self.offset..];
         if src.is_empty() {
             return Err(if self.eos {
-                ParseError::Expected(dstlen)
+                AdvancementError::Expected(dstlen)
             } else {
-                ParseError::Incomplete(dstlen)
+                AdvancementError::Incomplete(dstlen)
             });
         }
 
@@ -67,12 +75,12 @@ impl<'a> DecodeWindow<'a> {
         Ok(to_write)
     }
 
-    pub fn peek(&self) -> Result<u8, ParseError> {
+    pub fn peek(&self) -> Result<u8, AdvancementError> {
         if self.offset >= self.chunk.len() {
             Err(if self.eos {
-                ParseError::Expected(1)
+                AdvancementError::Expected(1)
             } else {
-                ParseError::Incomplete(1)
+                AdvancementError::Incomplete(1)
             })
         } else {
             Ok(self.chunk[self.offset])

@@ -7,7 +7,7 @@ use crate::{
         any::{AnyParser, AnyProduction},
         module::ModuleParser,
     },
-    window::DecodeWindow,
+    window::{AdvancementError, DecodeWindow},
     Advancement, ExtractTarget, Parse, ParseError, ResumeFunc,
 };
 
@@ -28,7 +28,7 @@ fn noop_resume<T: IR>(
     _irgen: &mut T,
     _last_state: AnyParser<T>,
     _this_state: AnyParser<T>,
-) -> Result<AnyParser<T>, ParseError> {
+) -> Result<AnyParser<T>, ParseError<T::Error>> {
     Err(ParseError::InvalidState("this state should be unreachable"))
 }
 
@@ -57,7 +57,7 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
         &'_ mut self,
         chunk: &'a [u8],
         eos: bool,
-    ) -> Result<(Target, &'a [u8]), ParseError> {
+    ) -> Result<(Target, &'a [u8]), ParseError<T::Error>> {
         let mut window = DecodeWindow::new(chunk, 0, self.position, eos);
         loop {
             let (mut state, resume) = self.state.pop().unwrap();
@@ -80,7 +80,7 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
                     offset
                 }
 
-                Err(err @ ParseError::Incomplete(_)) => {
+                Err(err @ ParseError::Advancement(AdvancementError::Incomplete(_))) => {
                     self.position += chunk.len();
                     self.state.push((state, resume));
                     return Err(err);
@@ -96,11 +96,14 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
         }
     }
 
-    pub fn write<'a>(&'_ mut self, chunk: &'a [u8]) -> Result<(Target, &'a [u8]), ParseError> {
+    pub fn write<'a>(
+        &'_ mut self,
+        chunk: &'a [u8],
+    ) -> Result<(Target, &'a [u8]), ParseError<T::Error>> {
         self.write_inner(chunk, false)
     }
 
-    pub fn flush(&mut self) -> Result<Target, ParseError> {
+    pub fn flush(&mut self) -> Result<Target, ParseError<T::Error>> {
         let (output, _) = self.write_inner(&[], true)?;
         Ok(output)
     }

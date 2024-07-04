@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{window::DecodeWindow, ExtractTarget, Parse, ParseError, ParseResult};
+use crate::{window::DecodeWindow, ExtractError, ExtractTarget, Parse, ParseError, ParseResult};
 
 use super::{
     accumulator::Accumulator, importdescs::ImportDescParser, imports::ImportParser, leb::LEBParser,
@@ -14,7 +14,7 @@ pub enum AnyParser<T: IR> {
     LEBU32(LEBParser<u32>),
     LEBU64(LEBParser<u64>),
     Accumulate(Accumulator),
-    Failed(ParseError),
+    Failed(ParseError<T::Error>),
 
     Name(NameParser),
     ImportDesc(ImportDescParser),
@@ -43,7 +43,7 @@ macro_rules! repeated_impls {
             }
 
             impl<T: IR> TryFrom<AnyParser<T>> for Repeated<T, [< $id Parser >]<T>> {
-                type Error = ParseError;
+                type Error = ParseError<T::Error>;
 
                 fn try_from(value: AnyParser<T>) -> Result<Self, Self::Error> {
                     if let AnyParser::[< $id Section >](v) = value {
@@ -55,7 +55,7 @@ macro_rules! repeated_impls {
             }
 
             impl<T: IR> TryFrom<AnyParser<T>> for [< $id Parser >]<T> {
-                type Error = ParseError;
+                type Error = ParseError<T::Error>;
 
                 fn try_from(value: AnyParser<T>) -> Result<Self, Self::Error> {
                     if let AnyParser::$id(parser) = value {
@@ -70,11 +70,11 @@ macro_rules! repeated_impls {
 }
 
 impl<T: IR> ExtractTarget<AnyProduction<T>> for T::Module {
-    fn extract(value: AnyProduction<T>) -> Result<Self, ParseError> {
+    fn extract(value: AnyProduction<T>) -> Result<Self, ExtractError> {
         if let AnyProduction::Module(m) = value {
             Ok(m)
         } else {
-            Err(ParseError::InvalidProduction)
+            Err(ExtractError::Failed)
         }
     }
 }
@@ -125,7 +125,7 @@ impl<T: IR> Parse<T> for AnyParser<T> {
         }
     }
 
-    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError> {
+    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
         Ok(match self {
             AnyParser::Failed(e) => return Err(e.clone()),
             AnyParser::LEBI32(p) => AnyProduction::LEBI32(p.production(irgen)?),

@@ -1,6 +1,9 @@
 use uuasm_nodes::IR;
 
-use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
+use crate::{
+    window::{AdvancementError, DecodeWindow},
+    Advancement, Parse, ParseError, ParseResult,
+};
 
 use super::{accumulator::Accumulator, any::AnyParser};
 
@@ -15,7 +18,7 @@ pub enum ModuleParser<T: IR> {
 impl<T: IR> Parse<T> for ModuleParser<T> {
     type Production = <T as IR>::Module;
 
-    fn advance(&mut self, irgen: &mut T, window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: DecodeWindow) -> ParseResult<T> {
         match self {
             ModuleParser::Magic => Ok(Advancement::YieldTo(
                 window.offset(),
@@ -49,11 +52,11 @@ impl<T: IR> Parse<T> for ModuleParser<T> {
 
             ModuleParser::TakeSection(builder) => {
                 match window.peek() {
-                    Err(ParseError::Expected(1)) => {
+                    Err(AdvancementError::Expected(1)) => {
                         *self = ModuleParser::Done(builder.split_off(0));
                         return Ok(Advancement::Ready(window.offset()));
                     }
-                    Err(err) => return Err(err),
+                    Err(err) => return Err(err.into()),
                     _ => {}
                 }
 
@@ -80,7 +83,7 @@ impl<T: IR> Parse<T> for ModuleParser<T> {
         }
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError> {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
         let ModuleParser::Done(_module) = self else {
             unreachable!();
         };

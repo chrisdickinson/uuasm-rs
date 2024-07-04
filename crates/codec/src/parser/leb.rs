@@ -43,7 +43,7 @@ impl<T: IR, C: LEBConstants> Parse<T> for LEBParser<C> {
         Ok(Advancement::Ready(window.offset()))
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError> {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
         Ok(C::from_u64(self.repr))
     }
 }

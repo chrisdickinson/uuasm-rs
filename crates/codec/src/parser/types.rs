@@ -1,6 +1,9 @@
 use uuasm_nodes::IR;
 
-use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
+use crate::{
+    window::{AdvancementError, DecodeWindow},
+    Advancement, Parse, ParseError, ParseResult,
+};
 
 use super::{accumulator::Accumulator, any::AnyParser, leb::LEBParser};
 
@@ -15,7 +18,7 @@ pub enum TypeParser<T: IR> {
 }
 
 impl<T: IR> TypeParser<T> {
-    fn map_buffer_to_result_type(_input_buf: &[u8]) -> Result<T::ResultType, ParseError> {
+    fn map_buffer_to_result_type(_input_buf: &[u8]) -> Result<T::ResultType, ParseError<T::Error>> {
         todo!()
         /*
         let mut types = Vec::with_capacity(input_buf.len());
@@ -43,10 +46,10 @@ impl<T: IR> Parse<T> for TypeParser<T> {
         match self {
             TypeParser::Init => {
                 match window.peek() {
-                    Err(ParseError::Expected(1)) => {
+                    Err(AdvancementError::Expected(1)) => {
                         return Ok(Advancement::Ready(window.offset()));
                     }
-                    Err(err) => return Err(err),
+                    Err(err) => return Err(err.into()),
                     _ => {}
                 }
 
@@ -146,7 +149,7 @@ impl<T: IR> Parse<T> for TypeParser<T> {
         }
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError> {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
         let Self::Output(_params, _returns) = self else {
             unreachable!();
         };

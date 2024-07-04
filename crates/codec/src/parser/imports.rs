@@ -21,7 +21,7 @@ impl<T: IR> Parse<T> for ImportParser<T> {
 
     fn advance(
         &mut self,
-        irgen: &mut T,
+        _irgen: &mut T,
         window: crate::window::DecodeWindow,
     ) -> crate::ParseResult<T> {
         match self {
@@ -76,7 +76,7 @@ impl<T: IR> Parse<T> for ImportParser<T> {
         }
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, crate::ParseError> {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, crate::ParseError<T::Error>> {
         let Self::Ready(_modname, _name, _desc) = self else {
             return Err(ParseError::InvalidState(
                 "Expected import to be in Ready state",

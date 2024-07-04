@@ -12,7 +12,7 @@ pub struct ImportDescParser {
 impl<T: IR> Parse<T> for ImportDescParser {
     type Production = <T as IR>::ImportDesc;
 
-    fn advance(&mut self, irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
         if self.desc.is_some() {
             return Ok(Advancement::Ready(window.offset()));
         }
@@ -38,7 +38,8 @@ impl<T: IR> Parse<T> for ImportDescParser {
         })
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError> {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
         todo!()
     }
 }
+

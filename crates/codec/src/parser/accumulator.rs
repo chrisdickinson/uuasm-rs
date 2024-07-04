@@ -21,11 +21,13 @@ impl<T: IR> Parse<T> for Accumulator {
         if self.0 == self.1.len() {
             Ok(Advancement::Ready(window.offset()))
         } else {
-            Err(ParseError::Incomplete(self.1.len() - self.0))
+            Err(ParseError::Advancement(
+                crate::window::AdvancementError::Incomplete(self.1.len() - self.0),
+            ))
         }
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError> {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
         Ok(self.1)
     }
 }

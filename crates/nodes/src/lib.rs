@@ -1,5 +1,7 @@
 #![allow(dead_code)]
-use std::fmt::Debug;
+use std::{error::Error, fmt::Debug};
+
+use thiserror::Error;
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct ByteVec(pub Box<[u8]>);
@@ -845,6 +847,8 @@ VecType
 */
 
 pub trait IR {
+    type Error: Clone + Error + 'static;
+
     type BlockType;
     type ByteVec;
     type Code;
@@ -886,6 +890,13 @@ pub trait IR {
     type TypeIdx;
     type ValType;
     type VecType;
+    fn make_name(&mut self, data: Box<[u8]>) -> Result<Self::Name, Self::Error>;
+}
+
+#[derive(Clone, Debug, Error)]
+pub enum DefaultIRGeneratorError {
+    #[error("Invalid name: {0}")]
+    InvalidName(#[from] std::str::Utf8Error),
 }
 
 #[derive(Default, Clone, Debug)]
@@ -898,6 +909,8 @@ impl DefaultIRGenerator {
 }
 
 impl IR for DefaultIRGenerator {
+    type Error = DefaultIRGeneratorError;
+
     type BlockType = BlockType;
     type ByteVec = ByteVec;
     type Code = Code;
@@ -939,4 +952,9 @@ impl IR for DefaultIRGenerator {
     type TypeIdx = TypeIdx;
     type ValType = ValType;
     type VecType = VecType;
+
+    fn make_name(&mut self, data: Box<[u8]>) -> Result<Self::Name, Self::Error> {
+        let string = std::str::from_utf8(&data)?;
+        Ok(Name(string.to_string()))
+    }
 }

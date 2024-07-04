@@ -22,10 +22,10 @@ impl<T: IR, P: Parse<T>> Take<T, P> {
         }
     }
 
-    pub(crate) fn map<F: FnOnce(P) -> Result<P, ParseError>>(
+    pub(crate) fn map<F: FnOnce(P) -> Result<P, ParseError<T::Error>>>(
         self,
         mapper: F,
-    ) -> Result<Self, ParseError> {
+    ) -> Result<Self, ParseError<T::Error>> {
         let Self {
             inner,
             offset,
@@ -55,7 +55,7 @@ impl<T: IR, P: Parse<T>> Parse<T> for Take<T, P> {
         self.inner.advance(irgen, window)
     }
 
-    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError> {
+    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
         self.inner.production(irgen)
     }
 }

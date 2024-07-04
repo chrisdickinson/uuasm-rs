@@ -32,13 +32,13 @@ where
 impl<T, P> Parse<T> for Repeated<T, P>
 where
     T: IR,
-    Self: TryFrom<AnyParser<T>, Error = ParseError>,
-    P: Parse<T> + Default + TryFrom<AnyParser<T>, Error = ParseError>,
+    Self: TryFrom<AnyParser<T>, Error = ParseError<T::Error>>,
+    P: Parse<T> + Default + TryFrom<AnyParser<T>, Error = ParseError<T::Error>>,
     AnyParser<T>: From<P> + From<Self>,
 {
     type Production = Box<[P::Production]>;
 
-    fn advance(&mut self, irgen: &mut T, window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: DecodeWindow) -> ParseResult<T> {
         if let Self::Init = self {
             return Ok(Advancement::YieldTo(
                 window.offset(),
@@ -84,7 +84,7 @@ where
         ))
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, crate::ParseError> {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, crate::ParseError<T::Error>> {
         let Self::Collecting { result, expected } = self else {
             unreachable!()
         };

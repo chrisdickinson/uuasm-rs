@@ -16,7 +16,7 @@ pub enum SectionParser<T: IR> {
 impl<T: IR> Parse<T> for SectionParser<T> {
     type Production = T::Section;
 
-    fn advance(&mut self, irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
         loop {
             match self {
                 SectionParser::ParseType => {
@@ -48,8 +48,8 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                         0x0 => Advancement::YieldTo(
                             window.offset(),
                             AnyParser::Accumulate(Accumulator::new(length)),
-                            |irgen, last_state, _| {
-                                let AnyParser::Accumulate(acc) = last_state else {
+                            |_irgen, last_state, _| {
+                                let AnyParser::Accumulate(_acc) = last_state else {
                                     unreachable!();
                                 };
 
@@ -63,8 +63,8 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                         0x1 => Advancement::YieldTo(
                             window.offset(),
                             AnyParser::TypeSection(Repeated::default()),
-                            |irgen, last_state, _| {
-                                let AnyParser::TypeSection(ts) = last_state else {
+                            |_irgen, last_state, _| {
+                                let AnyParser::TypeSection(_ts) = last_state else {
                                     unreachable!();
                                 };
 
@@ -89,7 +89,7 @@ impl<T: IR> Parse<T> for SectionParser<T> {
         }
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError> {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
         let Self::Done(section_type) = self else {
             unreachable!();
         };

@@ -10,16 +10,14 @@ pub use decoder::Decoder;
 
 use thiserror::Error;
 use uuasm_nodes::IR;
-use window::DecodeWindow;
+use window::{AdvancementError, DecodeWindow};
 
 #[derive(Error, Debug, Clone)]
-pub enum ParseError {
-    #[error("incomplete stream: {0} bytes")]
-    Incomplete(usize),
+#[error(transparent)]
+pub struct IRError<T: Clone + std::fmt::Debug + std::error::Error>(#[from] T);
 
-    #[error("unexpected end of stream: expected {0} bytes")]
-    Expected(usize),
-
+#[derive(Error, Debug, Clone)]
+pub enum ParseError<T: Clone + std::fmt::Debug + std::error::Error> {
     #[error("Bad magic number (expected 0061736DH ('\\0asm'), got {0:X}H")]
     BadMagic(u32),
 
@@ -38,14 +36,23 @@ pub enum ParseError {
     #[error("invalid parser state: {0}")]
     InvalidState(&'static str),
 
-    #[error("Invalid utf-8 in name")]
-    InvalidUTF8(#[from] Utf8Error),
-
     #[error("Invalid import descriptor: {0}")]
     InvalidImportDescriptor(u8),
 
-    #[error("invalid production")]
-    InvalidProduction,
+    #[error(transparent)]
+    InvalidProduction(#[from] ExtractError),
+
+    #[error(transparent)]
+    Advancement(#[from] AdvancementError),
+
+    #[error("IR error: {0}")]
+    IRError(#[from] IRError<T>),
+}
+
+#[derive(Error, Debug, Clone)]
+pub enum ExtractError {
+    #[error("Failed to extract")]
+    Failed,
 }
 
 pub enum Advancement<T: IR> {
@@ -53,16 +60,17 @@ pub enum Advancement<T: IR> {
     YieldTo(usize, AnyParser<T>, ResumeFunc<T>),
 }
 
-pub type ResumeFunc<T> = fn(&mut T, AnyParser<T>, AnyParser<T>) -> Result<AnyParser<T>, ParseError>;
-pub type ParseResult<T> = Result<Advancement<T>, ParseError>;
+pub type ResumeFunc<T: IR> =
+    fn(&mut T, AnyParser<T>, AnyParser<T>) -> Result<AnyParser<T>, ParseError<T::Error>>;
+pub type ParseResult<T: IR> = Result<Advancement<T>, ParseError<T::Error>>;
 
 pub trait Parse<T: IR> {
     type Production: Sized;
 
     fn advance(&mut self, irgen: &mut T, window: DecodeWindow) -> ParseResult<T>;
-    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError>;
+    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>>;
 }
 
 pub trait ExtractTarget<T>: Sized {
-    fn extract(value: T) -> Result<Self, ParseError>;
+    fn extract(value: T) -> Result<Self, ExtractError>;
 }

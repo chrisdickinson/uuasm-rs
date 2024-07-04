@@ -3,7 +3,7 @@ use uuasm_nodes::IR;
 use crate::{
     parser::{any::AnyParser, leb::LEBParser},
     window::DecodeWindow,
-    Advancement, Parse, ParseError,
+    Advancement, IRError, Parse, ParseError,
 };
 
 use super::accumulator::Accumulator;
@@ -19,7 +19,7 @@ pub enum NameParser {
 impl<T: IR> Parse<T> for NameParser {
     type Production = <T as IR>::Name;
 
-    fn advance(&mut self, irgen: &mut T, window: DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: DecodeWindow) -> crate::ParseResult<T> {
         match self {
             NameParser::Init => Ok(Advancement::YieldTo(
                 window.offset(),
@@ -51,13 +51,11 @@ impl<T: IR> Parse<T> for NameParser {
         }
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError> {
-        let Self::Ready(_result) = self else {
+    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
+        let Self::Ready(result) = self else {
             unreachable!()
         };
 
-        todo!();
-        // let string = std::str::from_utf8(&result).map_err(Into::<ParseError>::into)?;
-        // Ok(Name(string.to_string()))
+        irgen.make_name(result).map_err(IRError).map_err(Into::into)
     }
 }
