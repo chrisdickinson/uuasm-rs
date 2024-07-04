@@ -15,7 +15,7 @@ pub enum TypeParser<T: IR> {
 }
 
 impl<T: IR> TypeParser<T> {
-    fn map_buffer_to_result_type(input_buf: &[u8]) -> Result<T::ResultType, ParseError> {
+    fn map_buffer_to_result_type(_input_buf: &[u8]) -> Result<T::ResultType, ParseError> {
         todo!()
         /*
         let mut types = Vec::with_capacity(input_buf.len());
@@ -39,7 +39,7 @@ impl<T: IR> TypeParser<T> {
 impl<T: IR> Parse<T> for TypeParser<T> {
     type Production = <T as IR>::Type;
 
-    fn advance(&mut self, irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
         match self {
             TypeParser::Init => {
                 match window.peek() {
@@ -55,7 +55,7 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                     return Err(ParseError::BadTypePrefix(tag));
                 }
 
-                return Ok(Advancement::YieldTo(
+                Ok(Advancement::YieldTo(
                     window.offset(),
                     AnyParser::LEBU32(LEBParser::default()),
                     |irgen, last_state, this_state| {
@@ -74,12 +74,12 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                             Self::InputSize(entry_count)
                         }))
                     },
-                ));
+                ))
             }
             TypeParser::InputSize(size) => {
                 let size = *size as usize;
 
-                return Ok(Advancement::YieldTo(
+                Ok(Advancement::YieldTo(
                     window.offset(),
                     AnyParser::Accumulate(Accumulator::new(size)),
                     |irgen, last_state, this_state| {
@@ -94,35 +94,33 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                         let result_type = Self::map_buffer_to_result_type(&input_buf)?;
                         Ok(AnyParser::Type(Self::Input(Some(result_type))))
                     },
-                ));
+                ))
             }
 
-            TypeParser::Input(_) => {
-                return Ok(Advancement::YieldTo(
-                    window.offset(),
-                    AnyParser::LEBU32(LEBParser::default()),
-                    |irgen, last_state, this_state| {
-                        let AnyParser::LEBU32(leb) = last_state else {
-                            unreachable!();
-                        };
+            TypeParser::Input(_) => Ok(Advancement::YieldTo(
+                window.offset(),
+                AnyParser::LEBU32(LEBParser::default()),
+                |irgen, last_state, this_state| {
+                    let AnyParser::LEBU32(leb) = last_state else {
+                        unreachable!();
+                    };
 
-                        let AnyParser::Type(Self::Input(result_type)) = this_state else {
-                            unreachable!();
-                        };
-                        let entry_count = leb.production(irgen)?;
+                    let AnyParser::Type(Self::Input(result_type)) = this_state else {
+                        unreachable!();
+                    };
+                    let entry_count = leb.production(irgen)?;
 
-                        Ok(AnyParser::Type(if entry_count == 0 {
-                            Self::Output(result_type, None)
-                        } else {
-                            Self::OutputSize(result_type, entry_count)
-                        }))
-                    },
-                ));
-            }
+                    Ok(AnyParser::Type(if entry_count == 0 {
+                        Self::Output(result_type, None)
+                    } else {
+                        Self::OutputSize(result_type, entry_count)
+                    }))
+                },
+            )),
             TypeParser::OutputSize(_, size) => {
                 let size = *size as usize;
 
-                return Ok(Advancement::YieldTo(
+                Ok(Advancement::YieldTo(
                     window.offset(),
                     AnyParser::Accumulate(Accumulator::new(size)),
                     |irgen, last_state, this_state| {
@@ -142,9 +140,9 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                             Some(result_type),
                         )))
                     },
-                ));
+                ))
             }
-            TypeParser::Output(_, _) => return Ok(Advancement::Ready(window.offset())),
+            TypeParser::Output(_, _) => Ok(Advancement::Ready(window.offset())),
         }
     }
 

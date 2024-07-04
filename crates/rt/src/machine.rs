@@ -11,8 +11,8 @@ use crate::memory_region::MemoryRegion;
 use crate::prelude::*;
 use uuasm_nodes::{
     BlockType, ByteVec, Code, CodeIdx, Data, Elem, Export, ExportDesc, Expr, FuncIdx, Global,
-    GlobalIdx, Import, ImportDesc, Instr, MemIdx, Module, ModuleBuilder, ModuleIntoInner, TableIdx,
-    TableType, Type, TypeIdx,
+    GlobalIdx, Import, ImportDesc, Instr, MemIdx, Module, ModuleBuilder, ModuleIntoInner, Name,
+    TableIdx, TableType, Type, TypeIdx,
 };
 
 use super::{
@@ -719,8 +719,8 @@ impl Machine {
                 };
 
                 imports.push(Import::new(
-                    modname.to_string(),
-                    export.name().to_string(),
+                    Name(modname.to_string()),
+                    Name(export.name().to_string()),
                     import_desc,
                 ));
                 exports.push(Export::new(export.name().to_string(), export_desc));

@@ -105,17 +105,20 @@ fn main() -> Result<(), Box<dyn Error>> {
 
         match &command.kind {
             CommandKind::Module { name, filename } => {
-
-
-                quote! {
-
-                }
-
-            },
+                todo!()
+            }
             CommandKind::Register { name, as_target } => todo!(),
             CommandKind::AssertReturn { action, expected } => todo!(),
-            CommandKind::AssertTrap { action, text, expected } => todo!(),
-            CommandKind::AssertExhaustion { action, text, expected } => todo!(),
+            CommandKind::AssertTrap {
+                action,
+                text,
+                expected,
+            } => todo!(),
+            CommandKind::AssertExhaustion {
+                action,
+                text,
+                expected,
+            } => todo!(),
             CommandKind::AssertMalformed { text, filename } => todo!(),
             CommandKind::AssertInvalid { text, filename } => todo!(),
             CommandKind::AssertUnlinkable { text, filename } => todo!(),

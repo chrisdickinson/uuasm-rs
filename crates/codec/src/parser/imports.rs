@@ -1,4 +1,4 @@
-use uuasm_nodes::{Import, ImportDesc, Name, IR};
+use uuasm_nodes::IR;
 
 use crate::{
     parser::{any::AnyParser, names::NameParser},

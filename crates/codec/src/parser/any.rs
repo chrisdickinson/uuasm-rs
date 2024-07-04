@@ -1,4 +1,4 @@
-use uuasm_nodes::{Module, IR};
+use uuasm_nodes::IR;
 
 use crate::{window::DecodeWindow, ExtractTarget, Parse, ParseError, ParseResult};
 
