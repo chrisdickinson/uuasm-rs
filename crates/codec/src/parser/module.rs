@@ -1,33 +1,33 @@
-use uuasm_nodes::{Module, ModuleBuilder, SectionType};
+use uuasm_nodes::IR;
 
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
 use super::{accumulator::Accumulator, any::AnyParser};
 
 #[derive(Default)]
-pub enum ModuleParser {
+pub enum ModuleParser<T: IR> {
     #[default]
     Magic,
-    TakeSection(Box<Option<ModuleBuilder>>),
-    Done(Box<Module>),
+    TakeSection(Vec<<T as IR>::Section>),
+    Done(Vec<<T as IR>::Section>),
 }
 
-impl Parse for ModuleParser {
-    type Production = Module;
+impl<T: IR> Parse<T> for ModuleParser<T> {
+    type Production = <T as IR>::Module;
 
-    fn advance(&mut self, window: DecodeWindow) -> ParseResult {
+    fn advance(&mut self, irgen: &mut T, window: DecodeWindow) -> ParseResult<T> {
         match self {
             ModuleParser::Magic => Ok(Advancement::YieldTo(
                 window.offset(),
                 AnyParser::Accumulate(Accumulator::new(8)),
-                |last_state, this_state| {
+                |irgen, last_state, this_state| {
                     let AnyParser::Accumulate(accum) = last_state else {
                         unreachable!()
                     };
                     let AnyParser::Module(_) = this_state else {
                         unreachable!()
                     };
-                    let production = accum.production()?;
+                    let production = accum.production(irgen)?;
 
                     let magic = &production[0..4];
                     if magic != b"\x00asm" {
@@ -43,17 +43,14 @@ impl Parse for ModuleParser {
                         )));
                     }
 
-                    Ok(AnyParser::Module(ModuleParser::TakeSection(Box::new(
-                        Some(ModuleBuilder::new()),
-                    ))))
+                    Ok(AnyParser::Module(ModuleParser::TakeSection(Vec::new())))
                 },
             )),
 
             ModuleParser::TakeSection(builder) => {
                 match window.peek() {
                     Err(ParseError::Expected(1)) => {
-                        let builder = builder.take().unwrap();
-                        *self = ModuleParser::Done(Box::new(builder.build()));
+                        *self = ModuleParser::Done(builder.split_off(0));
                         return Ok(Advancement::Ready(window.offset()));
                     }
                     Err(err) => return Err(err),
@@ -63,35 +60,18 @@ impl Parse for ModuleParser {
                 Ok(Advancement::YieldTo(
                     window.offset(),
                     AnyParser::Section(Default::default()),
-                    |last_state, this_state| {
+                    |irgen, last_state, this_state| {
                         let AnyParser::Section(section) = last_state else {
                             unreachable!();
                         };
-                        let AnyParser::Module(ModuleParser::TakeSection(mut builder_box)) =
-                            this_state
+                        let AnyParser::Module(ModuleParser::TakeSection(mut sections)) = this_state
                         else {
                             unreachable!();
                         };
 
-                        let builder = builder_box.take().unwrap();
-                        let section_type = section.production()?;
-                        builder_box.replace(match section_type {
-                            SectionType::Custom(xs) => builder.custom_section(xs),
-                            SectionType::Type(xs) => builder.type_section(xs),
-                            SectionType::Import(_) => todo!(),
-                            SectionType::Function(_) => todo!(),
-                            SectionType::Table(_) => todo!(),
-                            SectionType::Memory(_) => todo!(),
-                            SectionType::Global(_) => todo!(),
-                            SectionType::Export(_) => todo!(),
-                            SectionType::Start(_) => todo!(),
-                            SectionType::Element(_) => todo!(),
-                            SectionType::Code(_) => todo!(),
-                            SectionType::Data(_) => todo!(),
-                            SectionType::DataCount(_) => todo!(),
-                        });
+                        sections.push(section.production(irgen)?);
 
-                        Ok(AnyParser::Module(ModuleParser::TakeSection(builder_box)))
+                        Ok(AnyParser::Module(ModuleParser::TakeSection(sections)))
                     },
                 ))
             }
@@ -100,11 +80,12 @@ impl Parse for ModuleParser {
         }
     }
 
-    fn production(self) -> Result<Self::Production, ParseError> {
-        let ModuleParser::Done(module) = self else {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError> {
+        let ModuleParser::Done(_module) = self else {
             unreachable!();
         };
 
-        Ok(*module)
+        todo!()
+        // Ok(*module)
     }
 }

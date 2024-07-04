@@ -1,24 +1,22 @@
-use uuasm_nodes::SectionType;
+use uuasm_nodes::IR;
 
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
-use super::{
-    accumulator::Accumulator, any::AnyParser, leb::LEBParser, repeated::Repeated, types::TypeParser,
-};
+use super::{accumulator::Accumulator, any::AnyParser, leb::LEBParser, repeated::Repeated};
 
 #[derive(Default)]
-pub enum SectionParser {
+pub enum SectionParser<T: IR> {
     #[default]
     ParseType,
     ParseLength(u8),
     SectionContent(u8, u32),
-    Done(SectionType),
+    Done(T::Section),
 }
 
-impl Parse for SectionParser {
-    type Production = SectionType;
+impl<T: IR> Parse<T> for SectionParser<T> {
+    type Production = T::Section;
 
-    fn advance(&mut self, mut window: DecodeWindow) -> ParseResult {
+    fn advance(&mut self, irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
         loop {
             match self {
                 SectionParser::ParseType => {
@@ -29,7 +27,7 @@ impl Parse for SectionParser {
                     return Ok(Advancement::YieldTo(
                         window.offset(),
                         AnyParser::LEBU32(LEBParser::new()),
-                        |last_state, this_state| {
+                        |irgen, last_state, this_state| {
                             let AnyParser::LEBU32(leb) = last_state else {
                                 unreachable!()
                             };
@@ -38,7 +36,7 @@ impl Parse for SectionParser {
                                 unreachable!()
                             };
 
-                            let len = leb.production()?;
+                            let len = leb.production(irgen)?;
                             Ok(AnyParser::Section(SectionParser::SectionContent(kind, len)))
                         },
                     ));
@@ -50,32 +48,34 @@ impl Parse for SectionParser {
                         0x0 => Advancement::YieldTo(
                             window.offset(),
                             AnyParser::Accumulate(Accumulator::new(length)),
-                            |last_state, _| {
+                            |irgen, last_state, _| {
                                 let AnyParser::Accumulate(acc) = last_state else {
                                     unreachable!();
                                 };
 
-                                Ok(AnyParser::Section(SectionParser::Done(
-                                    SectionType::Custom(acc.production()?),
-                                )))
+                                todo!("get custom section from IR")
+                                //Ok(AnyParser::Section(SectionParser::Done(
+                                //    Section::Custom(acc.production(irgen)?),
+                                //)))
                             },
                         ),
 
                         0x1 => Advancement::YieldTo(
                             window.offset(),
-                            AnyParser::TypeSection(Repeated::<TypeParser>::default()),
-                            |last_state, _| {
+                            AnyParser::TypeSection(Repeated::default()),
+                            |irgen, last_state, _| {
                                 let AnyParser::TypeSection(ts) = last_state else {
                                     unreachable!();
                                 };
 
-                                Ok(AnyParser::Section(SectionParser::Done(SectionType::Type(
-                                    ts.production()?,
-                                ))))
+                                todo!("get type section from IR")
+                                // Ok(AnyParser::Section(SectionParser::Done(Section::Type(
+                                //     ts.production()?,
+                                // ))))
                             },
                         ),
 
-                        // 0x1 => SectionType::Type(Vec::<Type>::from_wasm_bytes(section)?.1),
+                        // 0x1 => Section::Type(Vec::<Type>::from_wasm_bytes(section)?.1),
                         unk => {
                             return Err(ParseError::SectionInvalid {
                                 kind: unk,
@@ -89,7 +89,7 @@ impl Parse for SectionParser {
         }
     }
 
-    fn production(self) -> Result<Self::Production, ParseError> {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError> {
         let Self::Done(section_type) = self else {
             unreachable!();
         };

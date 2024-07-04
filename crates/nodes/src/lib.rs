@@ -798,3 +798,145 @@ impl Module {
         self.datacount_section.as_ref().map(|xs| xs.inner)
     }
 }
+
+/*
+BlockType
+ByteVec
+Code
+CodeIdx
+Data
+DataIdx
+Elem
+ElemIdx
+Export
+ExportDesc
+Expr
+Func
+FuncIdx
+Global
+GlobalIdx
+GlobalType
+Import
+ImportDesc
+Instr
+LabelIdx
+Limits
+Local
+LocalIdx
+MemArg
+MemIdx
+MemType
+Module
+ModuleBuilder
+ModuleIntoInner
+Mutability
+Name
+NumType
+RefType
+ResultType
+Section
+SectionType
+TableIdx
+TableType
+Type
+TypeIdx
+ValType
+VecType
+*/
+
+pub trait IR {
+    type BlockType;
+    type ByteVec;
+    type Code;
+    type CodeIdx;
+    type Data;
+    type DataIdx;
+    type Elem;
+    type ElemIdx;
+    type Export;
+    type ExportDesc;
+    type Expr;
+    type Func;
+    type FuncIdx;
+    type Global;
+    type GlobalIdx;
+    type GlobalType;
+    type Import;
+    type ImportDesc;
+    type Instr;
+    type LabelIdx;
+    type Limits;
+    type Local;
+    type LocalIdx;
+    type MemArg;
+    type MemIdx;
+    type MemType;
+    type Module;
+    type ModuleBuilder;
+    type ModuleIntoInner;
+    type Mutability;
+    type Name;
+    type NumType;
+    type RefType;
+    type ResultType;
+    type Section;
+    type TableIdx;
+    type TableType;
+    type Type;
+    type TypeIdx;
+    type ValType;
+    type VecType;
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct DefaultIRGenerator {}
+
+impl DefaultIRGenerator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl IR for DefaultIRGenerator {
+    type BlockType = BlockType;
+    type ByteVec = ByteVec;
+    type Code = Code;
+    type CodeIdx = CodeIdx;
+    type Data = Data;
+    type DataIdx = DataIdx;
+    type Elem = Elem;
+    type ElemIdx = ElemIdx;
+    type Export = Export;
+    type ExportDesc = ExportDesc;
+    type Expr = Expr;
+    type Func = Func;
+    type FuncIdx = FuncIdx;
+    type Global = Global;
+    type GlobalIdx = GlobalIdx;
+    type GlobalType = GlobalType;
+    type Import = Import;
+    type ImportDesc = ImportDesc;
+    type Instr = Instr;
+    type LabelIdx = LabelIdx;
+    type Limits = Limits;
+    type Local = Local;
+    type LocalIdx = LocalIdx;
+    type MemArg = MemArg;
+    type MemIdx = MemIdx;
+    type MemType = MemType;
+    type Module = Module;
+    type ModuleBuilder = ModuleBuilder;
+    type ModuleIntoInner = ModuleIntoInner;
+    type Mutability = Mutability;
+    type Name = Name;
+    type NumType = NumType;
+    type RefType = RefType;
+    type ResultType = ResultType;
+    type Section = SectionType;
+    type TableIdx = TableIdx;
+    type TableType = TableType;
+    type Type = Type;
+    type TypeIdx = TypeIdx;
+    type ValType = ValType;
+    type VecType = VecType;
+}

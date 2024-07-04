@@ -1,3 +1,5 @@
+use uuasm_nodes::IR;
+
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
 pub struct Accumulator(usize, Box<[u8]>);
@@ -8,10 +10,10 @@ impl Accumulator {
     }
 }
 
-impl Parse for Accumulator {
+impl<T: IR> Parse<T> for Accumulator {
     type Production = Box<[u8]>;
 
-    fn advance(&mut self, mut window: DecodeWindow) -> ParseResult {
+    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
         let into = &mut self.1[self.0..];
         if !into.is_empty() {
             self.0 += window.take_n(into)?;
@@ -23,7 +25,7 @@ impl Parse for Accumulator {
         }
     }
 
-    fn production(self) -> Result<Self::Production, ParseError> {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError> {
         Ok(self.1)
     }
 }

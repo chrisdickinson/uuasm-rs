@@ -1,5 +1,7 @@
 use std::marker::PhantomData;
 
+use uuasm_nodes::IR;
+
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
 #[derive(Default)]
@@ -19,10 +21,10 @@ impl<T: num::Integer + Default> LEBParser<T> {
     }
 }
 
-impl<T: LEBConstants> Parse for LEBParser<T> {
-    type Production = T;
+impl<T: IR, C: LEBConstants> Parse<T> for LEBParser<C> {
+    type Production = C;
 
-    fn advance(&mut self, mut window: DecodeWindow) -> ParseResult {
+    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
         let mut next;
         let mut shift = self.offs * 7;
         while {
@@ -41,8 +43,8 @@ impl<T: LEBConstants> Parse for LEBParser<T> {
         Ok(Advancement::Ready(window.offset()))
     }
 
-    fn production(self) -> Result<Self::Production, ParseError> {
-        Ok(T::from_u64(self.repr))
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError> {
+        Ok(C::from_u64(self.repr))
     }
 }
 

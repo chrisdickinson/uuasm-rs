@@ -9,6 +9,7 @@ use crate::parser::any::AnyParser;
 pub use decoder::Decoder;
 
 use thiserror::Error;
+use uuasm_nodes::IR;
 use window::DecodeWindow;
 
 #[derive(Error, Debug, Clone)]
@@ -47,17 +48,21 @@ pub enum ParseError {
     InvalidProduction,
 }
 
-pub enum Advancement {
+pub enum Advancement<T: IR> {
     Ready(usize),
-    YieldTo(usize, AnyParser, ResumeFunc),
+    YieldTo(usize, AnyParser<T>, ResumeFunc<T>),
 }
 
-pub type ResumeFunc = fn(AnyParser, AnyParser) -> Result<AnyParser, ParseError>;
-pub type ParseResult = Result<Advancement, ParseError>;
+pub type ResumeFunc<T> = fn(&mut T, AnyParser<T>, AnyParser<T>) -> Result<AnyParser<T>, ParseError>;
+pub type ParseResult<T> = Result<Advancement<T>, ParseError>;
 
-pub trait Parse {
+pub trait Parse<T: IR> {
     type Production: Sized;
 
-    fn advance(&mut self, window: DecodeWindow) -> ParseResult;
-    fn production(self) -> Result<Self::Production, ParseError>;
+    fn advance(&mut self, irgen: &mut T, window: DecodeWindow) -> ParseResult<T>;
+    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError>;
+}
+
+pub trait ExtractTarget<T>: Sized {
+    fn extract(value: T) -> Result<Self, ParseError>;
 }

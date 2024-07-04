@@ -1,21 +1,23 @@
-use uuasm_nodes::{NumType, RefType, ResultType, Type, ValType, VecType};
+use uuasm_nodes::IR;
 
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
 use super::{accumulator::Accumulator, any::AnyParser, leb::LEBParser};
 
 #[derive(Default)]
-pub enum TypeParser {
+pub enum TypeParser<T: IR> {
     #[default]
     Init,
     InputSize(u32),
-    Input(Option<ResultType>),
-    OutputSize(Option<ResultType>, u32),
-    Output(Option<ResultType>, Option<ResultType>),
+    Input(Option<T::ResultType>),
+    OutputSize(Option<T::ResultType>, u32),
+    Output(Option<T::ResultType>, Option<T::ResultType>),
 }
 
-impl TypeParser {
-    fn map_buffer_to_result_type(input_buf: &[u8]) -> Result<ResultType, ParseError> {
+impl<T: IR> TypeParser<T> {
+    fn map_buffer_to_result_type(input_buf: &[u8]) -> Result<T::ResultType, ParseError> {
+        todo!()
+        /*
         let mut types = Vec::with_capacity(input_buf.len());
         for item in input_buf {
             types.push(match item {
@@ -30,13 +32,14 @@ impl TypeParser {
             })
         }
         Ok(ResultType(types.into()))
+        */
     }
 }
 
-impl Parse for TypeParser {
-    type Production = Type;
+impl<T: IR> Parse<T> for TypeParser<T> {
+    type Production = <T as IR>::Type;
 
-    fn advance(&mut self, mut window: DecodeWindow) -> ParseResult {
+    fn advance(&mut self, irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
         match self {
             TypeParser::Init => {
                 match window.peek() {
@@ -55,7 +58,7 @@ impl Parse for TypeParser {
                 return Ok(Advancement::YieldTo(
                     window.offset(),
                     AnyParser::LEBU32(LEBParser::default()),
-                    |last_state, this_state| {
+                    |irgen, last_state, this_state| {
                         let AnyParser::LEBU32(leb) = last_state else {
                             unreachable!();
                         };
@@ -64,7 +67,7 @@ impl Parse for TypeParser {
                             unreachable!();
                         };
 
-                        let entry_count = leb.production()?;
+                        let entry_count = leb.production(irgen)?;
                         Ok(AnyParser::Type(if entry_count == 0 {
                             Self::Input(None)
                         } else {
@@ -79,7 +82,7 @@ impl Parse for TypeParser {
                 return Ok(Advancement::YieldTo(
                     window.offset(),
                     AnyParser::Accumulate(Accumulator::new(size)),
-                    |last_state, this_state| {
+                    |irgen, last_state, this_state| {
                         let AnyParser::Accumulate(accum) = last_state else {
                             unreachable!()
                         };
@@ -87,8 +90,8 @@ impl Parse for TypeParser {
                             unreachable!();
                         };
 
-                        let input_buf = accum.production()?;
-                        let result_type = TypeParser::map_buffer_to_result_type(&input_buf)?;
+                        let input_buf = accum.production(irgen)?;
+                        let result_type = Self::map_buffer_to_result_type(&input_buf)?;
                         Ok(AnyParser::Type(Self::Input(Some(result_type))))
                     },
                 ));
@@ -98,7 +101,7 @@ impl Parse for TypeParser {
                 return Ok(Advancement::YieldTo(
                     window.offset(),
                     AnyParser::LEBU32(LEBParser::default()),
-                    |last_state, this_state| {
+                    |irgen, last_state, this_state| {
                         let AnyParser::LEBU32(leb) = last_state else {
                             unreachable!();
                         };
@@ -106,7 +109,7 @@ impl Parse for TypeParser {
                         let AnyParser::Type(Self::Input(result_type)) = this_state else {
                             unreachable!();
                         };
-                        let entry_count = leb.production()?;
+                        let entry_count = leb.production(irgen)?;
 
                         Ok(AnyParser::Type(if entry_count == 0 {
                             Self::Output(result_type, None)
@@ -122,7 +125,7 @@ impl Parse for TypeParser {
                 return Ok(Advancement::YieldTo(
                     window.offset(),
                     AnyParser::Accumulate(Accumulator::new(size)),
-                    |last_state, this_state| {
+                    |irgen, last_state, this_state| {
                         let AnyParser::Accumulate(accum) = last_state else {
                             unreachable!()
                         };
@@ -131,8 +134,8 @@ impl Parse for TypeParser {
                             unreachable!();
                         };
 
-                        let output_buf = accum.production()?;
-                        let result_type = TypeParser::map_buffer_to_result_type(&output_buf)?;
+                        let output_buf = accum.production(irgen)?;
+                        let result_type = Self::map_buffer_to_result_type(&output_buf)?;
 
                         Ok(AnyParser::Type(Self::Output(
                             input_result_type,
@@ -145,14 +148,15 @@ impl Parse for TypeParser {
         }
     }
 
-    fn production(self) -> Result<Self::Production, ParseError> {
-        let Self::Output(params, returns) = self else {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError> {
+        let Self::Output(_params, _returns) = self else {
             unreachable!();
         };
 
-        Ok(Type(
+        todo!()
+        /* Ok(Type(
             params.unwrap_or_default(),
             returns.unwrap_or_default(),
-        ))
+        ))*/
     }
 }

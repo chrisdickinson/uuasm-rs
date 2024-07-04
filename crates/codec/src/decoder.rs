@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use uuasm_nodes::Module;
+use uuasm_nodes::{DefaultIRGenerator, IR};
 
 use crate::{
     parser::{
@@ -8,7 +8,7 @@ use crate::{
         module::ModuleParser,
     },
     window::DecodeWindow,
-    Advancement, Parse, ParseError, ResumeFunc,
+    Advancement, ExtractTarget, Parse, ParseError, ResumeFunc,
 };
 
 /*
@@ -17,29 +17,38 @@ use crate::{
  * item processes them. If it is complete, it returns control to the next stack state along with
  * the production. The stack state can `take(N)`, `peek(N)`, `skip(N)`.
  */
-pub struct Decoder<T: TryFrom<AnyProduction>> {
-    state: Vec<(AnyParser, ResumeFunc)>,
+pub struct Decoder<T: IR, Target: ExtractTarget<AnyProduction<T>>> {
+    state: Vec<(AnyParser<T>, ResumeFunc<T>)>,
     position: usize,
-    _marker: PhantomData<T>,
+    irgen: T,
+    _marker: PhantomData<Target>,
 }
 
-fn noop_resume(_last_state: AnyParser, _this_state: AnyParser) -> Result<AnyParser, ParseError> {
+fn noop_resume<T: IR>(
+    _irgen: &mut T,
+    _last_state: AnyParser<T>,
+    _this_state: AnyParser<T>,
+) -> Result<AnyParser<T>, ParseError> {
     Err(ParseError::InvalidState("this state should be unreachable"))
 }
 
-impl Default for Decoder<Module> {
+impl Default for Decoder<DefaultIRGenerator, <DefaultIRGenerator as IR>::Module> {
     fn default() -> Self {
-        Self::new(AnyParser::Module(ModuleParser::default()))
+        Self::new(
+            AnyParser::Module(ModuleParser::default()),
+            DefaultIRGenerator::default(),
+        )
     }
 }
 
-impl<T: TryFrom<AnyProduction, Error = ParseError>> Decoder<T> {
-    pub fn new(parser: AnyParser) -> Self {
+impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
+    pub fn new(parser: AnyParser<T>, irgen: T) -> Self {
         let mut state = Vec::with_capacity(16);
-        state.push((parser, noop_resume as ResumeFunc));
+        state.push((parser, noop_resume as ResumeFunc<T>));
         Self {
             state,
             position: 0,
+            irgen,
             _marker: PhantomData,
         }
     }
@@ -48,19 +57,20 @@ impl<T: TryFrom<AnyProduction, Error = ParseError>> Decoder<T> {
         &'_ mut self,
         chunk: &'a [u8],
         eos: bool,
-    ) -> Result<(T, &'a [u8]), ParseError> {
+    ) -> Result<(Target, &'a [u8]), ParseError> {
         let mut window = DecodeWindow::new(chunk, 0, self.position, eos);
         loop {
             let (mut state, resume) = self.state.pop().unwrap();
-            let offset = match state.advance(window) {
+            let offset = match state.advance(&mut self.irgen, window) {
                 Ok(Advancement::Ready(offset)) => {
                     if self.state.is_empty() {
-                        let output = state.production()?.try_into()?;
+                        let output = Target::extract(state.production(&mut self.irgen)?)?;
                         return Ok((output, &chunk[offset..]));
                     }
 
                     let (receiver, last_resume) = self.state.pop().unwrap();
-                    self.state.push((resume(state, receiver)?, last_resume));
+                    self.state
+                        .push((resume(&mut self.irgen, state, receiver)?, last_resume));
                     offset
                 }
 
@@ -78,7 +88,7 @@ impl<T: TryFrom<AnyProduction, Error = ParseError>> Decoder<T> {
 
                 Err(e) => {
                     self.state
-                        .push((AnyParser::Failed(e.clone()), noop_resume as ResumeFunc));
+                        .push((AnyParser::Failed(e.clone()), noop_resume as ResumeFunc<T>));
                     return Err(e);
                 }
             };
@@ -86,11 +96,11 @@ impl<T: TryFrom<AnyProduction, Error = ParseError>> Decoder<T> {
         }
     }
 
-    pub fn write<'a>(&'_ mut self, chunk: &'a [u8]) -> Result<(T, &'a [u8]), ParseError> {
+    pub fn write<'a>(&'_ mut self, chunk: &'a [u8]) -> Result<(Target, &'a [u8]), ParseError> {
         self.write_inner(chunk, false)
     }
 
-    pub fn flush(&mut self) -> Result<T, ParseError> {
+    pub fn flush(&mut self) -> Result<Target, ParseError> {
         let (output, _) = self.write_inner(&[], true)?;
         Ok(output)
     }

@@ -1,18 +1,21 @@
+use uuasm_nodes::IR;
+
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
 use super::{any::AnyParser, leb::LEBParser};
 
-pub enum Repeated<P: Parse> {
+pub enum Repeated<T: IR, P: Parse<T>> {
     Init,
     Collecting {
-        result: Vec<P::Production>,
+        result: Vec<<P as Parse<T>>::Production>,
         expected: usize,
     },
 }
 
-impl<P> Default for Repeated<P>
+impl<T, P> Default for Repeated<T, P>
 where
-    P: Parse,
+    T: IR,
+    P: Parse<T>,
 {
     fn default() -> Self {
         Self::Init
@@ -26,24 +29,25 @@ where
 //   us to grab the production.
 // - There must exist a fallible conversion from AnyParser into the outer parser, so we can extract
 //   our state.
-impl<P> Parse for Repeated<P>
+impl<T, P> Parse<T> for Repeated<T, P>
 where
-    Self: TryFrom<AnyParser, Error = ParseError>,
-    P: Parse + Default + TryFrom<AnyParser, Error = ParseError>,
-    AnyParser: From<P> + From<Self>,
+    T: IR,
+    Self: TryFrom<AnyParser<T>, Error = ParseError>,
+    P: Parse<T> + Default + TryFrom<AnyParser<T>, Error = ParseError>,
+    AnyParser<T>: From<P> + From<Self>,
 {
     type Production = Box<[P::Production]>;
 
-    fn advance(&mut self, window: DecodeWindow) -> ParseResult {
+    fn advance(&mut self, irgen: &mut T, window: DecodeWindow) -> ParseResult<T> {
         if let Self::Init = self {
             return Ok(Advancement::YieldTo(
                 window.offset(),
                 AnyParser::LEBU32(LEBParser::default()),
-                |last_state, _| {
+                |irgen, last_state, _| {
                     let AnyParser::LEBU32(v) = last_state else {
                         unreachable!();
                     };
-                    let expected = v.production()? as usize;
+                    let expected = v.production(irgen)? as usize;
                     Ok(Self::Collecting {
                         result: Vec::with_capacity(expected),
                         expected,
@@ -64,9 +68,9 @@ where
         Ok(Advancement::YieldTo(
             window.offset(),
             P::default().into(),
-            |last_state, this_state| {
+            |irgen, last_state, this_state| {
                 let last_parser: P = last_state.try_into()?;
-                let last_production = last_parser.production()?;
+                let last_production = last_parser.production(irgen)?;
                 let Self::Collecting {
                     mut result,
                     expected,
@@ -80,7 +84,7 @@ where
         ))
     }
 
-    fn production(self) -> Result<Self::Production, crate::ParseError> {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, crate::ParseError> {
         let Self::Collecting { result, expected } = self else {
             unreachable!()
         };
