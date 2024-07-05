@@ -56,6 +56,6 @@ impl<T: IR> Parse<T> for NameParser {
             unreachable!()
         };
 
-        irgen.make_name(result).map_err(IRError).map_err(Into::into)
+        Ok(irgen.make_name(result).map_err(IRError)?)
     }
 }

@@ -2,7 +2,7 @@ use uuasm_nodes::IR;
 
 use crate::{
     window::{AdvancementError, DecodeWindow},
-    Advancement, Parse, ParseError, ParseResult,
+    Advancement, IRError, Parse, ParseError, ParseResult,
 };
 
 use super::{accumulator::Accumulator, any::AnyParser};
@@ -83,12 +83,11 @@ impl<T: IR> Parse<T> for ModuleParser<T> {
         }
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
-        let ModuleParser::Done(_module) = self else {
+    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
+        let ModuleParser::Done(sections) = self else {
             unreachable!();
         };
 
-        todo!()
-        // Ok(*module)
+        Ok(irgen.make_module(sections).map_err(IRError)?)
     }
 }

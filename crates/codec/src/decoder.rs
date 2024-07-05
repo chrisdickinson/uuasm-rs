@@ -119,7 +119,7 @@ mod test {
 
         let preamble = b"\x00asm\x01\0\0\0";
         let custom = b"\x00\x04abcd";
-        let types = b"\x01\x06\x60\x02\x7f\x7f\x01\x7f";
+        let types = b"\x01\x07\x02\x60\x02\x7f\x7f\x01\x7f\x60\0\x01\x7f";
 
         parser.write(preamble);
         parser.write(custom);

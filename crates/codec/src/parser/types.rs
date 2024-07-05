@@ -2,7 +2,7 @@ use uuasm_nodes::IR;
 
 use crate::{
     window::{AdvancementError, DecodeWindow},
-    Advancement, Parse, ParseError, ParseResult,
+    Advancement, IRError, Parse, ParseError, ParseResult,
 };
 
 use super::{accumulator::Accumulator, any::AnyParser, leb::LEBParser};
@@ -17,42 +17,12 @@ pub enum TypeParser<T: IR> {
     Output(Option<T::ResultType>, Option<T::ResultType>),
 }
 
-impl<T: IR> TypeParser<T> {
-    fn map_buffer_to_result_type(_input_buf: &[u8]) -> Result<T::ResultType, ParseError<T::Error>> {
-        todo!()
-        /*
-        let mut types = Vec::with_capacity(input_buf.len());
-        for item in input_buf {
-            types.push(match item {
-                0x6f => ValType::RefType(RefType::ExternRef),
-                0x70 => ValType::RefType(RefType::FuncRef),
-                0x7b => ValType::VecType(VecType::V128),
-                0x7c => ValType::NumType(NumType::F64),
-                0x7d => ValType::NumType(NumType::F32),
-                0x7e => ValType::NumType(NumType::I64),
-                0x7f => ValType::NumType(NumType::I32),
-                byte => return Err(ParseError::BadType(*byte)),
-            })
-        }
-        Ok(ResultType(types.into()))
-        */
-    }
-}
-
 impl<T: IR> Parse<T> for TypeParser<T> {
     type Production = <T as IR>::Type;
 
     fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
         match self {
             TypeParser::Init => {
-                match window.peek() {
-                    Err(AdvancementError::Expected(1)) => {
-                        return Ok(Advancement::Ready(window.offset()));
-                    }
-                    Err(err) => return Err(err.into()),
-                    _ => {}
-                }
-
                 let tag = window.take()?;
                 if tag != 0x60 {
                     return Err(ParseError::BadTypePrefix(tag));
@@ -94,7 +64,7 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                         };
 
                         let input_buf = accum.production(irgen)?;
-                        let result_type = Self::map_buffer_to_result_type(&input_buf)?;
+                        let result_type = irgen.make_result_type(&input_buf).map_err(IRError)?;
                         Ok(AnyParser::Type(Self::Input(Some(result_type))))
                     },
                 ))
@@ -120,6 +90,7 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                     }))
                 },
             )),
+
             TypeParser::OutputSize(_, size) => {
                 let size = *size as usize;
 
@@ -136,7 +107,7 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                         };
 
                         let output_buf = accum.production(irgen)?;
-                        let result_type = Self::map_buffer_to_result_type(&output_buf)?;
+                        let result_type = irgen.make_result_type(&output_buf).map_err(IRError)?;
 
                         Ok(AnyParser::Type(Self::Output(
                             input_result_type,
@@ -149,15 +120,11 @@ impl<T: IR> Parse<T> for TypeParser<T> {
         }
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
-        let Self::Output(_params, _returns) = self else {
+    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
+        let Self::Output(params, returns) = self else {
             unreachable!();
         };
 
-        todo!()
-        /* Ok(Type(
-            params.unwrap_or_default(),
-            returns.unwrap_or_default(),
-        ))*/
+        Ok(irgen.make_func_type(params, returns).map_err(IRError)?)
     }
 }

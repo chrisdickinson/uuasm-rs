@@ -17,7 +17,7 @@ pub enum AnyParser<T: IR> {
     Failed(ParseError<T::Error>),
 
     Name(NameParser),
-    ImportDesc(ImportDescParser),
+    ImportDesc(ImportDescParser<T>),
     Import(ImportParser<T>),
     ImportSection(Repeated<T, ImportParser<T>>),
 
@@ -90,7 +90,7 @@ pub enum AnyProduction<T: IR> {
     LEBU64(<LEBParser<u64> as Parse<T>>::Production),
 
     Name(<NameParser as Parse<T>>::Production),
-    ImportDesc(<ImportDescParser as Parse<T>>::Production),
+    ImportDesc(<ImportDescParser<T> as Parse<T>>::Production),
     Import(<ImportParser<T> as Parse<T>>::Production),
     ImportSection(<Repeated<T, ImportParser<T>> as Parse<T>>::Production),
 

@@ -27,6 +27,9 @@ pub enum ParseError<T: Clone + std::fmt::Debug + std::error::Error> {
     #[error("Bad type (got {0:X}H)")]
     BadType(u8),
 
+    #[error("Bad import descriptor type (got {0:X}H)")]
+    BadImportDesc(u8),
+
     #[error("Unexpected version {0}")]
     UnexpectedVersion(u32),
 

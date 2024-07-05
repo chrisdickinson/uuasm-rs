@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
+use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseError, ParseResult};
 
 use super::{accumulator::Accumulator, any::AnyParser, leb::LEBParser, repeated::Repeated};
 
@@ -48,30 +48,29 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                         0x0 => Advancement::YieldTo(
                             window.offset(),
                             AnyParser::Accumulate(Accumulator::new(length)),
-                            |_irgen, last_state, _| {
-                                let AnyParser::Accumulate(_acc) = last_state else {
+                            |irgen, last_state, _| {
+                                let AnyParser::Accumulate(acc) = last_state else {
                                     unreachable!();
                                 };
 
-                                todo!("get custom section from IR")
-                                //Ok(AnyParser::Section(SectionParser::Done(
-                                //    Section::Custom(acc.production(irgen)?),
-                                //)))
+                                let bytes = acc.production(irgen)?;
+                                Ok(AnyParser::Section(SectionParser::Done(
+                                    irgen.make_custom_section(bytes).map_err(IRError)?,
+                                )))
                             },
                         ),
 
                         0x1 => Advancement::YieldTo(
                             window.offset(),
                             AnyParser::TypeSection(Repeated::default()),
-                            |_irgen, last_state, _| {
-                                let AnyParser::TypeSection(_ts) = last_state else {
+                            |irgen, last_state, _| {
+                                let AnyParser::TypeSection(ts) = last_state else {
                                     unreachable!();
                                 };
 
-                                todo!("get type section from IR")
-                                // Ok(AnyParser::Section(SectionParser::Done(Section::Type(
-                                //     ts.production()?,
-                                // ))))
+                                let items = ts.production(irgen)?;
+                                let section = irgen.make_type_section(items).map_err(IRError)?;
+                                Ok(AnyParser::Section(SectionParser::Done(section)))
                             },
                         ),
 
