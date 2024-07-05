@@ -539,7 +539,7 @@ pub enum Data {
 pub enum SectionType {
     Custom(Box<[u8]>),
     Type(Box<[Type]>),
-    Import(Vec<Import>),
+    Import(Box<[Import]>),
     Function(Vec<TypeIdx>),
     Table(Vec<TableType>),
     Memory(Vec<MemType>),
@@ -562,7 +562,7 @@ pub struct Section<T: Debug + PartialEq + Clone> {
 pub struct Module {
     pub(crate) custom_sections: Vec<Section<Box<[u8]>>>,
     pub(crate) type_section: Option<Section<Box<[Type]>>>,
-    pub(crate) import_section: Option<Section<Vec<Import>>>,
+    pub(crate) import_section: Option<Section<Box<[Import]>>>,
     pub(crate) function_section: Option<Section<Vec<TypeIdx>>>,
     pub(crate) table_section: Option<Section<Vec<TableType>>>,
     pub(crate) memory_section: Option<Section<Vec<MemType>>>,
@@ -580,7 +580,7 @@ pub struct Module {
 pub struct ModuleIntoInner {
     pub custom_sections: Vec<Section<Box<[u8]>>>,
     pub type_section: Option<Section<Box<[Type]>>>,
-    pub import_section: Option<Section<Vec<Import>>>,
+    pub import_section: Option<Section<Box<[Import]>>>,
     pub function_section: Option<Section<Vec<TypeIdx>>>,
     pub table_section: Option<Section<Vec<TableType>>>,
     pub memory_section: Option<Section<Vec<MemType>>>,
@@ -621,7 +621,7 @@ impl ModuleBuilder {
         self.index += 1;
         self
     }
-    pub fn import_section(mut self, xs: Vec<Import>) -> Self {
+    pub fn import_section(mut self, xs: Box<[Import]>) -> Self {
         self.inner.import_section.replace(Section {
             inner: xs,
             index: self.index,
@@ -758,7 +758,7 @@ impl Module {
     }
 
     pub fn import_section(&self) -> Option<&[Import]> {
-        self.import_section.as_ref().map(|xs| xs.inner.as_slice())
+        self.import_section.as_ref().map(|xs| &*xs.inner)
     }
 
     pub fn function_section(&self) -> Option<&[TypeIdx]> {
@@ -801,51 +801,6 @@ impl Module {
     }
 }
 
-/*
-BlockType
-ByteVec
-Code
-CodeIdx
-Data
-DataIdx
-Elem
-ElemIdx
-Export
-ExportDesc
-Expr
-Func
-FuncIdx
-Global
-GlobalIdx
-GlobalType
-Import
-ImportDesc
-Instr
-LabelIdx
-Limits
-Local
-LocalIdx
-MemArg
-MemIdx
-MemType
-Module
-ModuleBuilder
-ModuleIntoInner
-Mutability
-Name
-NumType
-RefType
-ResultType
-Section
-SectionType
-TableIdx
-TableType
-Type
-TypeIdx
-ValType
-VecType
-*/
-
 pub trait IR {
     type Error: Clone + Error + 'static;
 
@@ -874,11 +829,7 @@ pub trait IR {
     type LocalIdx;
     type MemArg;
     type MemIdx;
-    type MemType;
     type Module;
-    type ModuleBuilder;
-    type ModuleIntoInner;
-    type Mutability;
     type Name;
     type NumType;
     type RefType;
@@ -890,17 +841,80 @@ pub trait IR {
     type TypeIdx;
     type ValType;
     type VecType;
+
     fn make_name(&mut self, data: Box<[u8]>) -> Result<Self::Name, Self::Error>;
+    fn make_custom_section(&mut self, data: Box<[u8]>) -> Result<Self::Section, Self::Error>;
+    fn make_type_section(&mut self, data: Box<[Self::Type]>) -> Result<Self::Section, Self::Error>;
+    fn make_import_section(
+        &mut self,
+        data: Box<[Self::Import]>,
+    ) -> Result<Self::Section, Self::Error>;
+    fn make_val_type(&mut self, data: u8) -> Result<Self::ValType, Self::Error>;
+    fn make_global_type(
+        &mut self,
+        valtype: Self::ValType,
+        is_mutable: bool,
+    ) -> Result<Self::GlobalType, Self::Error>;
+    fn make_table_type(
+        &mut self,
+        reftype_candidate: u8,
+        limits: Self::Limits,
+    ) -> Result<Self::TableType, Self::Error>;
+    fn make_result_type(&mut self, data: &[u8]) -> Result<Self::ResultType, Self::Error>;
+    fn make_type_index(&mut self, candidate: u32) -> Result<Self::TypeIdx, Self::Error>;
+    fn make_func_type(
+        &mut self,
+        params: Option<Self::ResultType>,
+        returns: Option<Self::ResultType>,
+    ) -> Result<Self::Type, Self::Error>;
+    fn make_import_desc_func(
+        &mut self,
+        type_idx: Self::TypeIdx,
+    ) -> Result<Self::ImportDesc, Self::Error>;
+    fn make_import_desc_global(
+        &mut self,
+        global_type: Self::GlobalType,
+    ) -> Result<Self::ImportDesc, Self::Error>;
+    fn make_import_desc_table(
+        &mut self,
+        global_type: Self::TableType,
+    ) -> Result<Self::ImportDesc, Self::Error>;
+    fn make_import_desc_memtype(
+        &mut self,
+        global_type: Self::Limits,
+    ) -> Result<Self::ImportDesc, Self::Error>;
+    fn make_import(
+        &mut self,
+        modname: Self::Name,
+        name: Self::Name,
+        desc: Self::ImportDesc,
+    ) -> Result<Self::Import, Self::Error>;
+    fn make_module(&mut self, sections: Vec<Self::Section>) -> Result<Self::Module, Self::Error>;
 }
 
 #[derive(Clone, Debug, Error)]
 pub enum DefaultIRGeneratorError {
     #[error("Invalid name: {0}")]
     InvalidName(#[from] std::str::Utf8Error),
+
+    #[error("Invalid type (got {0:X}H)")]
+    InvalidType(u8),
+
+    #[error("Invalid type index (got {0}; max is {1})")]
+    InvalidTypeIndex(u32, u32),
+
+    #[error("Types out of order (got section type {0} after type {1})")]
+    InvalidSectionOrder(u32, u32),
+
+    #[error("Invalid reference type {0}")]
+    InvalidRefType(u8),
 }
 
 #[derive(Default, Clone, Debug)]
-pub struct DefaultIRGenerator {}
+pub struct DefaultIRGenerator {
+    max_valid_type_index: u32,
+    last_section_discrim: u32,
+}
 
 impl DefaultIRGenerator {
     pub fn new() -> Self {
@@ -936,11 +950,7 @@ impl IR for DefaultIRGenerator {
     type LocalIdx = LocalIdx;
     type MemArg = MemArg;
     type MemIdx = MemIdx;
-    type MemType = MemType;
     type Module = Module;
-    type ModuleBuilder = ModuleBuilder;
-    type ModuleIntoInner = ModuleIntoInner;
-    type Mutability = Mutability;
     type Name = Name;
     type NumType = NumType;
     type RefType = RefType;
@@ -956,5 +966,170 @@ impl IR for DefaultIRGenerator {
     fn make_name(&mut self, data: Box<[u8]>) -> Result<Self::Name, Self::Error> {
         let string = std::str::from_utf8(&data)?;
         Ok(Name(string.to_string()))
+    }
+
+    #[inline]
+    fn make_val_type(&mut self, item: u8) -> Result<Self::ValType, Self::Error> {
+        Ok(match item {
+            0x6f => ValType::RefType(RefType::ExternRef),
+            0x70 => ValType::RefType(RefType::FuncRef),
+            0x7b => ValType::VecType(VecType::V128),
+            0x7c => ValType::NumType(NumType::F64),
+            0x7d => ValType::NumType(NumType::F32),
+            0x7e => ValType::NumType(NumType::I64),
+            0x7f => ValType::NumType(NumType::I32),
+            byte => return Err(DefaultIRGeneratorError::InvalidType(byte)),
+        })
+    }
+
+    fn make_global_type(
+        &mut self,
+        valtype: Self::ValType,
+        is_mutable: bool,
+    ) -> Result<Self::GlobalType, Self::Error> {
+        Ok(GlobalType(
+            valtype,
+            if is_mutable {
+                Mutability::Variable
+            } else {
+                Mutability::Const
+            },
+        ))
+    }
+
+    fn make_table_type(
+        &mut self,
+        reftype_candidate: u8,
+        limits: Self::Limits,
+    ) -> Result<Self::TableType, Self::Error> {
+        if let ValType::RefType(rt) = self.make_val_type(reftype_candidate)? {
+            Ok(TableType(rt, limits))
+        } else {
+            Err(DefaultIRGeneratorError::InvalidRefType(reftype_candidate))
+        }
+    }
+
+    fn make_result_type(&mut self, data: &[u8]) -> Result<Self::ResultType, Self::Error> {
+        let mut types = Vec::with_capacity(data.len());
+        for item in data {
+            types.push(self.make_val_type(*item)?);
+        }
+        Ok(ResultType(types.into()))
+    }
+
+    fn make_custom_section(&mut self, data: Box<[u8]>) -> Result<Self::Section, Self::Error> {
+        Ok(SectionType::Custom(data))
+    }
+
+    fn make_type_section(&mut self, data: Box<[Type]>) -> Result<Self::Section, Self::Error> {
+        if self.last_section_discrim > 0 {
+            return Err(DefaultIRGeneratorError::InvalidSectionOrder(
+                1,
+                self.last_section_discrim,
+            ));
+        }
+
+        self.max_valid_type_index = data.len() as u32;
+        self.last_section_discrim = 1;
+        Ok(SectionType::Type(data))
+    }
+
+    fn make_import_section(
+        &mut self,
+        data: Box<[Self::Import]>,
+    ) -> Result<Self::Section, Self::Error> {
+        if self.last_section_discrim > 1 {
+            return Err(DefaultIRGeneratorError::InvalidSectionOrder(
+                2,
+                self.last_section_discrim,
+            ));
+        }
+        self.last_section_discrim = 2;
+        Ok(SectionType::Import(data))
+    }
+
+    fn make_type_index(&mut self, candidate: u32) -> Result<Self::TypeIdx, Self::Error> {
+        if candidate < self.max_valid_type_index {
+            Ok(TypeIdx(candidate))
+        } else {
+            Err(DefaultIRGeneratorError::InvalidTypeIndex(
+                candidate,
+                self.max_valid_type_index,
+            ))
+        }
+    }
+
+    fn make_func_type(
+        &mut self,
+        params: Option<Self::ResultType>,
+        returns: Option<Self::ResultType>,
+    ) -> Result<Self::Type, Self::Error> {
+        Ok(Type(
+            params.unwrap_or_default(),
+            returns.unwrap_or_default(),
+        ))
+    }
+
+    fn make_import_desc_func(
+        &mut self,
+        type_idx: Self::TypeIdx,
+    ) -> Result<Self::ImportDesc, Self::Error> {
+        Ok(ImportDesc::Func(type_idx))
+    }
+
+    fn make_import_desc_global(
+        &mut self,
+        global_type: Self::GlobalType,
+    ) -> Result<Self::ImportDesc, Self::Error> {
+        Ok(ImportDesc::Global(global_type))
+    }
+
+    fn make_import_desc_memtype(
+        &mut self,
+        mem_type: Self::Limits,
+    ) -> Result<Self::ImportDesc, Self::Error> {
+        Ok(ImportDesc::Mem(MemType(mem_type)))
+    }
+
+    fn make_import_desc_table(
+        &mut self,
+        table_type: Self::TableType,
+    ) -> Result<Self::ImportDesc, Self::Error> {
+        Ok(ImportDesc::Table(table_type))
+    }
+
+    fn make_import(
+        &mut self,
+        modname: Self::Name,
+        name: Self::Name,
+        desc: Self::ImportDesc,
+    ) -> Result<Self::Import, Self::Error> {
+        Ok(Import {
+            r#mod: modname,
+            nm: name,
+            desc,
+        })
+    }
+
+    fn make_module(&mut self, sections: Vec<Self::Section>) -> Result<Self::Module, Self::Error> {
+        let mut builder = ModuleBuilder::new();
+        for section in sections {
+            builder = match section {
+                SectionType::Custom(xs) => builder.custom_section(xs),
+                SectionType::Type(xs) => builder.type_section(xs),
+                SectionType::Import(xs) => builder.import_section(xs),
+                SectionType::Function(xs) => builder.function_section(xs),
+                SectionType::Table(xs) => builder.table_section(xs),
+                SectionType::Memory(xs) => builder.memory_section(xs),
+                SectionType::Global(xs) => builder.global_section(xs),
+                SectionType::Export(xs) => builder.export_section(xs),
+                SectionType::Start(xs) => builder.start_section(xs),
+                SectionType::Element(xs) => builder.element_section(xs),
+                SectionType::Code(xs) => builder.code_section(xs),
+                SectionType::Data(xs) => builder.data_section(xs),
+                SectionType::DataCount(xs) => builder.datacount_section(xs),
+            };
+        }
+        Ok(builder.build())
     }
 }

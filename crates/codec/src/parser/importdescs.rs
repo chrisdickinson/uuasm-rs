@@ -18,7 +18,7 @@ pub enum ImportDescParser<T: IR> {
 impl<T: IR> Parse<T> for ImportDescParser<T> {
     type Production = <T as IR>::ImportDesc;
 
-    fn advance(&mut self, irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
         match self {
             Self::Init => {
                 let kind = window.take()?;
@@ -29,7 +29,7 @@ impl<T: IR> Parse<T> for ImportDescParser<T> {
                     0x3 => Self::ImportGlobal,
                     unk => return Err(ParseError::BadImportDesc(unk)),
                 };
-                return self.advance(irgen, window);
+                self.advance(_irgen, window)
             }
 
             Self::ImportFunc => Ok(Advancement::YieldTo(
@@ -49,54 +49,63 @@ impl<T: IR> Parse<T> for ImportDescParser<T> {
                 },
             )),
 
-            Self::ImportTable => todo!(),
-            Self::ImportGlobal => todo!(),
-            Self::ImportMemory => todo!(),
-            Self::Ready(_) => todo!(),
-        }
-    }
-
-    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
-        todo!()
-    }
-}
-
-/*
-impl<T: IR> Parse<T> for ImportDescParser {
-    type Production = <T as IR>::ImportDesc;
-
-    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
-
-
-
-        if self.desc.is_some() {
-            return Ok(Advancement::Ready(window.offset()));
-        }
-
-        Ok(match window.take()? {
-            0x00 => Advancement::YieldTo(
+            Self::ImportTable => Ok(Advancement::YieldTo(
                 window.offset(),
-                AnyParser::LEBU32(LEBParser::default()),
+                AnyParser::TableType(Default::default()),
                 |irgen, last_state, _| {
-                    let AnyParser::LEBU32(parser) = last_state else {
+                    let AnyParser::TableType(parser) = last_state else {
                         unreachable!();
                     };
 
-                    let type_idx = parser.production(irgen)?;
+                    let table_type = parser.production(irgen)?;
+                    let table_import_desc =
+                        irgen.make_import_desc_table(table_type).map_err(IRError)?;
 
-                    Ok(AnyParser::ImportDesc(ImportDescParser {
-                        desc: Some(type_idx),
-                    }))
+                    Ok(AnyParser::ImportDesc(Self::Ready(table_import_desc)))
                 },
-            ),
+            )),
 
-            xs => return Err(ParseError::InvalidImportDescriptor(xs)),
-        })
+            Self::ImportGlobal => Ok(Advancement::YieldTo(
+                window.offset(),
+                AnyParser::GlobalType(Default::default()),
+                |irgen, last_state, _| {
+                    let AnyParser::GlobalType(parser) = last_state else {
+                        unreachable!();
+                    };
+
+                    let global_type = parser.production(irgen)?;
+                    let global_import_desc = irgen
+                        .make_import_desc_global(global_type)
+                        .map_err(IRError)?;
+
+                    Ok(AnyParser::ImportDesc(Self::Ready(global_import_desc)))
+                },
+            )),
+
+            Self::ImportMemory => Ok(Advancement::YieldTo(
+                window.offset(),
+                AnyParser::Limits(Default::default()),
+                |irgen, last_state, _| {
+                    let AnyParser::Limits(parser) = last_state else {
+                        unreachable!();
+                    };
+
+                    let limits = parser.production(irgen)?;
+                    let memory_import_desc =
+                        irgen.make_import_desc_memtype(limits).map_err(IRError)?;
+
+                    Ok(AnyParser::ImportDesc(Self::Ready(memory_import_desc)))
+                },
+            )),
+            Self::Ready(_) => Ok(Advancement::Ready(window.offset())),
+        }
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
-        todo!()
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
+        let Self::Ready(desc) = self else {
+            unreachable!()
+        };
+
+        Ok(desc)
     }
 }
-*/
-

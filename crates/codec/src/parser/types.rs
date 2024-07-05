@@ -1,9 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{
-    window::{AdvancementError, DecodeWindow},
-    Advancement, IRError, Parse, ParseError, ParseResult,
-};
+use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseError, ParseResult};
 
 use super::{accumulator::Accumulator, any::AnyParser, leb::LEBParser};
 

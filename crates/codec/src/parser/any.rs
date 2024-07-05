@@ -3,8 +3,9 @@ use uuasm_nodes::IR;
 use crate::{window::DecodeWindow, ExtractError, ExtractTarget, Parse, ParseError, ParseResult};
 
 use super::{
-    accumulator::Accumulator, importdescs::ImportDescParser, imports::ImportParser, leb::LEBParser,
-    module::ModuleParser, names::NameParser, repeated::Repeated, section::SectionParser,
+    accumulator::Accumulator, globaltype::GlobalTypeParser, importdescs::ImportDescParser,
+    imports::ImportParser, leb::LEBParser, limits::LimitsParser, module::ModuleParser,
+    names::NameParser, repeated::Repeated, section::SectionParser, tabletype::TableTypeParser,
     types::TypeParser,
 };
 
@@ -17,6 +18,9 @@ pub enum AnyParser<T: IR> {
     Failed(ParseError<T::Error>),
 
     Name(NameParser),
+    Limits(LimitsParser),
+    TableType(TableTypeParser<T>),
+    GlobalType(GlobalTypeParser<T>),
     ImportDesc(ImportDescParser<T>),
     Import(ImportParser<T>),
     ImportSection(Repeated<T, ImportParser<T>>),
@@ -90,6 +94,9 @@ pub enum AnyProduction<T: IR> {
     LEBU64(<LEBParser<u64> as Parse<T>>::Production),
 
     Name(<NameParser as Parse<T>>::Production),
+    Limits(<LimitsParser as Parse<T>>::Production),
+    TableType(<TableTypeParser<T> as Parse<T>>::Production),
+    GlobalType(<GlobalTypeParser<T> as Parse<T>>::Production),
     ImportDesc(<ImportDescParser<T> as Parse<T>>::Production),
     Import(<ImportParser<T> as Parse<T>>::Production),
     ImportSection(<Repeated<T, ImportParser<T>> as Parse<T>>::Production),
@@ -122,6 +129,9 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::ImportDesc(p) => p.advance(irgen, window),
             AnyParser::Import(p) => p.advance(irgen, window),
             AnyParser::ImportSection(p) => p.advance(irgen, window),
+            AnyParser::GlobalType(p) => p.advance(irgen, window),
+            AnyParser::Limits(p) => p.advance(irgen, window),
+            AnyParser::TableType(p) => p.advance(irgen, window),
         }
     }
 
@@ -141,6 +151,9 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::ImportDesc(p) => AnyProduction::ImportDesc(p.production(irgen)?),
             AnyParser::Import(p) => AnyProduction::Import(p.production(irgen)?),
             AnyParser::ImportSection(p) => AnyProduction::ImportSection(p.production(irgen)?),
+            AnyParser::GlobalType(p) => AnyProduction::GlobalType(p.production(irgen)?),
+            AnyParser::Limits(p) => AnyProduction::Limits(p.production(irgen)?),
+            AnyParser::TableType(p) => AnyProduction::TableType(p.production(irgen)?),
         })
     }
 }

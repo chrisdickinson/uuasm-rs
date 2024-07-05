@@ -2,8 +2,6 @@ pub(crate) mod decoder;
 pub(crate) mod parser;
 pub(crate) mod window;
 
-use std::str::Utf8Error;
-
 use crate::parser::any::AnyParser;
 
 pub use decoder::Decoder;
@@ -29,6 +27,11 @@ pub enum ParseError<T: Clone + std::fmt::Debug + std::error::Error> {
 
     #[error("Bad import descriptor type (got {0:X}H)")]
     BadImportDesc(u8),
+
+    #[error(
+        "Bad mutability value for global type definition (got {0:X}H; expected const=0 or mut=1)"
+    )]
+    BadMutability(u8),
 
     #[error("Unexpected version {0}")]
     UnexpectedVersion(u32),
@@ -63,8 +66,10 @@ pub enum Advancement<T: IR> {
     YieldTo(usize, AnyParser<T>, ResumeFunc<T>),
 }
 
+#[allow(type_alias_bounds)]
 pub type ResumeFunc<T: IR> =
     fn(&mut T, AnyParser<T>, AnyParser<T>) -> Result<AnyParser<T>, ParseError<T::Error>>;
+#[allow(type_alias_bounds)]
 pub type ParseResult<T: IR> = Result<Advancement<T>, ParseError<T::Error>>;
 
 pub trait Parse<T: IR> {

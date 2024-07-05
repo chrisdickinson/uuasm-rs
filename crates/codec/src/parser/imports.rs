@@ -2,7 +2,7 @@ use uuasm_nodes::IR;
 
 use crate::{
     parser::{any::AnyParser, names::NameParser},
-    Advancement, Parse, ParseError,
+    Advancement, IRError, Parse, ParseError,
 };
 
 use super::importdescs::ImportDescParser;
@@ -76,14 +76,13 @@ impl<T: IR> Parse<T> for ImportParser<T> {
         }
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, crate::ParseError<T::Error>> {
-        let Self::Ready(_modname, _name, _desc) = self else {
+    fn production(self, irgen: &mut T) -> Result<Self::Production, crate::ParseError<T::Error>> {
+        let Self::Ready(modname, name, desc) = self else {
             return Err(ParseError::InvalidState(
                 "Expected import to be in Ready state",
             ));
         };
 
-        todo!()
-        // Ok(Import::new(modname, name, desc))
+        Ok(irgen.make_import(modname, name, desc).map_err(IRError)?)
     }
 }
