@@ -2,7 +2,7 @@ use uuasm_nodes::IR;
 
 use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseError, ParseResult};
 
-use super::{any::AnyParser, leb::LEBParser};
+use super::any::AnyParser;
 
 #[derive(Default)]
 pub enum ImportDescParser<T: IR> {
@@ -34,14 +34,13 @@ impl<T: IR> Parse<T> for ImportDescParser<T> {
 
             Self::ImportFunc => Ok(Advancement::YieldTo(
                 window.offset(),
-                AnyParser::LEBU32(LEBParser::default()),
+                AnyParser::TypeIdx(Default::default()),
                 |irgen, last_state, _| {
-                    let AnyParser::LEBU32(parser) = last_state else {
+                    let AnyParser::TypeIdx(parser) = last_state else {
                         unreachable!();
                     };
 
                     let type_idx = parser.production(irgen)?;
-                    let type_idx = irgen.make_type_index(type_idx).map_err(IRError)?;
                     let func_import_desc =
                         irgen.make_import_desc_func(type_idx).map_err(IRError)?;
 

@@ -6,7 +6,7 @@ use super::{
     accumulator::Accumulator, globaltype::GlobalTypeParser, importdescs::ImportDescParser,
     imports::ImportParser, leb::LEBParser, limits::LimitsParser, module::ModuleParser,
     names::NameParser, repeated::Repeated, section::SectionParser, tabletype::TableTypeParser,
-    types::TypeParser,
+    type_idxs::TypeIdxParser, types::TypeParser,
 };
 
 pub enum AnyParser<T: IR> {
@@ -18,12 +18,15 @@ pub enum AnyParser<T: IR> {
     Failed(ParseError<T::Error>),
 
     Name(NameParser),
+    TypeIdx(TypeIdxParser<T>),
     Limits(LimitsParser),
     TableType(TableTypeParser<T>),
     GlobalType(GlobalTypeParser<T>),
     ImportDesc(ImportDescParser<T>),
     Import(ImportParser<T>),
     ImportSection(Repeated<T, ImportParser<T>>),
+    FunctionSection(Repeated<T, TypeIdxParser<T>>),
+    TableSection(Repeated<T, TableTypeParser<T>>),
 
     Type(TypeParser<T>),
     TypeSection(Repeated<T, TypeParser<T>>),
@@ -32,7 +35,7 @@ pub enum AnyParser<T: IR> {
 }
 
 macro_rules! repeated_impls {
-    ($id:ident) => {
+    ($id:ident, $section:ident) => {
         paste::paste! {
             impl<T: IR> From<[< $id Parser >]<T>> for AnyParser<T> {
                 fn from(value: [< $id Parser >]<T>) -> Self {
@@ -42,7 +45,7 @@ macro_rules! repeated_impls {
 
             impl<T: IR> From<Repeated<T, [< $id Parser >]<T>>> for AnyParser<T> {
                 fn from(value: Repeated<T, [< $id Parser >]<T>>) -> Self {
-                    Self::[< $id Section >](value)
+                    Self::$section(value)
                 }
             }
 
@@ -50,10 +53,10 @@ macro_rules! repeated_impls {
                 type Error = ParseError<T::Error>;
 
                 fn try_from(value: AnyParser<T>) -> Result<Self, Self::Error> {
-                    if let AnyParser::[< $id Section >](v) = value {
+                    if let AnyParser::$section(v) = value {
                         Ok(v)
                     } else {
-                        Err(ParseError::InvalidState(concat!("cannot cast into ", stringify!($id), "Section")))
+                        Err(ParseError::InvalidState(concat!("cannot cast into ", stringify!($section))))
                     }
                 }
             }
@@ -71,6 +74,9 @@ macro_rules! repeated_impls {
             }
         }
     };
+    ($id:ident) => {
+        paste::paste! { repeated_impls!($id, [< $id Section >]); }
+    };
 }
 
 impl<T: IR> ExtractTarget<AnyProduction<T>> for T::Module {
@@ -85,6 +91,8 @@ impl<T: IR> ExtractTarget<AnyProduction<T>> for T::Module {
 
 repeated_impls!(Type);
 repeated_impls!(Import);
+repeated_impls!(TypeIdx, FunctionSection);
+repeated_impls!(TableType, TableSection);
 
 pub enum Never {}
 pub enum AnyProduction<T: IR> {
@@ -94,12 +102,15 @@ pub enum AnyProduction<T: IR> {
     LEBU64(<LEBParser<u64> as Parse<T>>::Production),
 
     Name(<NameParser as Parse<T>>::Production),
+    TypeIdx(<TypeIdxParser<T> as Parse<T>>::Production),
     Limits(<LimitsParser as Parse<T>>::Production),
     TableType(<TableTypeParser<T> as Parse<T>>::Production),
     GlobalType(<GlobalTypeParser<T> as Parse<T>>::Production),
     ImportDesc(<ImportDescParser<T> as Parse<T>>::Production),
     Import(<ImportParser<T> as Parse<T>>::Production),
     ImportSection(<Repeated<T, ImportParser<T>> as Parse<T>>::Production),
+    FunctionSection(<Repeated<T, TypeIdxParser<T>> as Parse<T>>::Production),
+    TableSection(<Repeated<T, TableTypeParser<T>> as Parse<T>>::Production),
 
     Type(<TypeParser<T> as Parse<T>>::Production),
     TypeSection(<Repeated<T, TypeParser<T>> as Parse<T>>::Production),
@@ -132,6 +143,9 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::GlobalType(p) => p.advance(irgen, window),
             AnyParser::Limits(p) => p.advance(irgen, window),
             AnyParser::TableType(p) => p.advance(irgen, window),
+            AnyParser::TypeIdx(p) => p.advance(irgen, window),
+            AnyParser::FunctionSection(p) => p.advance(irgen, window),
+            AnyParser::TableSection(p) => p.advance(irgen, window),
         }
     }
 
@@ -154,6 +168,9 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::GlobalType(p) => AnyProduction::GlobalType(p.production(irgen)?),
             AnyParser::Limits(p) => AnyProduction::Limits(p.production(irgen)?),
             AnyParser::TableType(p) => AnyProduction::TableType(p.production(irgen)?),
+            AnyParser::TypeIdx(p) => AnyProduction::TypeIdx(p.production(irgen)?),
+            AnyParser::FunctionSection(p) => AnyProduction::FunctionSection(p.production(irgen)?),
+            AnyParser::TableSection(p) => AnyProduction::TableSection(p.production(irgen)?),
         })
     }
 }

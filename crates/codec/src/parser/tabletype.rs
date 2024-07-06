@@ -17,7 +17,7 @@ impl<T: IR> Parse<T> for TableTypeParser<T> {
 
     fn advance(
         &mut self,
-        irgen: &mut T,
+        _irgen: &mut T,
         mut window: crate::window::DecodeWindow,
     ) -> crate::ParseResult<T> {
         loop {

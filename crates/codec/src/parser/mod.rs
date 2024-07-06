@@ -12,5 +12,6 @@ pub(crate) mod repeated;
 pub(crate) mod section;
 pub(crate) mod tabletype;
 pub(crate) mod take;
+pub(crate) mod type_idxs;
 pub(crate) mod types;
 pub(crate) mod valtype;

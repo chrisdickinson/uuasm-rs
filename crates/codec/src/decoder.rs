@@ -128,4 +128,13 @@ mod test {
 
         Ok(())
     }
+
+    #[test]
+    fn parser2_works_mostly() -> anyhow::Result<()> {
+        let mut parser = Decoder::default();
+
+        dbg!(parser.write(include_bytes!("../test.wasm")));
+
+        Ok(())
+    }
 }

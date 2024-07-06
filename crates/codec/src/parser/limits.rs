@@ -17,15 +17,15 @@ impl<T: IR> Parse<T> for LimitsParser {
 
     fn advance(
         &mut self,
-        irgen: &mut T,
-        window: crate::window::DecodeWindow,
+        _irgen: &mut T,
+        _window: crate::window::DecodeWindow,
     ) -> crate::ParseResult<T> {
         todo!()
     }
 
     fn production(
         self,
-        irgen: &mut T,
+        _irgen: &mut T,
     ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
         todo!()
     }

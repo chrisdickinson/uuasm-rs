@@ -74,12 +74,54 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             },
                         ),
 
-                        // 0x1 => Section::Type(Vec::<Type>::from_wasm_bytes(section)?.1),
+                        0x2 => Advancement::YieldTo(
+                            window.offset(),
+                            AnyParser::ImportSection(Repeated::default()),
+                            |irgen, last_state, _| {
+                                let AnyParser::ImportSection(ts) = last_state else {
+                                    unreachable!();
+                                };
+
+                                let items = ts.production(irgen)?;
+                                let section = irgen.make_import_section(items).map_err(IRError)?;
+                                Ok(AnyParser::Section(SectionParser::Done(section)))
+                            },
+                        ),
+
+                        0x3 => Advancement::YieldTo(
+                            window.offset(),
+                            AnyParser::FunctionSection(Repeated::default()),
+                            |irgen, last_state, _| {
+                                let AnyParser::FunctionSection(ts) = last_state else {
+                                    unreachable!();
+                                };
+
+                                let items = ts.production(irgen)?;
+                                let section =
+                                    irgen.make_function_section(items).map_err(IRError)?;
+                                Ok(AnyParser::Section(SectionParser::Done(section)))
+                            },
+                        ),
+
+                        0x4 => Advancement::YieldTo(
+                            window.offset(),
+                            AnyParser::TableSection(Repeated::default()),
+                            |irgen, last_state, _| {
+                                let AnyParser::TableSection(ts) = last_state else {
+                                    unreachable!();
+                                };
+
+                                let items = ts.production(irgen)?;
+                                let section = irgen.make_table_section(items).map_err(IRError)?;
+                                Ok(AnyParser::Section(SectionParser::Done(section)))
+                            },
+                        ),
+
                         unk => {
                             return Err(ParseError::SectionInvalid {
                                 kind: unk,
                                 position: window.position(),
-                            })
+                            });
                         }
                     });
                 }

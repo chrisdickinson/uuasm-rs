@@ -540,8 +540,8 @@ pub enum SectionType {
     Custom(Box<[u8]>),
     Type(Box<[Type]>),
     Import(Box<[Import]>),
-    Function(Vec<TypeIdx>),
-    Table(Vec<TableType>),
+    Function(Box<[TypeIdx]>),
+    Table(Box<[TableType]>),
     Memory(Vec<MemType>),
     Global(Vec<Global>),
     Export(Vec<Export>),
@@ -563,8 +563,8 @@ pub struct Module {
     pub(crate) custom_sections: Vec<Section<Box<[u8]>>>,
     pub(crate) type_section: Option<Section<Box<[Type]>>>,
     pub(crate) import_section: Option<Section<Box<[Import]>>>,
-    pub(crate) function_section: Option<Section<Vec<TypeIdx>>>,
-    pub(crate) table_section: Option<Section<Vec<TableType>>>,
+    pub(crate) function_section: Option<Section<Box<[TypeIdx]>>>,
+    pub(crate) table_section: Option<Section<Box<[TableType]>>>,
     pub(crate) memory_section: Option<Section<Vec<MemType>>>,
     pub(crate) global_section: Option<Section<Vec<Global>>>,
     pub(crate) export_section: Option<Section<Vec<Export>>>,
@@ -581,8 +581,8 @@ pub struct ModuleIntoInner {
     pub custom_sections: Vec<Section<Box<[u8]>>>,
     pub type_section: Option<Section<Box<[Type]>>>,
     pub import_section: Option<Section<Box<[Import]>>>,
-    pub function_section: Option<Section<Vec<TypeIdx>>>,
-    pub table_section: Option<Section<Vec<TableType>>>,
+    pub function_section: Option<Section<Box<[TypeIdx]>>>,
+    pub table_section: Option<Section<Box<[TableType]>>>,
     pub memory_section: Option<Section<Vec<MemType>>>,
     pub global_section: Option<Section<Vec<Global>>>,
     pub export_section: Option<Section<Vec<Export>>>,
@@ -629,7 +629,7 @@ impl ModuleBuilder {
         self.index += 1;
         self
     }
-    pub fn function_section(mut self, xs: Vec<TypeIdx>) -> Self {
+    pub fn function_section(mut self, xs: Box<[TypeIdx]>) -> Self {
         self.inner.function_section.replace(Section {
             inner: xs,
             index: self.index,
@@ -637,7 +637,7 @@ impl ModuleBuilder {
         self.index += 1;
         self
     }
-    pub fn table_section(mut self, xs: Vec<TableType>) -> Self {
+    pub fn table_section(mut self, xs: Box<[TableType]>) -> Self {
         self.inner.table_section.replace(Section {
             inner: xs,
             index: self.index,
@@ -762,11 +762,11 @@ impl Module {
     }
 
     pub fn function_section(&self) -> Option<&[TypeIdx]> {
-        self.function_section.as_ref().map(|xs| xs.inner.as_slice())
+        self.function_section.as_ref().map(|xs| &*xs.inner)
     }
 
     pub fn table_section(&self) -> Option<&[TableType]> {
-        self.table_section.as_ref().map(|xs| xs.inner.as_slice())
+        self.table_section.as_ref().map(|xs| &*xs.inner)
     }
 
     pub fn memory_section(&self) -> Option<&[MemType]> {
@@ -792,6 +792,7 @@ impl Module {
     pub fn code_section(&self) -> Option<&[Code]> {
         self.code_section.as_ref().map(|xs| xs.inner.as_slice())
     }
+
     pub fn data_section(&self) -> Option<&[Data]> {
         self.data_section.as_ref().map(|xs| xs.inner.as_slice())
     }
@@ -848,6 +849,14 @@ pub trait IR {
     fn make_import_section(
         &mut self,
         data: Box<[Self::Import]>,
+    ) -> Result<Self::Section, Self::Error>;
+    fn make_function_section(
+        &mut self,
+        data: Box<[Self::TypeIdx]>,
+    ) -> Result<Self::Section, Self::Error>;
+    fn make_table_section(
+        &mut self,
+        data: Box<[Self::TableType]>,
     ) -> Result<Self::Section, Self::Error>;
     fn make_val_type(&mut self, data: u8) -> Result<Self::ValType, Self::Error>;
     fn make_global_type(
@@ -1046,6 +1055,34 @@ impl IR for DefaultIRGenerator {
         }
         self.last_section_discrim = 2;
         Ok(SectionType::Import(data))
+    }
+
+    fn make_function_section(
+        &mut self,
+        data: Box<[Self::TypeIdx]>,
+    ) -> Result<Self::Section, Self::Error> {
+        if self.last_section_discrim > 2 {
+            return Err(DefaultIRGeneratorError::InvalidSectionOrder(
+                3,
+                self.last_section_discrim,
+            ));
+        }
+        self.last_section_discrim = 3;
+        Ok(SectionType::Function(data))
+    }
+
+    fn make_table_section(
+        &mut self,
+        data: Box<[Self::TableType]>,
+    ) -> Result<Self::Section, Self::Error> {
+        if self.last_section_discrim > 3 {
+            return Err(DefaultIRGeneratorError::InvalidSectionOrder(
+                4,
+                self.last_section_discrim,
+            ));
+        }
+        self.last_section_discrim = 4;
+        Ok(SectionType::Table(data))
     }
 
     fn make_type_index(&mut self, candidate: u32) -> Result<Self::TypeIdx, Self::Error> {
