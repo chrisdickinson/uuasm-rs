@@ -18,7 +18,7 @@ use crate::{
  * the production. The stack state can `take(N)`, `peek(N)`, `skip(N)`.
  */
 pub struct Decoder<T: IR, Target: ExtractTarget<AnyProduction<T>>> {
-    state: Vec<(AnyParser<T>, ResumeFunc<T>)>,
+    state: Vec<(AnyParser<T>, ResumeFunc<T>, Option<u32>)>,
     position: usize,
     irgen: T,
     _marker: PhantomData<Target>,
@@ -43,11 +43,15 @@ impl Default for Decoder<DefaultIRGenerator, <DefaultIRGenerator as IR>::Module>
 
 impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
     pub fn new(parser: AnyParser<T>, irgen: T) -> Self {
-        let mut state = Vec::with_capacity(16);
-        state.push((parser, noop_resume as ResumeFunc<T>));
+        Self::new_with_position(parser, irgen, 0)
+    }
+
+    pub fn new_with_position(parser: AnyParser<T>, irgen: T, position: usize) -> Self {
+        let mut state = Vec::with_capacity(if position > 0 { 4 } else { 16 });
+        state.push((parser, noop_resume as ResumeFunc<T>, None));
         Self {
             state,
-            position: 0,
+            position,
             irgen,
             _marker: PhantomData,
         }
@@ -58,9 +62,11 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
         chunk: &'a [u8],
         eos: bool,
     ) -> Result<(Target, &'a [u8]), ParseError<T::Error>> {
-        let mut window = DecodeWindow::new(chunk, 0, self.position, eos);
+        let (mut state, mut resume, mut bound) = self.state.pop().unwrap();
+        let mut window = DecodeWindow::new(chunk, 0, self.position, eos, bound);
+        let offset = 0;
+        let mut consumed = 0;
         loop {
-            let (mut state, resume) = self.state.pop().unwrap();
             let offset = match state.advance(&mut self.irgen, window) {
                 Ok(Advancement::Ready(offset)) => {
                     if self.state.is_empty() {
@@ -68,31 +74,68 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
                         return Ok((output, &chunk[offset..]));
                     }
 
-                    let (receiver, last_resume) = self.state.pop().unwrap();
-                    self.state
-                        .push((resume(&mut self.irgen, state, receiver)?, last_resume));
+                    let (receiver, last_resume, last_bound) = self.state.pop().unwrap();
+                    self.state.push((
+                        resume(&mut self.irgen, state, receiver)?,
+                        last_resume,
+                        last_bound,
+                    ));
                     offset
                 }
 
-                Ok(Advancement::YieldTo(offset, next_state, next_resume)) => {
-                    self.state.push((state, resume));
-                    self.state.push((next_state, next_resume));
+                Ok(Advancement::YieldTo(new_offset, next_state, next_resume)) => {
+                    if let Some(xs) = bound.as_mut() {
+                        *xs = xs.saturating_sub((new_offset - offset) as u32);
+                    }
+                    self.state.push((state, resume, bound));
+                    self.state.push((next_state, next_resume, bound));
+                    new_offset
+                }
+
+                Ok(Advancement::YieldToBounded(
+                    new_offset,
+                    next_bound,
+                    next_state,
+                    next_resume,
+                )) => {
+                    if let Some(xs) = bound.as_mut() {
+                        *xs = xs.saturating_sub((new_offset - offset) as u32);
+                        if next_bound > *xs {
+                            let e = ParseError::UnexpectedEOS;
+                            self.state.push((
+                                AnyParser::Failed(e.clone()),
+                                noop_resume as ResumeFunc<T>,
+                                None,
+                            ));
+                            return Err(e);
+                        }
+                    }
+                    self.state.push((state, resume, bound));
+                    self.state.push((next_state, next_resume, Some(next_bound)));
                     offset
                 }
 
                 Err(err @ ParseError::Advancement(AdvancementError::Incomplete(_))) => {
-                    self.position += chunk.len();
-                    self.state.push((state, resume));
+                    if let Some(xs) = bound.as_mut() {
+                        *xs = xs.saturating_sub((chunk.len() - offset) as u32);
+                    }
+                    self.state.push((state, resume, bound));
                     return Err(err);
                 }
 
                 Err(e) => {
-                    self.state
-                        .push((AnyParser::Failed(e.clone()), noop_resume as ResumeFunc<T>));
+                    self.state.push((
+                        AnyParser::Failed(e.clone()),
+                        noop_resume as ResumeFunc<T>,
+                        None,
+                    ));
                     return Err(e);
                 }
             };
-            window = DecodeWindow::new(chunk, offset, self.position, eos);
+            consumed += offset;
+            self.position += offset;
+            window = DecodeWindow::new(&chunk[consumed..], 0, self.position, eos, bound);
+            (state, resume, bound) = self.state.pop().unwrap();
         }
     }
 

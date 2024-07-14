@@ -28,6 +28,18 @@ pub enum ParseError<T: Clone + std::fmt::Debug + std::error::Error> {
     #[error("Bad import descriptor type (got {0:X}H)")]
     BadImportDesc(u8),
 
+    #[error("Bad export descriptor type (got {0:X}H)")]
+    BadExportDesc(u8),
+
+    #[error("Bad data segment type (got {0:X}H; expected 0, 1, or 2)")]
+    BadDataType(u8),
+
+    #[error("Bad limit type (got {0:X}H; expected 0, or 1)")]
+    BadLimitType(u8),
+
+    #[error("Bad instruction (got {0:X}H)")]
+    BadInstruction(u8),
+
     #[error(
         "Bad mutability value for global type definition (got {0:X}H; expected const=0 or mut=1)"
     )]
@@ -35,6 +47,9 @@ pub enum ParseError<T: Clone + std::fmt::Debug + std::error::Error> {
 
     #[error("Unexpected version {0}")]
     UnexpectedVersion(u32),
+
+    #[error("Unexpected end of stream")]
+    UnexpectedEOS,
 
     #[error("invalid section type {kind} at position {position}")]
     SectionInvalid { kind: u8, position: usize },
@@ -64,6 +79,7 @@ pub enum ExtractError {
 pub enum Advancement<T: IR> {
     Ready(usize),
     YieldTo(usize, AnyParser<T>, ResumeFunc<T>),
+    YieldToBounded(usize, u32, AnyParser<T>, ResumeFunc<T>),
 }
 
 #[allow(type_alias_bounds)]

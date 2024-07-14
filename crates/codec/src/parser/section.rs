@@ -117,6 +117,123 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             },
                         ),
 
+                        0x5 => Advancement::YieldTo(
+                            window.offset(),
+                            AnyParser::MemorySection(Repeated::default()),
+                            |irgen, last_state, _| {
+                                let AnyParser::MemorySection(ts) = last_state else {
+                                    unreachable!();
+                                };
+
+                                let items = ts.production(irgen)?;
+                                let section = irgen.make_memory_section(items).map_err(IRError)?;
+                                Ok(AnyParser::Section(SectionParser::Done(section)))
+                            },
+                        ),
+
+                        0x6 => Advancement::YieldTo(
+                            window.offset(),
+                            AnyParser::GlobalSection(Repeated::default()),
+                            |irgen, last_state, _| {
+                                let AnyParser::GlobalSection(ts) = last_state else {
+                                    unreachable!();
+                                };
+
+                                let items = ts.production(irgen)?;
+                                let section = irgen.make_global_section(items).map_err(IRError)?;
+                                Ok(AnyParser::Section(SectionParser::Done(section)))
+                            },
+                        ),
+
+                        0x7 => Advancement::YieldTo(
+                            window.offset(),
+                            AnyParser::ExportSection(Repeated::default()),
+                            |irgen, last_state, _| {
+                                let AnyParser::ExportSection(ts) = last_state else {
+                                    unreachable!();
+                                };
+
+                                let items = ts.production(irgen)?;
+                                let section = irgen.make_export_section(items).map_err(IRError)?;
+                                Ok(AnyParser::Section(SectionParser::Done(section)))
+                            },
+                        ),
+
+                        0x8 => Advancement::YieldTo(
+                            window.offset(),
+                            AnyParser::LEBU32(Default::default()),
+                            |irgen, last_state, _| {
+                                let AnyParser::LEBU32(ts) = last_state else {
+                                    unreachable!();
+                                };
+
+                                let func_idx = ts.production(irgen)?;
+                                let func_idx = irgen.make_func_index(func_idx).map_err(IRError)?;
+
+                                let section =
+                                    irgen.make_start_section(func_idx).map_err(IRError)?;
+                                Ok(AnyParser::Section(SectionParser::Done(section)))
+                            },
+                        ),
+
+                        0x9 => Advancement::YieldTo(
+                            window.offset(),
+                            AnyParser::ElementSection(Repeated::default()),
+                            |irgen, last_state, _| {
+                                let AnyParser::ElementSection(ts) = last_state else {
+                                    unreachable!();
+                                };
+
+                                let items = ts.production(irgen)?;
+                                let section = irgen.make_element_section(items).map_err(IRError)?;
+                                Ok(AnyParser::Section(SectionParser::Done(section)))
+                            },
+                        ),
+
+                        0xa => Advancement::YieldTo(
+                            window.offset(),
+                            AnyParser::CodeSection(Repeated::default()),
+                            |irgen, last_state, _| {
+                                let AnyParser::CodeSection(ts) = last_state else {
+                                    unreachable!();
+                                };
+
+                                let items = ts.production(irgen)?;
+                                let section = irgen.make_code_section(items).map_err(IRError)?;
+                                Ok(AnyParser::Section(SectionParser::Done(section)))
+                            },
+                        ),
+
+                        0xb => Advancement::YieldTo(
+                            window.offset(),
+                            AnyParser::DataSection(Repeated::default()),
+                            |irgen, last_state, _| {
+                                let AnyParser::DataSection(ts) = last_state else {
+                                    unreachable!();
+                                };
+
+                                let items = ts.production(irgen)?;
+                                let section = irgen.make_data_section(items).map_err(IRError)?;
+                                Ok(AnyParser::Section(SectionParser::Done(section)))
+                            },
+                        ),
+
+                        0xc => Advancement::YieldTo(
+                            window.offset(),
+                            AnyParser::LEBU32(Default::default()),
+                            |irgen, last_state, _| {
+                                let AnyParser::LEBU32(ts) = last_state else {
+                                    unreachable!();
+                                };
+
+                                let count = ts.production(irgen)?;
+
+                                let section =
+                                    irgen.make_datacount_section(count).map_err(IRError)?;
+                                Ok(AnyParser::Section(SectionParser::Done(section)))
+                            },
+                        ),
+
                         unk => {
                             return Err(ParseError::SectionInvalid {
                                 kind: unk,

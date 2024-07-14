@@ -52,7 +52,7 @@ impl<T: IR> Parse<T> for ModuleParser<T> {
 
             ModuleParser::TakeSection(builder) => {
                 match window.peek() {
-                    Ok(7) | Err(AdvancementError::Expected(1)) => {
+                    Err(AdvancementError::Expected(1, _)) => {
                         *self = ModuleParser::Done(builder.split_off(0));
                         return Ok(Advancement::Ready(window.offset()));
                     }

@@ -4,8 +4,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug, Clone, Copy)]
 pub enum AdvancementError {
-    #[error("incomplete stream: {0} bytes")]
-    Expected(usize),
+    #[error("incomplete stream: {0} bytes at position {1}")]
+    Expected(usize, usize),
     #[error("unexpected end of stream: expected {0} bytes")]
     Incomplete(usize),
 }
@@ -19,17 +19,29 @@ pub struct DecodeWindow<'a> {
 }
 
 impl<'a> DecodeWindow<'a> {
-    pub fn new(chunk: &'a [u8], offset: usize, start_pos: usize, eos: bool) -> Self {
+    pub fn new(
+        chunk: &'a [u8],
+        offset: usize,
+        start_pos: usize,
+        eos: bool,
+        bound: Option<u32>,
+    ) -> Self {
+        let (eos, chunk) = if let Some(bound) = bound {
+            let bound = bound as usize;
+            (
+                eos || chunk.len() > bound,
+                &chunk[0..min(chunk.len(), bound)],
+            )
+        } else {
+            (eos, chunk)
+        };
+
         Self {
             chunk,
             offset,
             start_pos,
             eos,
         }
-    }
-
-    pub fn available(&self) -> usize {
-        self.chunk.len() - self.offset
     }
 
     /// Offset represents the number of bytes consumed from the current chunk.
@@ -40,15 +52,6 @@ impl<'a> DecodeWindow<'a> {
     /// Position represents the number of bytes consumed from the entire stream.
     pub fn position(&self) -> usize {
         self.offset + self.start_pos
-    }
-
-    pub fn slice(self, take: usize) -> Self {
-        Self {
-            chunk: &self.chunk[..self.offset + take],
-            offset: self.offset,
-            start_pos: self.start_pos,
-            eos: true,
-        }
     }
 
     pub fn take(&mut self) -> Result<u8, AdvancementError> {
@@ -63,7 +66,7 @@ impl<'a> DecodeWindow<'a> {
         let src = &self.chunk[self.offset..];
         if src.is_empty() {
             return Err(if self.eos {
-                AdvancementError::Expected(dstlen)
+                AdvancementError::Expected(dstlen, self.position())
             } else {
                 AdvancementError::Incomplete(dstlen)
             });
@@ -78,7 +81,7 @@ impl<'a> DecodeWindow<'a> {
     pub fn peek(&self) -> Result<u8, AdvancementError> {
         if self.offset >= self.chunk.len() {
             Err(if self.eos {
-                AdvancementError::Expected(1)
+                AdvancementError::Expected(1, self.position())
             } else {
                 AdvancementError::Incomplete(1)
             })

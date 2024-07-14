@@ -3,10 +3,14 @@ use uuasm_nodes::IR;
 use crate::{window::DecodeWindow, ExtractError, ExtractTarget, Parse, ParseError, ParseResult};
 
 use super::{
-    accumulator::Accumulator, globaltype::GlobalTypeParser, importdescs::ImportDescParser,
-    imports::ImportParser, leb::LEBParser, limits::LimitsParser, module::ModuleParser,
-    names::NameParser, repeated::Repeated, section::SectionParser, tabletype::TableTypeParser,
-    type_idxs::TypeIdxParser, types::TypeParser,
+    accumulator::Accumulator, code::CodeParser, data::DataParser, elem::ElemParser,
+    export::ExportParser, exportdesc::ExportDescParser, expr::ExprParser, func::FuncParser,
+    func_idxs::FuncIdxParser, global::GlobalParser, global_idxs::GlobalIdxParser,
+    globaltype::GlobalTypeParser, importdescs::ImportDescParser, imports::ImportParser,
+    instr::InstrParser, leb::LEBParser, limits::LimitsParser, local::LocalParser,
+    mem_idxs::MemIdxParser, memtype::MemTypeParser, module::ModuleParser, names::NameParser,
+    repeated::Repeated, section::SectionParser, table_idxs::TableIdxParser,
+    tabletype::TableTypeParser, type_idxs::TypeIdxParser, types::TypeParser,
 };
 
 pub enum AnyParser<T: IR> {
@@ -17,9 +21,26 @@ pub enum AnyParser<T: IR> {
     Accumulate(Accumulator),
     Failed(ParseError<T::Error>),
 
-    Name(NameParser),
     TypeIdx(TypeIdxParser<T>),
+    GlobalIdx(GlobalIdxParser<T>),
+    MemIdx(MemIdxParser<T>),
+    TableIdx(TableIdxParser<T>),
+    FuncIdx(FuncIdxParser<T>),
+
+    Instr(InstrParser<T>),
+    Code(CodeParser<T>),
+    Data(DataParser<T>),
+    Elem(ElemParser<T>),
+    Export(ExportParser<T>),
+    ExportDesc(ExportDescParser<T>),
+    Expr(ExprParser<T>),
+    LocalList(Repeated<T, LocalParser<T>>),
+    Func(FuncParser<T>),
+    Global(GlobalParser<T>),
+    Local(LocalParser<T>),
+    Name(NameParser),
     Limits(LimitsParser),
+    MemType(MemTypeParser<T>),
     TableType(TableTypeParser<T>),
     GlobalType(GlobalTypeParser<T>),
     ImportDesc(ImportDescParser<T>),
@@ -27,6 +48,12 @@ pub enum AnyParser<T: IR> {
     ImportSection(Repeated<T, ImportParser<T>>),
     FunctionSection(Repeated<T, TypeIdxParser<T>>),
     TableSection(Repeated<T, TableTypeParser<T>>),
+    ExportSection(Repeated<T, ExportParser<T>>),
+    MemorySection(Repeated<T, MemTypeParser<T>>),
+    GlobalSection(Repeated<T, GlobalParser<T>>),
+    CodeSection(Repeated<T, CodeParser<T>>),
+    DataSection(Repeated<T, DataParser<T>>),
+    ElementSection(Repeated<T, ElemParser<T>>),
 
     Type(TypeParser<T>),
     TypeSection(Repeated<T, TypeParser<T>>),
@@ -93,6 +120,13 @@ repeated_impls!(Type);
 repeated_impls!(Import);
 repeated_impls!(TypeIdx, FunctionSection);
 repeated_impls!(TableType, TableSection);
+repeated_impls!(Local, LocalList);
+repeated_impls!(Export);
+repeated_impls!(Global);
+repeated_impls!(Code);
+repeated_impls!(Data);
+repeated_impls!(Elem, ElementSection);
+repeated_impls!(MemType, MemorySection);
 
 pub enum Never {}
 pub enum AnyProduction<T: IR> {
@@ -101,9 +135,28 @@ pub enum AnyProduction<T: IR> {
     LEBU32(<LEBParser<u32> as Parse<T>>::Production),
     LEBU64(<LEBParser<u64> as Parse<T>>::Production),
 
-    Name(<NameParser as Parse<T>>::Production),
     TypeIdx(<TypeIdxParser<T> as Parse<T>>::Production),
+    FuncIdx(<FuncIdxParser<T> as Parse<T>>::Production),
+    MemIdx(<MemIdxParser<T> as Parse<T>>::Production),
+    GlobalIdx(<GlobalIdxParser<T> as Parse<T>>::Production),
+    TableIdx(<TableIdxParser<T> as Parse<T>>::Production),
+
+    Instr(<InstrParser<T> as Parse<T>>::Production),
+    Code(<CodeParser<T> as Parse<T>>::Production),
+    Data(<DataParser<T> as Parse<T>>::Production),
+    Elem(<ElemParser<T> as Parse<T>>::Production),
+    Export(<ExportParser<T> as Parse<T>>::Production),
+    ExportDesc(<ExportDescParser<T> as Parse<T>>::Production),
+    ExportSection(<Repeated<T, ExportParser<T>> as Parse<T>>::Production),
+    Expr(<ExprParser<T> as Parse<T>>::Production),
+    Func(<FuncParser<T> as Parse<T>>::Production),
+    Global(<GlobalParser<T> as Parse<T>>::Production),
+    Local(<LocalParser<T> as Parse<T>>::Production),
+    LocalList(<Repeated<T, LocalParser<T>> as Parse<T>>::Production),
+
+    Name(<NameParser as Parse<T>>::Production),
     Limits(<LimitsParser as Parse<T>>::Production),
+    MemType(<MemTypeParser<T> as Parse<T>>::Production),
     TableType(<TableTypeParser<T> as Parse<T>>::Production),
     GlobalType(<GlobalTypeParser<T> as Parse<T>>::Production),
     ImportDesc(<ImportDescParser<T> as Parse<T>>::Production),
@@ -111,6 +164,11 @@ pub enum AnyProduction<T: IR> {
     ImportSection(<Repeated<T, ImportParser<T>> as Parse<T>>::Production),
     FunctionSection(<Repeated<T, TypeIdxParser<T>> as Parse<T>>::Production),
     TableSection(<Repeated<T, TableTypeParser<T>> as Parse<T>>::Production),
+    DataSection(<Repeated<T, DataParser<T>> as Parse<T>>::Production),
+    ElementSection(<Repeated<T, ElemParser<T>> as Parse<T>>::Production),
+    MemorySection(<Repeated<T, MemTypeParser<T>> as Parse<T>>::Production),
+    GlobalSection(<Repeated<T, GlobalParser<T>> as Parse<T>>::Production),
+    CodeSection(<Repeated<T, CodeParser<T>> as Parse<T>>::Production),
 
     Type(<TypeParser<T> as Parse<T>>::Production),
     TypeSection(<Repeated<T, TypeParser<T>> as Parse<T>>::Production),
@@ -146,6 +204,28 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::TypeIdx(p) => p.advance(irgen, window),
             AnyParser::FunctionSection(p) => p.advance(irgen, window),
             AnyParser::TableSection(p) => p.advance(irgen, window),
+            AnyParser::Instr(p) => p.advance(irgen, window),
+            AnyParser::Code(p) => p.advance(irgen, window),
+            AnyParser::Data(p) => p.advance(irgen, window),
+            AnyParser::Elem(p) => p.advance(irgen, window),
+            AnyParser::Export(p) => p.advance(irgen, window),
+            AnyParser::Expr(p) => p.advance(irgen, window),
+            AnyParser::Func(p) => p.advance(irgen, window),
+            AnyParser::Global(p) => p.advance(irgen, window),
+            AnyParser::Local(p) => p.advance(irgen, window),
+            AnyParser::ExportDesc(p) => p.advance(irgen, window),
+            AnyParser::ExportSection(p) => p.advance(irgen, window),
+            AnyParser::GlobalIdx(p) => p.advance(irgen, window),
+            AnyParser::MemIdx(p) => p.advance(irgen, window),
+            AnyParser::TableIdx(p) => p.advance(irgen, window),
+            AnyParser::FuncIdx(p) => p.advance(irgen, window),
+            AnyParser::LocalList(p) => p.advance(irgen, window),
+            AnyParser::MemType(p) => p.advance(irgen, window),
+            AnyParser::MemorySection(p) => p.advance(irgen, window),
+            AnyParser::GlobalSection(p) => p.advance(irgen, window),
+            AnyParser::CodeSection(p) => p.advance(irgen, window),
+            AnyParser::DataSection(p) => p.advance(irgen, window),
+            AnyParser::ElementSection(p) => p.advance(irgen, window),
         }
     }
 
@@ -171,6 +251,77 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::TypeIdx(p) => AnyProduction::TypeIdx(p.production(irgen)?),
             AnyParser::FunctionSection(p) => AnyProduction::FunctionSection(p.production(irgen)?),
             AnyParser::TableSection(p) => AnyProduction::TableSection(p.production(irgen)?),
+            AnyParser::Instr(p) => AnyProduction::Instr(p.production(irgen)?),
+            AnyParser::Code(p) => AnyProduction::Code(p.production(irgen)?),
+            AnyParser::Data(p) => AnyProduction::Data(p.production(irgen)?),
+            AnyParser::Elem(p) => AnyProduction::Elem(p.production(irgen)?),
+            AnyParser::Export(p) => AnyProduction::Export(p.production(irgen)?),
+            AnyParser::Expr(p) => AnyProduction::Expr(p.production(irgen)?),
+            AnyParser::Func(p) => AnyProduction::Func(p.production(irgen)?),
+            AnyParser::Global(p) => AnyProduction::Global(p.production(irgen)?),
+            AnyParser::Local(p) => AnyProduction::Local(p.production(irgen)?),
+            AnyParser::LocalList(p) => AnyProduction::LocalList(p.production(irgen)?),
+            AnyParser::ExportDesc(p) => AnyProduction::ExportDesc(p.production(irgen)?),
+            AnyParser::GlobalIdx(p) => AnyProduction::GlobalIdx(p.production(irgen)?),
+            AnyParser::MemIdx(p) => AnyProduction::MemIdx(p.production(irgen)?),
+            AnyParser::TableIdx(p) => AnyProduction::TableIdx(p.production(irgen)?),
+            AnyParser::FuncIdx(p) => AnyProduction::FuncIdx(p.production(irgen)?),
+            AnyParser::MemType(p) => AnyProduction::MemType(p.production(irgen)?),
+            AnyParser::ExportSection(p) => AnyProduction::ExportSection(p.production(irgen)?),
+            AnyParser::DataSection(p) => AnyProduction::DataSection(p.production(irgen)?),
+            AnyParser::ElementSection(p) => AnyProduction::ElementSection(p.production(irgen)?),
+            AnyParser::CodeSection(p) => AnyProduction::CodeSection(p.production(irgen)?),
+            AnyParser::MemorySection(p) => AnyProduction::MemorySection(p.production(irgen)?),
+            AnyParser::GlobalSection(p) => AnyProduction::GlobalSection(p.production(irgen)?),
         })
+    }
+}
+
+impl<T: IR> std::fmt::Debug for AnyParser<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::LEBI32(_) => f.debug_tuple("LEBI32").finish(),
+            Self::LEBI64(_) => f.debug_tuple("LEBI64").finish(),
+            Self::LEBU32(_) => f.debug_tuple("LEBU32").finish(),
+            Self::LEBU64(_) => f.debug_tuple("LEBU64").finish(),
+            Self::Accumulate(_) => f.debug_tuple("Accumulate").finish(),
+            Self::Failed(_) => f.debug_tuple("Failed").finish(),
+            Self::TypeIdx(_) => f.debug_tuple("TypeIdx").finish(),
+            Self::GlobalIdx(_) => f.debug_tuple("GlobalIdx").finish(),
+            Self::MemIdx(_) => f.debug_tuple("MemIdx").finish(),
+            Self::TableIdx(_) => f.debug_tuple("TableIdx").finish(),
+            Self::FuncIdx(_) => f.debug_tuple("FuncIdx").finish(),
+            Self::Instr(_) => f.debug_tuple("Instr").finish(),
+            Self::Code(_) => f.debug_tuple("Code").finish(),
+            Self::Data(_) => f.debug_tuple("Data").finish(),
+            Self::Elem(_) => f.debug_tuple("Elem").finish(),
+            Self::Export(_) => f.debug_tuple("Export").finish(),
+            Self::ExportDesc(_) => f.debug_tuple("ExportDesc").finish(),
+            Self::Expr(_) => f.debug_tuple("Expr").finish(),
+            Self::LocalList(_) => f.debug_tuple("LocalList").finish(),
+            Self::Func(_) => f.debug_tuple("Func").finish(),
+            Self::Global(_) => f.debug_tuple("Global").finish(),
+            Self::Local(_) => f.debug_tuple("Local").finish(),
+            Self::Name(_) => f.debug_tuple("Name").finish(),
+            Self::Limits(_) => f.debug_tuple("Limits").finish(),
+            Self::MemType(_) => f.debug_tuple("MemType").finish(),
+            Self::TableType(_) => f.debug_tuple("TableType").finish(),
+            Self::GlobalType(_) => f.debug_tuple("GlobalType").finish(),
+            Self::ImportDesc(_) => f.debug_tuple("ImportDesc").finish(),
+            Self::Import(_) => f.debug_tuple("Import").finish(),
+            Self::ImportSection(_) => f.debug_tuple("ImportSection").finish(),
+            Self::FunctionSection(_) => f.debug_tuple("FunctionSection").finish(),
+            Self::TableSection(_) => f.debug_tuple("TableSection").finish(),
+            Self::ExportSection(_) => f.debug_tuple("ExportSection").finish(),
+            Self::MemorySection(_) => f.debug_tuple("MemorySection").finish(),
+            Self::GlobalSection(_) => f.debug_tuple("GlobalSection").finish(),
+            Self::CodeSection(_) => f.debug_tuple("CodeSection").finish(),
+            Self::DataSection(_) => f.debug_tuple("DataSection").finish(),
+            Self::ElementSection(_) => f.debug_tuple("ElementSection").finish(),
+            Self::Type(_) => f.debug_tuple("Type").finish(),
+            Self::TypeSection(_) => f.debug_tuple("TypeSection").finish(),
+            Self::Section(_) => f.debug_tuple("Section").finish(),
+            Self::Module(_) => f.debug_tuple("Module").finish(),
+        }
     }
 }
