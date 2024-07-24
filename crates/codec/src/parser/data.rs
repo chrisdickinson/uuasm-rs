@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{Advancement, Parse, ParseError};
+use crate::{Advancement, IRError, Parse, ParseError};
 
 use super::any::AnyParser;
 
@@ -8,8 +8,8 @@ use super::any::AnyParser;
 pub enum DataParser<T: IR> {
     #[default]
     Init,
-    Type(u8),
-    ActiveUnindexed(T::Expr),
+    MemIdx(T::MemIdx),
+    Expr(T::MemIdx, T::Expr),
 
     Ready(T::Data),
 }
@@ -29,24 +29,108 @@ impl<T: IR> Parse<T> for DataParser<T> {
                     AnyParser::Expr(Default::default()),
                     // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
                     // expr)
-                    |_irgen, _last_state, _this_state| todo!(),
+                    |irgen, last_state, _| {
+                        let AnyParser::Expr(parser) = last_state else {
+                            unreachable!()
+                        };
+
+                        let expr = parser.production(irgen)?;
+                        let mem_idx = irgen.make_mem_index(0).map_err(IRError)?;
+
+                        Ok(AnyParser::Data(Self::Expr(mem_idx, expr)))
+                    },
                 )),
 
-                // we need a "ByteVec" -- Repeated<> but for just a chunk o'
-                // bytes. NameParser could use it too!
                 // this parses a bytevec and becomes a data::passive
-                0x01 => todo!(),
+                0x01 => Ok(Advancement::YieldTo(
+                    window.offset(),
+                    AnyParser::ByteVec(Default::default()),
+                    // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
+                    // expr)
+                    |irgen, last_state, _| {
+                        let AnyParser::ByteVec(parser) = last_state else {
+                            unreachable!()
+                        };
+
+                        let data = parser.production(irgen)?;
+                        let data = irgen.make_data_passive(data).map_err(IRError)?;
+
+                        Ok(AnyParser::Data(Self::Ready(data)))
+                    },
+                )),
 
                 // this parses a memory index, const expr, and bytevec; producing
                 // an active data segment
-                0x02 => todo!(),
+                0x02 => Ok(Advancement::YieldTo(
+                    window.offset(),
+                    AnyParser::LEBU32(Default::default()),
+                    // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
+                    // expr)
+                    |irgen, last_state, _| {
+                        let AnyParser::LEBU32(parser) = last_state else {
+                            unreachable!()
+                        };
+
+                        let mem_idx = parser.production(irgen)?;
+                        let mem_idx = irgen.make_mem_index(mem_idx).map_err(IRError)?;
+
+                        Ok(AnyParser::Data(Self::MemIdx(mem_idx)))
+                    },
+                )),
 
                 unk => Err(ParseError::BadDataType(unk)),
             },
 
-            Self::Type(_) => todo!(),
-            Self::ActiveUnindexed(_) => todo!(),
-            Self::Ready(_) => todo!(),
+            Self::MemIdx(_) => Ok(Advancement::YieldTo(
+                window.offset(),
+                AnyParser::Expr(Default::default()),
+                // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
+                // expr)
+                |irgen, last_state, this_state| {
+                    let AnyParser::Expr(parser) = last_state else {
+                        unreachable!()
+                    };
+
+                    let AnyParser::Data(Self::MemIdx(mem_idx)) = this_state else {
+                        unreachable!()
+                    };
+
+                    let expr = parser.production(irgen)?;
+
+                    Ok(AnyParser::Data(Self::Expr(mem_idx, expr)))
+                },
+            )),
+
+            Self::Expr(_, _) => {
+                let 0x0b = window.take()? else {
+                    return Err(ParseError::InvalidState(
+                        "expected data constexpr to end with end-of-block byte 0x0b",
+                    ));
+                };
+
+                Ok(Advancement::YieldTo(
+                    window.offset(),
+                    AnyParser::ByteVec(Default::default()),
+                    // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
+                    // expr)
+                    |irgen, last_state, this_state| {
+                        let AnyParser::ByteVec(parser) = last_state else {
+                            unreachable!()
+                        };
+                        let AnyParser::Data(Self::Expr(mem_idx, expr)) = this_state else {
+                            unreachable!()
+                        };
+
+                        let data = parser.production(irgen)?;
+                        let data = irgen
+                            .make_data_active(data, mem_idx, expr)
+                            .map_err(IRError)?;
+
+                        Ok(AnyParser::Data(Self::Ready(data)))
+                    },
+                ))
+            }
+            Self::Ready(_) => Ok(Advancement::Ready(window.offset())),
         }
     }
 

@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{Advancement, IRError, Parse};
+use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseResult};
 
 use super::{any::AnyParser, expr::ExprParser};
 
@@ -16,11 +16,7 @@ pub enum GlobalParser<T: IR> {
 impl<T: IR> Parse<T> for GlobalParser<T> {
     type Production = T::Global;
 
-    fn advance(
-        &mut self,
-        _irgen: &mut T,
-        window: crate::window::DecodeWindow,
-    ) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
         match self {
             GlobalParser::Init => Ok(Advancement::YieldTo(
                 window.offset(),
@@ -51,7 +47,10 @@ impl<T: IR> Parse<T> for GlobalParser<T> {
                     )))
                 },
             )),
-            GlobalParser::Ready(_, _) => Ok(Advancement::Ready(window.offset())),
+            GlobalParser::Ready(_, _) => {
+                window.take()?;
+                Ok(Advancement::Ready(window.offset()))
+            }
         }
     }
 

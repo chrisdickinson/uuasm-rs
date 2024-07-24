@@ -12,6 +12,15 @@ pub enum Repeated<T: IR, P: Parse<T>> {
     },
 }
 
+impl<T: IR, P: Parse<T>> Repeated<T, P> {
+    pub fn times(n: usize) -> Self {
+        Self::Collecting {
+            result: Vec::with_capacity(n),
+            expected: n,
+        }
+    }
+}
+
 impl<T, P> Default for Repeated<T, P>
 where
     T: IR,

@@ -73,13 +73,21 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
                         let output = Target::extract(state.production(&mut self.irgen)?)?;
                         return Ok((output, &chunk[offset..]));
                     }
-
                     let (receiver, last_resume, last_bound) = self.state.pop().unwrap();
-                    self.state.push((
-                        resume(&mut self.irgen, state, receiver)?,
-                        last_resume,
-                        last_bound,
-                    ));
+
+                    let resumed = match resume(&mut self.irgen, state, dbg!(receiver)) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            self.state.push((
+                                AnyParser::Failed(e.clone()),
+                                noop_resume as ResumeFunc<T>,
+                                None,
+                            ));
+                            return Err(e);
+                        }
+                    };
+
+                    self.state.push((resumed, last_resume, last_bound));
                     offset
                 }
 
@@ -177,7 +185,7 @@ mod test {
         let mut parser = Decoder::default();
 
         dbg!(parser.write(include_bytes!("../test.wasm")));
-
+        dbg!(parser.flush());
         Ok(())
     }
 }

@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{Advancement, IRError, Parse};
+use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseResult};
 
 use super::any::AnyParser;
 
@@ -16,11 +16,7 @@ pub enum FuncParser<T: IR> {
 impl<T: IR> Parse<T> for FuncParser<T> {
     type Production = T::Func;
 
-    fn advance(
-        &mut self,
-        _irgen: &mut T,
-        window: crate::window::DecodeWindow,
-    ) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
         match self {
             Self::Init => Ok(Advancement::YieldTo(
                 window.offset(),
@@ -54,7 +50,10 @@ impl<T: IR> Parse<T> for FuncParser<T> {
                 },
             )),
 
-            Self::Ready(_, _) => Ok(Advancement::Ready(window.offset())),
+            Self::Ready(_, _) => {
+                window.take()?;
+                Ok(Advancement::Ready(window.offset()))
+            }
         }
     }
 

@@ -522,7 +522,7 @@ impl From<Type> for Vec<Local> {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct Func {
-    pub locals: Vec<Local>,
+    pub locals: Box<[Local]>,
     pub expr: Expr,
 }
 
@@ -542,13 +542,13 @@ pub enum SectionType {
     Import(Box<[Import]>),
     Function(Box<[TypeIdx]>),
     Table(Box<[TableType]>),
-    Memory(Vec<MemType>),
-    Global(Vec<Global>),
-    Export(Vec<Export>),
+    Memory(Box<[MemType]>),
+    Global(Box<[Global]>),
+    Export(Box<[Export]>),
     Start(FuncIdx),
-    Element(Vec<Elem>),
-    Code(Vec<Code>),
-    Data(Vec<Data>),
+    Element(Box<[Elem]>),
+    Code(Box<[Code]>),
+    Data(Box<[Data]>),
     DataCount(u32),
 }
 
@@ -565,13 +565,13 @@ pub struct Module {
     pub(crate) import_section: Option<Section<Box<[Import]>>>,
     pub(crate) function_section: Option<Section<Box<[TypeIdx]>>>,
     pub(crate) table_section: Option<Section<Box<[TableType]>>>,
-    pub(crate) memory_section: Option<Section<Vec<MemType>>>,
-    pub(crate) global_section: Option<Section<Vec<Global>>>,
-    pub(crate) export_section: Option<Section<Vec<Export>>>,
+    pub(crate) memory_section: Option<Section<Box<[MemType]>>>,
+    pub(crate) global_section: Option<Section<Box<[Global]>>>,
+    pub(crate) export_section: Option<Section<Box<[Export]>>>,
     pub(crate) start_section: Option<Section<FuncIdx>>,
-    pub(crate) element_section: Option<Section<Vec<Elem>>>,
-    pub(crate) code_section: Option<Section<Vec<Code>>>,
-    pub(crate) data_section: Option<Section<Vec<Data>>>,
+    pub(crate) element_section: Option<Section<Box<[Elem]>>>,
+    pub(crate) code_section: Option<Section<Box<[Code]>>>,
+    pub(crate) data_section: Option<Section<Box<[Data]>>>,
     pub(crate) datacount_section: Option<Section<u32>>,
 }
 
@@ -583,13 +583,13 @@ pub struct ModuleIntoInner {
     pub import_section: Option<Section<Box<[Import]>>>,
     pub function_section: Option<Section<Box<[TypeIdx]>>>,
     pub table_section: Option<Section<Box<[TableType]>>>,
-    pub memory_section: Option<Section<Vec<MemType>>>,
-    pub global_section: Option<Section<Vec<Global>>>,
-    pub export_section: Option<Section<Vec<Export>>>,
+    pub memory_section: Option<Section<Box<[MemType]>>>,
+    pub global_section: Option<Section<Box<[Global]>>>,
+    pub export_section: Option<Section<Box<[Export]>>>,
     pub start_section: Option<Section<FuncIdx>>,
-    pub element_section: Option<Section<Vec<Elem>>>,
-    pub code_section: Option<Section<Vec<Code>>>,
-    pub data_section: Option<Section<Vec<Data>>>,
+    pub element_section: Option<Section<Box<[Elem]>>>,
+    pub code_section: Option<Section<Box<[Code]>>>,
+    pub data_section: Option<Section<Box<[Data]>>>,
     pub datacount_section: Option<Section<u32>>,
 }
 
@@ -645,7 +645,7 @@ impl ModuleBuilder {
         self.index += 1;
         self
     }
-    pub fn memory_section(mut self, xs: Vec<MemType>) -> Self {
+    pub fn memory_section(mut self, xs: Box<[MemType]>) -> Self {
         self.inner.memory_section.replace(Section {
             inner: xs,
             index: self.index,
@@ -653,7 +653,7 @@ impl ModuleBuilder {
         self.index += 1;
         self
     }
-    pub fn global_section(mut self, xs: Vec<Global>) -> Self {
+    pub fn global_section(mut self, xs: Box<[Global]>) -> Self {
         self.inner.global_section.replace(Section {
             inner: xs,
             index: self.index,
@@ -661,7 +661,7 @@ impl ModuleBuilder {
         self.index += 1;
         self
     }
-    pub fn export_section(mut self, xs: Vec<Export>) -> Self {
+    pub fn export_section(mut self, xs: Box<[Export]>) -> Self {
         self.inner.export_section.replace(Section {
             inner: xs,
             index: self.index,
@@ -677,7 +677,7 @@ impl ModuleBuilder {
         self.index += 1;
         self
     }
-    pub fn element_section(mut self, xs: Vec<Elem>) -> Self {
+    pub fn element_section(mut self, xs: Box<[Elem]>) -> Self {
         self.inner.element_section.replace(Section {
             inner: xs,
             index: self.index,
@@ -685,7 +685,7 @@ impl ModuleBuilder {
         self.index += 1;
         self
     }
-    pub fn code_section(mut self, xs: Vec<Code>) -> Self {
+    pub fn code_section(mut self, xs: Box<[Code]>) -> Self {
         self.inner.code_section.replace(Section {
             inner: xs,
             index: self.index,
@@ -693,7 +693,7 @@ impl ModuleBuilder {
         self.index += 1;
         self
     }
-    pub fn data_section(mut self, xs: Vec<Data>) -> Self {
+    pub fn data_section(mut self, xs: Box<[Data]>) -> Self {
         self.inner.data_section.replace(Section {
             inner: xs,
             index: self.index,
@@ -770,15 +770,15 @@ impl Module {
     }
 
     pub fn memory_section(&self) -> Option<&[MemType]> {
-        self.memory_section.as_ref().map(|xs| xs.inner.as_slice())
+        self.memory_section.as_ref().map(|xs| &*xs.inner)
     }
 
     pub fn global_section(&self) -> Option<&[Global]> {
-        self.global_section.as_ref().map(|xs| xs.inner.as_slice())
+        self.global_section.as_ref().map(|xs| &*xs.inner)
     }
 
     pub fn export_section(&self) -> Option<&[Export]> {
-        self.export_section.as_ref().map(|xs| xs.inner.as_slice())
+        self.export_section.as_ref().map(|xs| &*xs.inner)
     }
 
     pub fn start_section(&self) -> Option<FuncIdx> {
@@ -786,15 +786,15 @@ impl Module {
     }
 
     pub fn element_section(&self) -> Option<&[Elem]> {
-        self.element_section.as_ref().map(|xs| xs.inner.as_slice())
+        self.element_section.as_ref().map(|xs| &*xs.inner)
     }
 
     pub fn code_section(&self) -> Option<&[Code]> {
-        self.code_section.as_ref().map(|xs| xs.inner.as_slice())
+        self.code_section.as_ref().map(|xs| &*xs.inner)
     }
 
     pub fn data_section(&self) -> Option<&[Data]> {
-        self.data_section.as_ref().map(|xs| xs.inner.as_slice())
+        self.data_section.as_ref().map(|xs| &*xs.inner)
     }
 
     pub fn datacount_section(&self) -> Option<u32> {
@@ -806,6 +806,7 @@ pub trait IR {
     type Error: Clone + Error + 'static;
 
     type BlockType;
+    type MemType;
     type ByteVec;
     type Code;
     type CodeIdx;
@@ -843,6 +844,110 @@ pub trait IR {
     type ValType;
     type VecType;
 
+    fn make_instr_select(
+        &mut self,
+        types: Box<[Self::ValType]>,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error>;
+
+    fn make_instr_table(
+        &mut self,
+        items: Box<[u32]>,
+        alternate: u32,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error>;
+
+    fn make_instr_unary64(
+        &mut self,
+        code: u8,
+        arg0: u64,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error>;
+
+    fn make_instr_nary(
+        &mut self,
+        code: u8,
+        argv: &[u32],
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error>;
+
+    fn make_instr_binary(
+        &mut self,
+        code: u8,
+        arg0: u32,
+        arg1: u32,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error>;
+
+    fn make_instr_unary(
+        &mut self,
+        code: u8,
+        arg0: u32,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error>;
+
+    fn make_instr_nullary(
+        &mut self,
+        code: u8,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error>;
+
+    fn make_instr_block(
+        &mut self,
+        block_kind: u8,
+        block_type: Self::BlockType,
+        expr: Self::Expr,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error>;
+
+    fn make_instr_block_ifelse(
+        &mut self,
+        block_type: Self::BlockType,
+        consequent: Self::Expr,
+        alternate: Option<Self::Expr>,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error>;
+
+    fn make_code(&mut self, item: Self::Func) -> Result<Self::Code, Self::Error>;
+
+    fn make_data_active(
+        &mut self,
+        bytes: Box<[u8]>,
+        mem_idx: Self::MemIdx,
+        expr: Self::Expr,
+    ) -> Result<Self::Data, Self::Error>;
+    fn make_data_passive(&mut self, bytes: Box<[u8]>) -> Result<Self::Data, Self::Error>;
+
+    fn make_elem(&mut self, item: Elem) -> Result<Self::Elem, Self::Error>;
+
+    fn make_limits(&mut self, lower: u32, upper: Option<u32>) -> Result<Self::Limits, Self::Error>;
+
+    fn make_export(
+        &mut self,
+        name: Self::Name,
+        desc: Self::ExportDesc,
+    ) -> Result<Self::Export, Self::Error>;
+
+    fn make_expr(&mut self, instrs: Vec<Self::Instr>) -> Result<Self::Expr, Self::Error>;
+
+    fn make_func(
+        &mut self,
+        locals: Box<[Self::Local]>,
+        expr: Self::Expr,
+    ) -> Result<Self::Func, Self::Error>;
+
+    fn make_global(
+        &mut self,
+        global_type: Self::GlobalType,
+        expr: Self::Expr,
+    ) -> Result<Self::Global, Self::Error>;
+
+    fn make_local(
+        &mut self,
+        count: u32,
+        val_type: Self::ValType,
+    ) -> Result<Self::Local, Self::Error>;
+
     fn make_name(&mut self, data: Box<[u8]>) -> Result<Self::Name, Self::Error>;
     fn make_custom_section(&mut self, data: Box<[u8]>) -> Result<Self::Section, Self::Error>;
     fn make_type_section(&mut self, data: Box<[Self::Type]>) -> Result<Self::Section, Self::Error>;
@@ -858,6 +963,41 @@ pub trait IR {
         &mut self,
         data: Box<[Self::TableType]>,
     ) -> Result<Self::Section, Self::Error>;
+    fn make_memory_section(
+        &mut self,
+        data: Box<[Self::MemType]>,
+    ) -> Result<Self::Section, Self::Error>;
+    fn make_global_section(
+        &mut self,
+        data: Box<[Self::Global]>,
+    ) -> Result<Self::Section, Self::Error>;
+    fn make_export_section(
+        &mut self,
+        data: Box<[Self::Export]>,
+    ) -> Result<Self::Section, Self::Error>;
+
+    fn make_start_section(&mut self, data: Self::FuncIdx) -> Result<Self::Section, Self::Error>;
+
+    fn make_element_section(
+        &mut self,
+        data: Box<[Self::Elem]>,
+    ) -> Result<Self::Section, Self::Error>;
+
+    fn make_code_section(&mut self, data: Box<[Self::Code]>) -> Result<Self::Section, Self::Error>;
+    fn make_data_section(&mut self, data: Box<[Self::Data]>) -> Result<Self::Section, Self::Error>;
+
+    fn make_datacount_section(&mut self, data: u32) -> Result<Self::Section, Self::Error>;
+
+    fn make_block_type_empty(&mut self) -> Result<Self::BlockType, Self::Error>;
+    fn make_block_type_val_type(
+        &mut self,
+        vt: Self::ValType,
+    ) -> Result<Self::BlockType, Self::Error>;
+    fn make_block_type_type_index(
+        &mut self,
+        ti: Self::TypeIdx,
+    ) -> Result<Self::BlockType, Self::Error>;
+
     fn make_val_type(&mut self, data: u8) -> Result<Self::ValType, Self::Error>;
     fn make_global_type(
         &mut self,
@@ -869,13 +1009,20 @@ pub trait IR {
         reftype_candidate: u8,
         limits: Self::Limits,
     ) -> Result<Self::TableType, Self::Error>;
+    fn make_mem_type(&mut self, limits: Self::Limits) -> Result<Self::MemType, Self::Error>;
+
     fn make_result_type(&mut self, data: &[u8]) -> Result<Self::ResultType, Self::Error>;
     fn make_type_index(&mut self, candidate: u32) -> Result<Self::TypeIdx, Self::Error>;
+    fn make_table_index(&mut self, candidate: u32) -> Result<Self::TableIdx, Self::Error>;
+    fn make_mem_index(&mut self, candidate: u32) -> Result<Self::MemIdx, Self::Error>;
+    fn make_global_index(&mut self, candidate: u32) -> Result<Self::GlobalIdx, Self::Error>;
+    fn make_func_index(&mut self, candidate: u32) -> Result<Self::FuncIdx, Self::Error>;
     fn make_func_type(
         &mut self,
         params: Option<Self::ResultType>,
         returns: Option<Self::ResultType>,
     ) -> Result<Self::Type, Self::Error>;
+
     fn make_import_desc_func(
         &mut self,
         type_idx: Self::TypeIdx,
@@ -892,6 +1039,27 @@ pub trait IR {
         &mut self,
         global_type: Self::Limits,
     ) -> Result<Self::ImportDesc, Self::Error>;
+
+    fn make_export_desc_func(
+        &mut self,
+        func_idx: Self::FuncIdx,
+    ) -> Result<Self::ExportDesc, Self::Error>;
+
+    fn make_export_desc_global(
+        &mut self,
+        global_idx: Self::GlobalIdx,
+    ) -> Result<Self::ExportDesc, Self::Error>;
+
+    fn make_export_desc_memtype(
+        &mut self,
+        mem_idx: Self::MemIdx,
+    ) -> Result<Self::ExportDesc, Self::Error>;
+
+    fn make_export_desc_table(
+        &mut self,
+        table_idx: Self::TableIdx,
+    ) -> Result<Self::ExportDesc, Self::Error>;
+
     fn make_import(
         &mut self,
         modname: Self::Name,
@@ -912,8 +1080,23 @@ pub enum DefaultIRGeneratorError {
     #[error("Invalid type index (got {0}; max is {1})")]
     InvalidTypeIndex(u32, u32),
 
+    #[error("Invalid global index (got {0}; max is {1})")]
+    InvalidGlobalIndex(u32, u32),
+
+    #[error("Invalid table index (got {0}; max is {1})")]
+    InvalidTableIndex(u32, u32),
+
+    #[error("Invalid func index (got {0}; max is {1})")]
+    InvalidFuncIndex(u32, u32),
+
+    #[error("Invalid memory index (got {0}; max is {1})")]
+    InvalidMemIndex(u32, u32),
+
     #[error("Types out of order (got section type {0} after type {1})")]
     InvalidSectionOrder(u32, u32),
+
+    #[error("Datacount section value did not match data element count (expected {0}, got {1})")]
+    DatacountMismatch(u32, u32),
 
     #[error("Invalid reference type {0}")]
     InvalidRefType(u8),
@@ -922,6 +1105,13 @@ pub enum DefaultIRGeneratorError {
 #[derive(Default, Clone, Debug)]
 pub struct DefaultIRGenerator {
     max_valid_type_index: u32,
+    max_valid_func_index: u32,
+    max_valid_table_index: u32,
+    max_valid_global_index: u32,
+    max_valid_element_index: u32,
+    max_valid_data_index: Option<u32>,
+    local_function_count: u32,
+    max_valid_mem_index: u32,
     last_section_discrim: u32,
 }
 
@@ -935,6 +1125,7 @@ impl IR for DefaultIRGenerator {
     type Error = DefaultIRGeneratorError;
 
     type BlockType = BlockType;
+    type MemType = MemType;
     type ByteVec = ByteVec;
     type Code = Code;
     type CodeIdx = CodeIdx;
@@ -991,6 +1182,24 @@ impl IR for DefaultIRGenerator {
         })
     }
 
+    fn make_block_type_empty(&mut self) -> Result<Self::BlockType, Self::Error> {
+        Ok(BlockType::Empty)
+    }
+
+    fn make_block_type_val_type(
+        &mut self,
+        vt: Self::ValType,
+    ) -> Result<Self::BlockType, Self::Error> {
+        Ok(BlockType::Val(vt))
+    }
+
+    fn make_block_type_type_index(
+        &mut self,
+        ti: Self::TypeIdx,
+    ) -> Result<Self::BlockType, Self::Error> {
+        Ok(BlockType::TypeIndex(ti))
+    }
+
     fn make_global_type(
         &mut self,
         valtype: Self::ValType,
@@ -1016,6 +1225,10 @@ impl IR for DefaultIRGenerator {
         } else {
             Err(DefaultIRGeneratorError::InvalidRefType(reftype_candidate))
         }
+    }
+
+    fn make_mem_type(&mut self, limits: Self::Limits) -> Result<Self::MemType, Self::Error> {
+        Ok(MemType(limits))
     }
 
     fn make_result_type(&mut self, data: &[u8]) -> Result<Self::ResultType, Self::Error> {
@@ -1067,6 +1280,8 @@ impl IR for DefaultIRGenerator {
                 self.last_section_discrim,
             ));
         }
+        self.local_function_count = data.len() as u32;
+        self.max_valid_func_index += self.local_function_count;
         self.last_section_discrim = 3;
         Ok(SectionType::Function(data))
     }
@@ -1081,8 +1296,127 @@ impl IR for DefaultIRGenerator {
                 self.last_section_discrim,
             ));
         }
+        self.max_valid_table_index += data.len() as u32;
         self.last_section_discrim = 4;
         Ok(SectionType::Table(data))
+    }
+
+    fn make_memory_section(
+        &mut self,
+        data: Box<[Self::MemType]>,
+    ) -> Result<Self::Section, Self::Error> {
+        if self.last_section_discrim > 4 {
+            return Err(DefaultIRGeneratorError::InvalidSectionOrder(
+                5,
+                self.last_section_discrim,
+            ));
+        }
+        self.max_valid_mem_index += data.len() as u32;
+        self.last_section_discrim = 5;
+        Ok(SectionType::Memory(data))
+    }
+
+    fn make_global_section(
+        &mut self,
+        data: Box<[Self::Global]>,
+    ) -> Result<Self::Section, Self::Error> {
+        if self.last_section_discrim > 5 {
+            return Err(DefaultIRGeneratorError::InvalidSectionOrder(
+                6,
+                self.last_section_discrim,
+            ));
+        }
+        self.max_valid_global_index += data.len() as u32;
+        self.last_section_discrim = 6;
+        Ok(SectionType::Global(data))
+    }
+
+    fn make_export_section(
+        &mut self,
+        data: Box<[Self::Export]>,
+    ) -> Result<Self::Section, Self::Error> {
+        if self.last_section_discrim > 6 {
+            return Err(DefaultIRGeneratorError::InvalidSectionOrder(
+                7,
+                self.last_section_discrim,
+            ));
+        }
+        self.last_section_discrim = 7;
+        Ok(SectionType::Export(data))
+    }
+
+    fn make_start_section(&mut self, data: Self::FuncIdx) -> Result<Self::Section, Self::Error> {
+        if self.last_section_discrim > 7 {
+            return Err(DefaultIRGeneratorError::InvalidSectionOrder(
+                8,
+                self.last_section_discrim,
+            ));
+        }
+        self.last_section_discrim = 8;
+        Ok(SectionType::Start(data))
+    }
+
+    fn make_element_section(
+        &mut self,
+        data: Box<[Self::Elem]>,
+    ) -> Result<Self::Section, Self::Error> {
+        if self.last_section_discrim > 8 {
+            return Err(DefaultIRGeneratorError::InvalidSectionOrder(
+                9,
+                self.last_section_discrim,
+            ));
+        }
+        self.max_valid_element_index = data.len() as u32;
+        self.last_section_discrim = 9;
+        Ok(SectionType::Element(data))
+    }
+
+    fn make_code_section(&mut self, code: Box<[Self::Code]>) -> Result<Self::Section, Self::Error> {
+        if self.last_section_discrim > 9 {
+            return Err(DefaultIRGeneratorError::InvalidSectionOrder(
+                0xa,
+                self.last_section_discrim,
+            ));
+        }
+        self.max_valid_element_index = code.len() as u32;
+        self.last_section_discrim = 0xa;
+        Ok(SectionType::Code(code))
+    }
+
+    fn make_data_section(&mut self, data: Box<[Self::Data]>) -> Result<Self::Section, Self::Error> {
+        if self.last_section_discrim > 0xa {
+            return Err(DefaultIRGeneratorError::InvalidSectionOrder(
+                0xb,
+                self.last_section_discrim,
+            ));
+        }
+
+        let data_len = data.len() as u32;
+        if let Some(max_valid_data_index) = self.max_valid_data_index {
+            if max_valid_data_index != data_len {
+                return Err(DefaultIRGeneratorError::DatacountMismatch(
+                    max_valid_data_index,
+                    data_len,
+                ));
+            }
+        } else {
+            self.max_valid_data_index = Some(data_len);
+        }
+        self.last_section_discrim = 0xb;
+        Ok(SectionType::Data(data))
+    }
+
+    // Datacount appears *before* code and data sections if present. It should not update the last
+    // seen discriminant but it also cannot be repeated.
+    fn make_datacount_section(&mut self, data: u32) -> Result<Self::Section, Self::Error> {
+        if self.max_valid_data_index.is_some() || self.last_section_discrim > 0x9 {
+            return Err(DefaultIRGeneratorError::InvalidSectionOrder(
+                0x12,
+                self.last_section_discrim,
+            ));
+        }
+        self.max_valid_data_index = Some(data);
+        Ok(SectionType::DataCount(data))
     }
 
     fn make_type_index(&mut self, candidate: u32) -> Result<Self::TypeIdx, Self::Error> {
@@ -1092,6 +1426,50 @@ impl IR for DefaultIRGenerator {
             Err(DefaultIRGeneratorError::InvalidTypeIndex(
                 candidate,
                 self.max_valid_type_index,
+            ))
+        }
+    }
+
+    fn make_global_index(&mut self, candidate: u32) -> Result<Self::GlobalIdx, Self::Error> {
+        if candidate < self.max_valid_global_index {
+            Ok(GlobalIdx(candidate))
+        } else {
+            Err(DefaultIRGeneratorError::InvalidGlobalIndex(
+                candidate,
+                self.max_valid_global_index,
+            ))
+        }
+    }
+
+    fn make_table_index(&mut self, candidate: u32) -> Result<Self::TableIdx, Self::Error> {
+        if candidate < self.max_valid_table_index {
+            Ok(TableIdx(candidate))
+        } else {
+            Err(DefaultIRGeneratorError::InvalidTableIndex(
+                candidate,
+                self.max_valid_table_index,
+            ))
+        }
+    }
+
+    fn make_mem_index(&mut self, candidate: u32) -> Result<Self::MemIdx, Self::Error> {
+        if candidate < self.max_valid_mem_index {
+            Ok(MemIdx(candidate))
+        } else {
+            Err(DefaultIRGeneratorError::InvalidMemIndex(
+                candidate,
+                self.max_valid_mem_index,
+            ))
+        }
+    }
+
+    fn make_func_index(&mut self, candidate: u32) -> Result<Self::FuncIdx, Self::Error> {
+        if candidate < self.max_valid_func_index {
+            Ok(FuncIdx(candidate))
+        } else {
+            Err(DefaultIRGeneratorError::InvalidMemIndex(
+                candidate,
+                self.max_valid_func_index,
             ))
         }
     }
@@ -1107,10 +1485,39 @@ impl IR for DefaultIRGenerator {
         ))
     }
 
+    fn make_export_desc_func(
+        &mut self,
+        func_idx: Self::FuncIdx,
+    ) -> Result<Self::ExportDesc, Self::Error> {
+        Ok(ExportDesc::Func(func_idx))
+    }
+
+    fn make_export_desc_global(
+        &mut self,
+        global_idx: Self::GlobalIdx,
+    ) -> Result<Self::ExportDesc, Self::Error> {
+        Ok(ExportDesc::Global(global_idx))
+    }
+
+    fn make_export_desc_memtype(
+        &mut self,
+        mem_idx: Self::MemIdx,
+    ) -> Result<Self::ExportDesc, Self::Error> {
+        Ok(ExportDesc::Mem(mem_idx))
+    }
+
+    fn make_export_desc_table(
+        &mut self,
+        table_idx: Self::TableIdx,
+    ) -> Result<Self::ExportDesc, Self::Error> {
+        Ok(ExportDesc::Table(table_idx))
+    }
+
     fn make_import_desc_func(
         &mut self,
         type_idx: Self::TypeIdx,
     ) -> Result<Self::ImportDesc, Self::Error> {
+        self.max_valid_func_index += 1;
         Ok(ImportDesc::Func(type_idx))
     }
 
@@ -1118,6 +1525,7 @@ impl IR for DefaultIRGenerator {
         &mut self,
         global_type: Self::GlobalType,
     ) -> Result<Self::ImportDesc, Self::Error> {
+        self.max_valid_global_index += 1;
         Ok(ImportDesc::Global(global_type))
     }
 
@@ -1125,6 +1533,7 @@ impl IR for DefaultIRGenerator {
         &mut self,
         mem_type: Self::Limits,
     ) -> Result<Self::ImportDesc, Self::Error> {
+        self.max_valid_mem_index += 1;
         Ok(ImportDesc::Mem(MemType(mem_type)))
     }
 
@@ -1132,6 +1541,7 @@ impl IR for DefaultIRGenerator {
         &mut self,
         table_type: Self::TableType,
     ) -> Result<Self::ImportDesc, Self::Error> {
+        self.max_valid_table_index += 1;
         Ok(ImportDesc::Table(table_type))
     }
 
@@ -1168,5 +1578,160 @@ impl IR for DefaultIRGenerator {
             };
         }
         Ok(builder.build())
+    }
+
+    fn make_code(&mut self, item: Self::Func) -> Result<Self::Code, Self::Error> {
+        Ok(Code(item))
+    }
+
+    fn make_data_active(
+        &mut self,
+        bytes: Box<[u8]>,
+        mem_idx: Self::MemIdx,
+        expr: Self::Expr,
+    ) -> Result<Self::Data, Self::Error> {
+        Ok(Data::Active(ByteVec(bytes), mem_idx, expr))
+    }
+
+    fn make_data_passive(&mut self, bytes: Box<[u8]>) -> Result<Self::Data, Self::Error> {
+        Ok(Data::Passive(ByteVec(bytes)))
+    }
+
+    fn make_elem(&mut self, _item: Elem) -> Result<Self::Elem, Self::Error> {
+        todo!("implement make_elem")
+    }
+    fn make_limits(&mut self, lower: u32, upper: Option<u32>) -> Result<Self::Limits, Self::Error> {
+        Ok(if let Some(upper) = upper {
+            Limits::Range(lower, upper)
+        } else {
+            Limits::Min(lower)
+        })
+    }
+
+    fn make_export(
+        &mut self,
+        name: Self::Name,
+        desc: Self::ExportDesc,
+    ) -> Result<Self::Export, Self::Error> {
+        Ok(Export { nm: name, desc })
+    }
+
+    fn make_expr(&mut self, instrs: Vec<Self::Instr>) -> Result<Self::Expr, Self::Error> {
+        Ok(Expr(instrs))
+    }
+
+    fn make_func(
+        &mut self,
+        locals: Box<[Self::Local]>,
+        expr: Self::Expr,
+    ) -> Result<Self::Func, Self::Error> {
+        Ok(Func { locals, expr })
+    }
+
+    fn make_global(
+        &mut self,
+        global_type: Self::GlobalType,
+        expr: Self::Expr,
+    ) -> Result<Self::Global, Self::Error> {
+        Ok(Global(global_type, expr))
+    }
+
+    fn make_local(
+        &mut self,
+        count: u32,
+        val_type: Self::ValType,
+    ) -> Result<Self::Local, Self::Error> {
+        Ok(Local(count, val_type))
+    }
+
+    fn make_instr_select(
+        &mut self,
+        _items: Box<[Self::ValType]>,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        // TODO
+        Ok(())
+    }
+
+    fn make_instr_table(
+        &mut self,
+        items: Box<[u32]>,
+        alternate: u32,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        // TODO
+        Ok(())
+    }
+
+    fn make_instr_unary64(
+        &mut self,
+        code: u8,
+        arg0: u64,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        // TODO
+        Ok(())
+    }
+
+    fn make_instr_nary(
+        &mut self,
+        code: u8,
+        argv: &[u32],
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        // TODO
+        Ok(())
+    }
+
+    fn make_instr_binary(
+        &mut self,
+        code: u8,
+        arg0: u32,
+        arg1: u32,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        // TODO
+        Ok(())
+    }
+
+    fn make_instr_unary(
+        &mut self,
+        code: u8,
+        arg0: u32,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        // TODO
+        Ok(())
+    }
+
+    fn make_instr_nullary(
+        &mut self,
+        code: u8,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        // TODO
+        Ok(())
+    }
+
+    fn make_instr_block(
+        &mut self,
+        block_kind: u8,
+        block_type: Self::BlockType,
+        expr: Self::Expr,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        // TODO
+        Ok(())
+    }
+
+    fn make_instr_block_ifelse(
+        &mut self,
+        block_type: Self::BlockType,
+        consequent: Self::Expr,
+        alternate: Option<Self::Expr>,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        // TODO
+        Ok(())
     }
 }

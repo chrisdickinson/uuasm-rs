@@ -12,7 +12,6 @@ pub enum ModuleParser<T: IR> {
     #[default]
     Magic,
     TakeSection(Vec<<T as IR>::Section>),
-    Done(Vec<<T as IR>::Section>),
 }
 
 impl<T: IR> Parse<T> for ModuleParser<T> {
@@ -53,7 +52,6 @@ impl<T: IR> Parse<T> for ModuleParser<T> {
             ModuleParser::TakeSection(builder) => {
                 match window.peek() {
                     Err(AdvancementError::Expected(1, _)) => {
-                        *self = ModuleParser::Done(builder.split_off(0));
                         return Ok(Advancement::Ready(window.offset()));
                     }
                     Err(err) => return Err(err.into()),
@@ -78,13 +76,11 @@ impl<T: IR> Parse<T> for ModuleParser<T> {
                     },
                 ))
             }
-
-            ModuleParser::Done(_) => Ok(Advancement::Ready(window.offset())),
         }
     }
 
     fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
-        let ModuleParser::Done(sections) = self else {
+        let ModuleParser::TakeSection(sections) = self else {
             unreachable!();
         };
 

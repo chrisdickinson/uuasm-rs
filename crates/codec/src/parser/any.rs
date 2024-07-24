@@ -3,14 +3,16 @@ use uuasm_nodes::IR;
 use crate::{window::DecodeWindow, ExtractError, ExtractTarget, Parse, ParseError, ParseResult};
 
 use super::{
-    accumulator::Accumulator, code::CodeParser, data::DataParser, elem::ElemParser,
-    export::ExportParser, exportdesc::ExportDescParser, expr::ExprParser, func::FuncParser,
-    func_idxs::FuncIdxParser, global::GlobalParser, global_idxs::GlobalIdxParser,
+    accumulator::Accumulator, block::BlockParser, block_ifelse::IfElseBlockParser,
+    blocktype::BlockTypeParser, bytevec::ByteVecParser, code::CodeParser, data::DataParser,
+    elem::ElemParser, export::ExportParser, exportdesc::ExportDescParser, expr::ExprParser,
+    func::FuncParser, func_idxs::FuncIdxParser, global::GlobalParser, global_idxs::GlobalIdxParser,
     globaltype::GlobalTypeParser, importdescs::ImportDescParser, imports::ImportParser,
-    instr::InstrParser, leb::LEBParser, limits::LimitsParser, local::LocalParser,
-    mem_idxs::MemIdxParser, memtype::MemTypeParser, module::ModuleParser, names::NameParser,
-    repeated::Repeated, section::SectionParser, table_idxs::TableIdxParser,
-    tabletype::TableTypeParser, type_idxs::TypeIdxParser, types::TypeParser,
+    instrarg_refnull::InstrArgRefNullParser, instrarg_table::InstrArgTableParser, leb::LEBParser,
+    limits::LimitsParser, local::LocalParser, mem_idxs::MemIdxParser, memtype::MemTypeParser,
+    module::ModuleParser, names::NameParser, repeated::Repeated, section::SectionParser,
+    table_idxs::TableIdxParser, tabletype::TableTypeParser, type_idxs::TypeIdxParser,
+    types::TypeParser,
 };
 
 pub enum AnyParser<T: IR> {
@@ -18,8 +20,16 @@ pub enum AnyParser<T: IR> {
     LEBI64(LEBParser<i64>),
     LEBU32(LEBParser<u32>),
     LEBU64(LEBParser<u64>),
+    RepeatedLEBU32(Repeated<T, LEBParser<u32>>),
+    ByteVec(ByteVecParser),
+    ArgTable(InstrArgTableParser),
+    ArgRefNull(InstrArgRefNullParser),
     Accumulate(Accumulator),
     Failed(ParseError<T::Error>),
+
+    IfElseBlock(IfElseBlockParser<T>),
+    Block(BlockParser<T>),
+    BlockType(BlockTypeParser<T>),
 
     TypeIdx(TypeIdxParser<T>),
     GlobalIdx(GlobalIdxParser<T>),
@@ -27,7 +37,6 @@ pub enum AnyParser<T: IR> {
     TableIdx(TableIdxParser<T>),
     FuncIdx(FuncIdxParser<T>),
 
-    Instr(InstrParser<T>),
     Code(CodeParser<T>),
     Data(DataParser<T>),
     Elem(ElemParser<T>),
@@ -128,12 +137,59 @@ repeated_impls!(Data);
 repeated_impls!(Elem, ElementSection);
 repeated_impls!(MemType, MemorySection);
 
+impl<T: IR> From<LEBParser<u32>> for AnyParser<T> {
+    fn from(value: LEBParser<u32>) -> Self {
+        Self::LEBU32(value)
+    }
+}
+
+impl<T: IR> From<Repeated<T, LEBParser<u32>>> for AnyParser<T> {
+    fn from(value: Repeated<T, LEBParser<u32>>) -> Self {
+        Self::RepeatedLEBU32(value)
+    }
+}
+
+impl<T: IR> TryFrom<AnyParser<T>> for Repeated<T, LEBParser<u32>> {
+    type Error = ParseError<T::Error>;
+
+    fn try_from(value: AnyParser<T>) -> Result<Self, Self::Error> {
+        if let AnyParser::RepeatedLEBU32(v) = value {
+            Ok(v)
+        } else {
+            Err(ParseError::InvalidState(concat!(
+                "cannot cast into ",
+                stringify!($section)
+            )))
+        }
+    }
+}
+
+impl<T: IR> TryFrom<AnyParser<T>> for LEBParser<u32> {
+    type Error = ParseError<T::Error>;
+
+    fn try_from(value: AnyParser<T>) -> Result<Self, Self::Error> {
+        if let AnyParser::LEBU32(parser) = value {
+            Ok(parser)
+        } else {
+            Err(ParseError::InvalidState(concat!(
+                "expected AnyParser::",
+                stringify!($id)
+            )))
+        }
+    }
+}
+
 pub enum Never {}
 pub enum AnyProduction<T: IR> {
     LEBI32(<LEBParser<i32> as Parse<T>>::Production),
     LEBI64(<LEBParser<i64> as Parse<T>>::Production),
     LEBU32(<LEBParser<u32> as Parse<T>>::Production),
     LEBU64(<LEBParser<u64> as Parse<T>>::Production),
+    ByteVec(<ByteVecParser as Parse<T>>::Production),
+
+    RepeatedLEBU32(<Repeated<T, LEBParser<u32>> as Parse<T>>::Production),
+    ArgTable(<InstrArgTableParser as Parse<T>>::Production),
+    ArgRefNull(<InstrArgRefNullParser as Parse<T>>::Production),
 
     TypeIdx(<TypeIdxParser<T> as Parse<T>>::Production),
     FuncIdx(<FuncIdxParser<T> as Parse<T>>::Production),
@@ -141,7 +197,9 @@ pub enum AnyProduction<T: IR> {
     GlobalIdx(<GlobalIdxParser<T> as Parse<T>>::Production),
     TableIdx(<TableIdxParser<T> as Parse<T>>::Production),
 
-    Instr(<InstrParser<T> as Parse<T>>::Production),
+    Block(<BlockParser<T> as Parse<T>>::Production),
+    IfElseBlock(<IfElseBlockParser<T> as Parse<T>>::Production),
+    BlockType(<BlockTypeParser<T> as Parse<T>>::Production),
     Code(<CodeParser<T> as Parse<T>>::Production),
     Data(<DataParser<T> as Parse<T>>::Production),
     Elem(<ElemParser<T> as Parse<T>>::Production),
@@ -204,7 +262,6 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::TypeIdx(p) => p.advance(irgen, window),
             AnyParser::FunctionSection(p) => p.advance(irgen, window),
             AnyParser::TableSection(p) => p.advance(irgen, window),
-            AnyParser::Instr(p) => p.advance(irgen, window),
             AnyParser::Code(p) => p.advance(irgen, window),
             AnyParser::Data(p) => p.advance(irgen, window),
             AnyParser::Elem(p) => p.advance(irgen, window),
@@ -226,6 +283,13 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::CodeSection(p) => p.advance(irgen, window),
             AnyParser::DataSection(p) => p.advance(irgen, window),
             AnyParser::ElementSection(p) => p.advance(irgen, window),
+            AnyParser::RepeatedLEBU32(p) => p.advance(irgen, window),
+            AnyParser::IfElseBlock(p) => p.advance(irgen, window),
+            AnyParser::Block(p) => p.advance(irgen, window),
+            AnyParser::BlockType(p) => p.advance(irgen, window),
+            AnyParser::ArgTable(p) => p.advance(irgen, window),
+            AnyParser::ArgRefNull(p) => p.advance(irgen, window),
+            AnyParser::ByteVec(p) => p.advance(irgen, window),
         }
     }
 
@@ -251,7 +315,6 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::TypeIdx(p) => AnyProduction::TypeIdx(p.production(irgen)?),
             AnyParser::FunctionSection(p) => AnyProduction::FunctionSection(p.production(irgen)?),
             AnyParser::TableSection(p) => AnyProduction::TableSection(p.production(irgen)?),
-            AnyParser::Instr(p) => AnyProduction::Instr(p.production(irgen)?),
             AnyParser::Code(p) => AnyProduction::Code(p.production(irgen)?),
             AnyParser::Data(p) => AnyProduction::Data(p.production(irgen)?),
             AnyParser::Elem(p) => AnyProduction::Elem(p.production(irgen)?),
@@ -273,6 +336,13 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::CodeSection(p) => AnyProduction::CodeSection(p.production(irgen)?),
             AnyParser::MemorySection(p) => AnyProduction::MemorySection(p.production(irgen)?),
             AnyParser::GlobalSection(p) => AnyProduction::GlobalSection(p.production(irgen)?),
+            AnyParser::RepeatedLEBU32(p) => AnyProduction::RepeatedLEBU32(p.production(irgen)?),
+            AnyParser::IfElseBlock(p) => AnyProduction::IfElseBlock(p.production(irgen)?),
+            AnyParser::Block(p) => AnyProduction::Block(p.production(irgen)?),
+            AnyParser::BlockType(p) => AnyProduction::BlockType(p.production(irgen)?),
+            AnyParser::ArgTable(p) => AnyProduction::ArgTable(p.production(irgen)?),
+            AnyParser::ArgRefNull(p) => AnyProduction::ArgRefNull(p.production(irgen)?),
+            AnyParser::ByteVec(p) => AnyProduction::ByteVec(p.production(irgen)?),
         })
     }
 }
@@ -284,6 +354,10 @@ impl<T: IR> std::fmt::Debug for AnyParser<T> {
             Self::LEBI64(_) => f.debug_tuple("LEBI64").finish(),
             Self::LEBU32(_) => f.debug_tuple("LEBU32").finish(),
             Self::LEBU64(_) => f.debug_tuple("LEBU64").finish(),
+            Self::RepeatedLEBU32(_) => f.debug_tuple("RepeatedLEBU32").finish(),
+            Self::ArgTable(_) => f.debug_tuple("ArgTable").finish(),
+            Self::ByteVec(_) => f.debug_tuple("ByteVec").finish(),
+            Self::ArgRefNull(_) => f.debug_tuple("ArgRefNull").finish(),
             Self::Accumulate(_) => f.debug_tuple("Accumulate").finish(),
             Self::Failed(_) => f.debug_tuple("Failed").finish(),
             Self::TypeIdx(_) => f.debug_tuple("TypeIdx").finish(),
@@ -291,7 +365,9 @@ impl<T: IR> std::fmt::Debug for AnyParser<T> {
             Self::MemIdx(_) => f.debug_tuple("MemIdx").finish(),
             Self::TableIdx(_) => f.debug_tuple("TableIdx").finish(),
             Self::FuncIdx(_) => f.debug_tuple("FuncIdx").finish(),
-            Self::Instr(_) => f.debug_tuple("Instr").finish(),
+            Self::Block(_) => f.debug_tuple("Block").finish(),
+            Self::IfElseBlock(_) => f.debug_tuple("IfElseBlock").finish(),
+            Self::BlockType(_) => f.debug_tuple("BlockType").finish(),
             Self::Code(_) => f.debug_tuple("Code").finish(),
             Self::Data(_) => f.debug_tuple("Data").finish(),
             Self::Elem(_) => f.debug_tuple("Elem").finish(),

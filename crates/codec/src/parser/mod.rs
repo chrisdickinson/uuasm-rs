@@ -1,5 +1,9 @@
 pub(crate) mod accumulator;
 pub(crate) mod any;
+pub(crate) mod block;
+pub(crate) mod block_ifelse;
+pub(crate) mod blocktype;
+pub(crate) mod bytevec;
 pub(crate) mod code;
 pub(crate) mod data;
 pub(crate) mod elem;
@@ -13,8 +17,11 @@ pub(crate) mod global_idxs;
 pub(crate) mod globaltype;
 pub(crate) mod importdescs;
 pub(crate) mod imports;
-pub(crate) mod instr;
+pub(crate) mod instrarg_multibyte;
+pub(crate) mod instrarg_refnull;
+pub(crate) mod instrarg_table;
 pub(crate) mod leb;
+
 pub(crate) mod limits;
 pub(crate) mod local;
 pub(crate) mod mem_idxs;
