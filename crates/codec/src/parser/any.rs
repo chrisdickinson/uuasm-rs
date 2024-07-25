@@ -240,6 +240,7 @@ pub enum AnyProduction<T: IR> {
 impl<T: IR> Parse<T> for AnyParser<T> {
     type Production = AnyProduction<T>;
 
+    #[inline]
     fn advance(&mut self, irgen: &mut T, window: DecodeWindow<'_>) -> ParseResult<T> {
         match self {
             AnyParser::Failed(e) => Err(e.clone()),
