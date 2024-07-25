@@ -3,6 +3,7 @@ use std::marker::PhantomData;
 use uuasm_nodes::{DefaultIRGenerator, IR};
 
 use crate::{
+    cold,
     parser::{
         any::{AnyParser, AnyProduction},
         module::ModuleParser,
@@ -69,11 +70,11 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
         loop {
             let offset = match state.advance(&mut self.irgen, window) {
                 Ok(Advancement::Ready(offset)) => {
-                    if self.state.is_empty() {
+                    let Some((receiver, last_resume, last_bound)) = self.state.pop() else {
+                        cold();
                         let output = Target::extract(state.production(&mut self.irgen)?)?;
                         return Ok((output, &chunk[offset..]));
-                    }
-                    let (receiver, last_resume, last_bound) = self.state.pop().unwrap();
+                    };
 
                     let resumed = match resume(&mut self.irgen, state, receiver) {
                         Ok(v) => v,
