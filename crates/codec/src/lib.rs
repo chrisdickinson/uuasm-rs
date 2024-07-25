@@ -9,7 +9,8 @@ pub(crate) fn cold() {}
 
 pub use crate::original::parse as old_parse;
 
-use crate::parser::any::AnyParser;
+pub use crate::parser::any::AnyParser;
+pub use crate::parser::module::ModuleParser;
 
 pub use decoder::Decoder;
 
