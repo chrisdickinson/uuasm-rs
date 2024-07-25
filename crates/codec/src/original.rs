@@ -3,7 +3,7 @@ use nom::error::ParseError;
 use nom_locate::LocatedSpan;
 use std::fmt::Debug;
 
-use crate::nodes::*;
+use uuasm_nodes::*;
 
 type Span<'a> = LocatedSpan<&'a [u8]>;
 
@@ -956,7 +956,7 @@ impl<'a> ParseWasmBinary<'a> for Import {
                 Name::from_wasm_bytes,
                 ImportDesc::from_wasm_bytes,
             )),
-            |(r#mod, nm, desc)| Import { r#mod, nm, desc },
+            |(r#mod, nm, desc)| Import::new(r#mod, nm, desc),
         )(input)
     }
 }
@@ -996,7 +996,7 @@ impl<'a> ParseWasmBinary<'a> for Export {
 
         map(
             tuple((Name::from_wasm_bytes, ExportDesc::from_wasm_bytes)),
-            |(nm, desc)| Export { nm, desc },
+            |(nm, desc)| Export::new(nm.0, desc),
         )(input)
     }
 }
@@ -1122,7 +1122,10 @@ impl<'a> ParseWasmBinary<'a> for Func {
 
         map(
             tuple((Vec::<Local>::from_wasm_bytes, Expr::from_wasm_bytes)),
-            |(locals, expr)| Func { locals, expr },
+            |(locals, expr)| Func {
+                locals: locals.into(),
+                expr,
+            },
         )(input)
     }
 }
@@ -1187,17 +1190,17 @@ impl<'a> ParseWasmBinary<'a> for SectionType {
         let section = match section_id[0] {
             0x0 => SectionType::Custom(section[..].into()),
             0x1 => SectionType::Type(Vec::<Type>::from_wasm_bytes(section)?.1.into()),
-            0x2 => SectionType::Import(Vec::<Import>::from_wasm_bytes(section)?.1),
-            0x3 => SectionType::Function(Vec::<TypeIdx>::from_wasm_bytes(section)?.1),
-            0x4 => SectionType::Table(Vec::<TableType>::from_wasm_bytes(section)?.1),
-            0x5 => SectionType::Memory(Vec::<MemType>::from_wasm_bytes(section)?.1),
-            0x6 => SectionType::Global(Vec::<Global>::from_wasm_bytes(section)?.1),
-            0x7 => SectionType::Export(Vec::<Export>::from_wasm_bytes(section)?.1),
+            0x2 => SectionType::Import(Vec::<Import>::from_wasm_bytes(section)?.1.into()),
+            0x3 => SectionType::Function(Vec::<TypeIdx>::from_wasm_bytes(section)?.1.into()),
+            0x4 => SectionType::Table(Vec::<TableType>::from_wasm_bytes(section)?.1.into()),
+            0x5 => SectionType::Memory(Vec::<MemType>::from_wasm_bytes(section)?.1.into()),
+            0x6 => SectionType::Global(Vec::<Global>::from_wasm_bytes(section)?.1.into()),
+            0x7 => SectionType::Export(Vec::<Export>::from_wasm_bytes(section)?.1.into()),
             0x8 => SectionType::Start(FuncIdx::from_wasm_bytes(section)?.1),
-            0x9 => SectionType::Element(Vec::<Elem>::from_wasm_bytes(section)?.1),
-            0xa => SectionType::Code(Vec::<Code>::from_wasm_bytes(section)?.1),
-            0xb => SectionType::Data(Vec::<Data>::from_wasm_bytes(section)?.1),
-            0xc => SectionType::DataCount(u32::from_wasm_bytes(section)?.1),
+            0x9 => SectionType::Element(Vec::<Elem>::from_wasm_bytes(section)?.1.into()),
+            0xa => SectionType::Code(Vec::<Code>::from_wasm_bytes(section)?.1.into()),
+            0xb => SectionType::Data(Vec::<Data>::from_wasm_bytes(section)?.1.into()),
+            0xc => SectionType::DataCount(u32::from_wasm_bytes(section)?.1.into()),
             _ => return fail::<_, Self, _>(section),
         };
 
@@ -1225,33 +1228,27 @@ impl<'a> ParseWasmBinary<'a> for Module {
                     module_builder = module_builder.type_section(xs);
                 }
 
-                SectionType::Import(mut xs) => {
-                    xs.shrink_to_fit();
+                SectionType::Import(xs) => {
                     module_builder = module_builder.import_section(xs);
                 }
 
-                SectionType::Function(mut xs) => {
-                    xs.shrink_to_fit();
+                SectionType::Function(xs) => {
                     module_builder = module_builder.function_section(xs);
                 }
 
-                SectionType::Table(mut xs) => {
-                    xs.shrink_to_fit();
+                SectionType::Table(xs) => {
                     module_builder = module_builder.table_section(xs);
                 }
 
-                SectionType::Memory(mut xs) => {
-                    xs.shrink_to_fit();
+                SectionType::Memory(xs) => {
                     module_builder = module_builder.memory_section(xs);
                 }
 
-                SectionType::Global(mut xs) => {
-                    xs.shrink_to_fit();
+                SectionType::Global(xs) => {
                     module_builder = module_builder.global_section(xs);
                 }
 
-                SectionType::Export(mut xs) => {
-                    xs.shrink_to_fit();
+                SectionType::Export(xs) => {
                     module_builder = module_builder.export_section(xs);
                 }
 
@@ -1259,18 +1256,15 @@ impl<'a> ParseWasmBinary<'a> for Module {
                     module_builder = module_builder.start_section(xs);
                 }
 
-                SectionType::Element(mut xs) => {
-                    xs.shrink_to_fit();
+                SectionType::Element(xs) => {
                     module_builder = module_builder.element_section(xs);
                 }
 
-                SectionType::Code(mut xs) => {
-                    xs.shrink_to_fit();
+                SectionType::Code(xs) => {
                     module_builder = module_builder.code_section(xs);
                 }
 
-                SectionType::Data(mut xs) => {
-                    xs.shrink_to_fit();
+                SectionType::Data(xs) => {
                     module_builder = module_builder.data_section(xs);
                 }
 
@@ -1396,7 +1390,7 @@ mod test {
 
     #[test]
     fn test_read_wasm() {
-        let bytes = include_bytes!("../example.wasm");
+        let bytes = include_bytes!("../../../example.wasm");
 
         let (input, wasm) =
             Module::from_wasm_bytes::<nom::error::VerboseError<Span>>(Span::new(bytes)).unwrap();
@@ -1417,20 +1411,26 @@ mod test {
                 )]
                 .into(),
             )
-            .function_section(vec![TypeIdx(0)])
-            .memory_section(vec![MemType(Limits::Min(64))])
-            .export_section(vec![Export {
-                nm: Name("add_i32".to_string()),
-                desc: ExportDesc::Func(FuncIdx(0)),
-            }])
-            .code_section(vec![Code(Func {
-                locals: vec![],
-                expr: Expr(vec![
-                    Instr::LocalGet(LocalIdx(0)),
-                    Instr::LocalGet(LocalIdx(1)),
-                    Instr::I32Add,
-                ]),
-            })])
+            .function_section(vec![TypeIdx(0)].into())
+            .memory_section(vec![MemType(Limits::Min(64))].into())
+            .export_section(
+                vec![Export::new(
+                    "add_i32".to_string(),
+                    ExportDesc::Func(FuncIdx(0)),
+                )]
+                .into(),
+            )
+            .code_section(
+                vec![Code(Func {
+                    locals: vec![].into(),
+                    expr: Expr(vec![
+                        Instr::LocalGet(LocalIdx(0)),
+                        Instr::LocalGet(LocalIdx(1)),
+                        Instr::I32Add,
+                    ]),
+                })]
+                .into(),
+            )
             .build();
 
         // XXX future chris, turn this into a struct with fields instead of a struct with one big

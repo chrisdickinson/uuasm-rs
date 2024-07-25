@@ -75,7 +75,7 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
                     }
                     let (receiver, last_resume, last_bound) = self.state.pop().unwrap();
 
-                    let resumed = match resume(&mut self.irgen, state, dbg!(receiver)) {
+                    let resumed = match resume(&mut self.irgen, state, receiver) {
                         Ok(v) => v,
                         Err(e) => {
                             self.state.push((
@@ -185,6 +185,17 @@ mod test {
         let mut parser = Decoder::default();
 
         dbg!(parser.write(include_bytes!("../test.wasm")));
+        dbg!(parser.flush());
+        Ok(())
+    }
+
+    //
+
+    #[test]
+    fn parser2_works_fr_fr() -> anyhow::Result<()> {
+        let mut parser = Decoder::default();
+
+        dbg!(parser.write(include_bytes!("../../../src/testsuite/func.0.wasm")));
         dbg!(parser.flush());
         Ok(())
     }

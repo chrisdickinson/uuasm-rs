@@ -1,6 +1,9 @@
 pub(crate) mod decoder;
+pub(crate) mod original;
 pub(crate) mod parser;
 pub(crate) mod window;
+
+pub use crate::original::parse as old_parse;
 
 use crate::parser::any::AnyParser;
 

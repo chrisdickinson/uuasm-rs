@@ -864,13 +864,6 @@ pub trait IR {
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error>;
 
-    fn make_instr_nary(
-        &mut self,
-        code: u8,
-        argv: &[u32],
-        instrs: &mut Vec<Self::Instr>,
-    ) -> Result<(), Self::Error>;
-
     fn make_instr_binary(
         &mut self,
         code: u8,
@@ -1073,6 +1066,9 @@ pub trait IR {
 pub enum DefaultIRGeneratorError {
     #[error("Invalid name: {0}")]
     InvalidName(#[from] std::str::Utf8Error),
+
+    #[error("Invalid instruction (got {0:X}H)")]
+    InvalidInstruction(u8),
 
     #[error("Invalid type (got {0:X}H)")]
     InvalidType(u8),
@@ -1646,10 +1642,10 @@ impl IR for DefaultIRGenerator {
 
     fn make_instr_select(
         &mut self,
-        _items: Box<[Self::ValType]>,
+        items: Box<[Self::ValType]>,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        // TODO
+        instrs.push(Instr::Select(items));
         Ok(())
     }
 
@@ -1659,6 +1655,8 @@ impl IR for DefaultIRGenerator {
         alternate: u32,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
+        let items = items.iter().map(|xs| LabelIdx(*xs)).collect();
+        instrs.push(Instr::BrTable(items, LabelIdx(alternate)));
         // TODO
         Ok(())
     }
@@ -1669,17 +1667,11 @@ impl IR for DefaultIRGenerator {
         arg0: u64,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        // TODO
-        Ok(())
-    }
-
-    fn make_instr_nary(
-        &mut self,
-        code: u8,
-        argv: &[u32],
-        instrs: &mut Vec<Self::Instr>,
-    ) -> Result<(), Self::Error> {
-        // TODO
+        match code {
+            0x42 => instrs.push(Instr::I64Const(arg0 as i64)),
+            0x44 => instrs.push(Instr::F64Const(f64::from_bits(arg0))),
+            _ => return Err(DefaultIRGeneratorError::InvalidInstruction(code)),
+        }
         Ok(())
     }
 
@@ -1690,7 +1682,33 @@ impl IR for DefaultIRGenerator {
         arg1: u32,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        // TODO
+        instrs.push(match code {
+            0x11 => Instr::CallIndirect(self.make_type_index(arg0)?, self.make_table_index(arg1)?),
+            0x28 => Instr::I32Load(MemArg(arg0, arg1)),
+            0x29 => Instr::I64Load(MemArg(arg0, arg1)),
+            0x2a => Instr::F32Load(MemArg(arg0, arg1)),
+            0x2b => Instr::F64Load(MemArg(arg0, arg1)),
+            0x2c => Instr::I32Load8S(MemArg(arg0, arg1)),
+            0x2d => Instr::I32Load8U(MemArg(arg0, arg1)),
+            0x2e => Instr::I32Load16S(MemArg(arg0, arg1)),
+            0x2f => Instr::I32Load16U(MemArg(arg0, arg1)),
+            0x30 => Instr::I64Load8S(MemArg(arg0, arg1)),
+            0x31 => Instr::I64Load8U(MemArg(arg0, arg1)),
+            0x32 => Instr::I64Load16S(MemArg(arg0, arg1)),
+            0x33 => Instr::I64Load16U(MemArg(arg0, arg1)),
+            0x34 => Instr::I64Load32S(MemArg(arg0, arg1)),
+            0x35 => Instr::I64Load32U(MemArg(arg0, arg1)),
+            0x36 => Instr::I32Store(MemArg(arg0, arg1)),
+            0x37 => Instr::I64Store(MemArg(arg0, arg1)),
+            0x38 => Instr::F32Store(MemArg(arg0, arg1)),
+            0x39 => Instr::F64Store(MemArg(arg0, arg1)),
+            0x3a => Instr::I32Store8(MemArg(arg0, arg1)),
+            0x3b => Instr::I32Store16(MemArg(arg0, arg1)),
+            0x3c => Instr::I64Store8(MemArg(arg0, arg1)),
+            0x3d => Instr::I64Store16(MemArg(arg0, arg1)),
+            0x3e => Instr::I64Store32(MemArg(arg0, arg1)),
+            unk => return Err(DefaultIRGeneratorError::InvalidInstruction(unk)),
+        });
         Ok(())
     }
 
@@ -1700,7 +1718,26 @@ impl IR for DefaultIRGenerator {
         arg0: u32,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        // TODO
+        instrs.push(match code {
+            0x10 => Instr::Call(self.make_func_index(arg0)?),
+            0x41 => Instr::I32Const(arg0 as i32),
+            0x43 => Instr::F32Const(f32::from_bits(arg0)),
+            // TODO: add "make_local_index"
+            0x20 => Instr::LocalGet(LocalIdx(arg0)),
+            0x21 => Instr::LocalSet(LocalIdx(arg0)),
+            0x22 => Instr::LocalTee(LocalIdx(arg0)),
+            0x23 => Instr::GlobalGet(self.make_global_index(arg0)?),
+            0x24 => Instr::GlobalSet(self.make_global_index(arg0)?),
+            0x25 => Instr::TableGet(self.make_table_index(arg0)?),
+            0x26 => Instr::TableSet(self.make_table_index(arg0)?),
+            0x3f => Instr::MemorySize(MemIdx(arg0)),
+            0x40 => Instr::MemoryGrow(MemIdx(arg0)),
+            0xd2 => Instr::RefFunc(self.make_func_index(arg0)?),
+            // TODO: "make_label_idx"
+            0x0c => Instr::Br(LabelIdx(arg0)),
+            0x0d => Instr::BrIf(LabelIdx(arg0)),
+            unk => return Err(DefaultIRGeneratorError::InvalidInstruction(unk)),
+        });
         Ok(())
     }
 
@@ -1709,7 +1746,143 @@ impl IR for DefaultIRGenerator {
         code: u8,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        // TODO
+        instrs.push(match code {
+            0x00 => Instr::Unreachable,
+            0x01 => Instr::Nop,
+            0xd1 => Instr::RefIsNull,
+            0x1a => Instr::Drop,
+            0x1b => Instr::SelectEmpty,
+            0x0f => Instr::Return,
+            0x45 => Instr::I32Eqz,
+            0x46 => Instr::I32Eq,
+            0x47 => Instr::I32Ne,
+            0x48 => Instr::I32LtS,
+            0x49 => Instr::I32LtU,
+            0x4a => Instr::I32GtS,
+            0x4b => Instr::I32GtU,
+            0x4c => Instr::I32LeS,
+            0x4d => Instr::I32LeU,
+            0x4e => Instr::I32GeS,
+            0x4f => Instr::I32GeU,
+            0x50 => Instr::I64Eqz,
+            0x51 => Instr::I64Eq,
+            0x52 => Instr::I64Ne,
+            0x53 => Instr::I64LtS,
+            0x54 => Instr::I64LtU,
+            0x55 => Instr::I64GtS,
+            0x56 => Instr::I64GtU,
+            0x57 => Instr::I64LeS,
+            0x58 => Instr::I64LeU,
+            0x59 => Instr::I64GeS,
+            0x5a => Instr::I64GeU,
+            0x5b => Instr::F32Eq,
+            0x5c => Instr::F32Ne,
+            0x5d => Instr::F32Lt,
+            0x5e => Instr::F32Gt,
+            0x5f => Instr::F32Le,
+            0x60 => Instr::F32Ge,
+            0x61 => Instr::F64Eq,
+            0x62 => Instr::F64Ne,
+            0x63 => Instr::F64Lt,
+            0x64 => Instr::F64Gt,
+            0x65 => Instr::F64Le,
+            0x66 => Instr::F64Ge,
+            0x67 => Instr::I32Clz,
+            0x68 => Instr::I32Ctz,
+            0x69 => Instr::I32Popcnt,
+            0x6a => Instr::I32Add,
+            0x6b => Instr::I32Sub,
+            0x6c => Instr::I32Mul,
+            0x6d => Instr::I32DivS,
+            0x6e => Instr::I32DivU,
+            0x6f => Instr::I32RemS,
+            0x70 => Instr::I32RemU,
+            0x71 => Instr::I32And,
+            0x72 => Instr::I32Ior,
+            0x73 => Instr::I32Xor,
+            0x74 => Instr::I32Shl,
+            0x75 => Instr::I32ShrS,
+            0x76 => Instr::I32ShrU,
+            0x77 => Instr::I32Rol,
+            0x78 => Instr::I32Ror,
+            0x79 => Instr::I64Clz,
+            0x7a => Instr::I64Ctz,
+            0x7b => Instr::I64Popcnt,
+            0x7c => Instr::I64Add,
+            0x7d => Instr::I64Sub,
+            0x7e => Instr::I64Mul,
+            0x7f => Instr::I64DivS,
+            0x80 => Instr::I64DivU,
+            0x81 => Instr::I64RemS,
+            0x82 => Instr::I64RemU,
+            0x83 => Instr::I64And,
+            0x84 => Instr::I64Ior,
+            0x85 => Instr::I64Xor,
+            0x86 => Instr::I64Shl,
+            0x87 => Instr::I64ShrS,
+            0x88 => Instr::I64ShrU,
+            0x89 => Instr::I64Rol,
+            0x8a => Instr::I64Ror,
+            0x8b => Instr::F32Abs,
+            0x8c => Instr::F32Neg,
+            0x8d => Instr::F32Ceil,
+            0x8e => Instr::F32Floor,
+            0x8f => Instr::F32Trunc,
+            0x90 => Instr::F32NearestInt,
+            0x91 => Instr::F32Sqrt,
+            0x92 => Instr::F32Add,
+            0x93 => Instr::F32Sub,
+            0x94 => Instr::F32Mul,
+            0x95 => Instr::F32Div,
+            0x96 => Instr::F32Min,
+            0x97 => Instr::F32Max,
+            0x98 => Instr::F32CopySign,
+            0x99 => Instr::F64Abs,
+            0x9a => Instr::F64Neg,
+            0x9b => Instr::F64Ceil,
+            0x9c => Instr::F64Floor,
+            0x9d => Instr::F64Trunc,
+            0x9e => Instr::F64NearestInt,
+            0x9f => Instr::F64Sqrt,
+            0xa0 => Instr::F64Add,
+            0xa1 => Instr::F64Sub,
+            0xa2 => Instr::F64Mul,
+            0xa3 => Instr::F64Div,
+            0xa4 => Instr::F64Min,
+            0xa5 => Instr::F64Max,
+            0xa6 => Instr::F64CopySign,
+            0xa7 => Instr::I32ConvertI64,
+            0xa8 => Instr::I32SConvertF32,
+            0xa9 => Instr::I32UConvertF32,
+            0xaa => Instr::I32SConvertF64,
+            0xab => Instr::I32UConvertF64,
+            0xac => Instr::I64SConvertI32,
+            0xad => Instr::I64UConvertI32,
+            0xae => Instr::I64SConvertF32,
+            0xaf => Instr::I64UConvertF32,
+            0xb0 => Instr::I64SConvertF64,
+            0xb1 => Instr::I64UConvertF64,
+            0xb2 => Instr::F32SConvertI32,
+            0xb3 => Instr::F32UConvertI32,
+            0xb4 => Instr::F32SConvertI64,
+            0xb5 => Instr::F32UConvertI64,
+            0xb6 => Instr::F32ConvertF64,
+            0xb7 => Instr::F64SConvertI32,
+            0xb8 => Instr::F64UConvertI32,
+            0xb9 => Instr::F64SConvertI64,
+            0xba => Instr::F64UConvertI64,
+            0xbb => Instr::F64ConvertF32,
+            0xbc => Instr::I32ReinterpretF32,
+            0xbd => Instr::I64ReinterpretF64,
+            0xbe => Instr::F32ReinterpretI32,
+            0xbf => Instr::F64ReinterpretI64,
+            0xc0 => Instr::I32SExtendI8,
+            0xc1 => Instr::I32SExtendI16,
+            0xc2 => Instr::I64SExtendI8,
+            0xc3 => Instr::I64SExtendI16,
+            0xc4 => Instr::I64SExtendI32,
+            unk => return Err(DefaultIRGeneratorError::InvalidInstruction(unk)),
+        });
         Ok(())
     }
 

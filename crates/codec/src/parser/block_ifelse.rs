@@ -83,7 +83,10 @@ impl<T: IR> Parse<T> for IfElseBlockParser<T> {
                 }
             }
 
-            Self::Alternate(_, _, _) => Advancement::Ready(window.offset()),
+            Self::Alternate(_, _, _) => {
+                window.take()?;
+                Advancement::Ready(window.offset() + 1)
+            }
         })
     }
 

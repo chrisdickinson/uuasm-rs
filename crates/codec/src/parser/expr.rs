@@ -208,7 +208,7 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                 // - call.indirect
                 0x11 |
                 // - memory instrs; memidx
-                0x28..=0x40 => {
+                0x28..=0x3e => {
                     window.take().unwrap();
                     self.state = State::LastInstr(next);
                     return Ok(Advancement::YieldTo(window.offset(), AnyParser::RepeatedLEBU32(Repeated::times(2)), |irgen, last_state, this_state| {
@@ -233,6 +233,8 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                 0x20..=0x24 |
                 // - table get/set
                 0x25 | 0x26 |
+                // - memory size/grow
+                0x3f | 0x40 |
                 // - ref.func
                 0xd2 |
                 // - br, br.if
