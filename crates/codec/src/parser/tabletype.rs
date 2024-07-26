@@ -37,10 +37,10 @@ impl<T: IR> Parse<T> for TableTypeParser<T> {
                         AnyParser::Limits(Default::default()),
                         |irgen, last_state, this_state| {
                             let AnyParser::Limits(parser) = last_state else {
-                                unreachable!();
+                                 unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                             };
                             let AnyParser::TableType(Self::RefType(rt)) = this_state else {
-                                unreachable!();
+                                 unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                             };
 
                             let lims = parser.production(irgen)?;
@@ -60,7 +60,7 @@ impl<T: IR> Parse<T> for TableTypeParser<T> {
         irgen: &mut T,
     ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
         let Self::Ready(ref_type, limits) = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
 
         Ok(irgen.make_table_type(ref_type, limits).map_err(IRError)?)

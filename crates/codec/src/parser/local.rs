@@ -28,7 +28,7 @@ impl<T: IR> Parse<T> for LocalParser<T> {
                 AnyParser::LEBU32(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::LEBU32(parser) = last_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
 
                     Ok(AnyParser::Local(Self::Count(parser.production(irgen)?)))
@@ -50,7 +50,7 @@ impl<T: IR> Parse<T> for LocalParser<T> {
         _irgen: &mut T,
     ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
         let Self::Ready(production) = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
 
         Ok(production)

@@ -26,7 +26,7 @@ impl<T: IR> Parse<T> for NameParser {
                 AnyParser::LEBU32(LEBParser::default()),
                 |irgen, last_state, _| {
                     let AnyParser::LEBU32(parser) = last_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
 
                     Ok(AnyParser::Name(NameParser::GotLen(
@@ -39,7 +39,7 @@ impl<T: IR> Parse<T> for NameParser {
                 AnyParser::Accumulate(Accumulator::new(*len as usize)),
                 |irgen, last_state, _| {
                     let AnyParser::Accumulate(parser) = last_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
 
                     Ok(AnyParser::Name(NameParser::Ready(
@@ -53,7 +53,7 @@ impl<T: IR> Parse<T> for NameParser {
 
     fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
         let Self::Ready(result) = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
 
         Ok(irgen.make_name(result).map_err(IRError)?)

@@ -26,7 +26,7 @@ impl<T: IR> Parse<T> for CodeParser<T> {
                 AnyParser::LEBU32(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::LEBU32(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let size = parser.production(irgen)?;
@@ -41,7 +41,7 @@ impl<T: IR> Parse<T> for CodeParser<T> {
                 AnyParser::Func(FuncParser::default()),
                 |irgen, last_state, _| {
                     let AnyParser::Func(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let body = parser.production(irgen)?;
@@ -59,7 +59,7 @@ impl<T: IR> Parse<T> for CodeParser<T> {
         irgen: &mut T,
     ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
         let Self::Ready(production) = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
 
         Ok(irgen.make_code(production).map_err(IRError)?)

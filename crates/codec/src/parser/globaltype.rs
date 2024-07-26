@@ -46,7 +46,7 @@ impl<T: IR> Parse<T> for GlobalTypeParser<T> {
         irgen: &mut T,
     ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
         let Self::Ready(val_type, mutability) = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
 
         Ok(irgen

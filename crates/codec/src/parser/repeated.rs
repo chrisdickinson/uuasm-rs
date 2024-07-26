@@ -54,7 +54,7 @@ where
                 AnyParser::LEBU32(LEBParser::default()),
                 |irgen, last_state, _| {
                     let AnyParser::LEBU32(v) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
                     let expected = v.production(irgen)? as usize;
                     Ok(Self::Collecting {
@@ -67,7 +67,7 @@ where
         }
 
         let Self::Collecting { result, expected } = &self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
 
         if *expected == result.len() {
@@ -85,7 +85,7 @@ where
                     expected,
                 }: Self = this_state.try_into()?
                 else {
-                    unreachable!()
+                     unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                 };
                 result.push(last_production);
                 Ok(Self::Collecting { result, expected }.into())
@@ -95,7 +95,7 @@ where
 
     fn production(self, _irgen: &mut T) -> Result<Self::Production, crate::ParseError<T::Error>> {
         let Self::Collecting { result, expected } = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
 
         if result.len() != expected {

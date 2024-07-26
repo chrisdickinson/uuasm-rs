@@ -31,7 +31,7 @@ impl<T: IR> Parse<T> for DataParser<T> {
                     // expr)
                     |irgen, last_state, _| {
                         let AnyParser::Expr(parser) = last_state else {
-                            unreachable!()
+                             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                         };
 
                         let expr = parser.production(irgen)?;
@@ -49,7 +49,7 @@ impl<T: IR> Parse<T> for DataParser<T> {
                     // expr)
                     |irgen, last_state, _| {
                         let AnyParser::ByteVec(parser) = last_state else {
-                            unreachable!()
+                             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                         };
 
                         let data = parser.production(irgen)?;
@@ -68,7 +68,7 @@ impl<T: IR> Parse<T> for DataParser<T> {
                     // expr)
                     |irgen, last_state, _| {
                         let AnyParser::LEBU32(parser) = last_state else {
-                            unreachable!()
+                             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                         };
 
                         let mem_idx = parser.production(irgen)?;
@@ -88,11 +88,11 @@ impl<T: IR> Parse<T> for DataParser<T> {
                 // expr)
                 |irgen, last_state, this_state| {
                     let AnyParser::Expr(parser) = last_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
 
                     let AnyParser::Data(Self::MemIdx(mem_idx)) = this_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
 
                     let expr = parser.production(irgen)?;
@@ -115,10 +115,10 @@ impl<T: IR> Parse<T> for DataParser<T> {
                     // expr)
                     |irgen, last_state, this_state| {
                         let AnyParser::ByteVec(parser) = last_state else {
-                            unreachable!()
+                             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                         };
                         let AnyParser::Data(Self::Expr(mem_idx, expr)) = this_state else {
-                            unreachable!()
+                             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                         };
 
                         let data = parser.production(irgen)?;
@@ -139,7 +139,7 @@ impl<T: IR> Parse<T> for DataParser<T> {
         _irgen: &mut T,
     ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
         let Self::Ready(production) = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
 
         Ok(production)

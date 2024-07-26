@@ -42,7 +42,7 @@ impl<T: IR> Parse<T> for BlockTypeParser<T> {
                     AnyParser::LEBU32(Default::default()),
                     |irgen, last_state, _| {
                         let AnyParser::LEBU32(parser) = last_state else {
-                            unreachable!()
+                             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                         };
                         let value = parser.production(irgen)?;
                         let type_idx = irgen.make_type_index(value).map_err(IRError)?;
@@ -58,7 +58,7 @@ impl<T: IR> Parse<T> for BlockTypeParser<T> {
 
     fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
         let Self::Ready(value) = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
         Ok(value)
     }

@@ -26,7 +26,7 @@ impl<T: IR> Parse<T> for InstrArgSelectParser<T> {
                 AnyParser::LEBU32(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::LEBU32(parser) = last_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
                     let items = parser.production(irgen)?;
                     Ok(AnyParser::ArgSelect(Self::Count(items)))
@@ -37,7 +37,7 @@ impl<T: IR> Parse<T> for InstrArgSelectParser<T> {
                 AnyParser::Accumulate(Accumulator::new(*count as usize)),
                 |irgen, last_state, _| {
                     let AnyParser::Accumulate(parser) = last_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
                     let types = parser.production(irgen)?;
                     let types: Box<[T::ValType]> = types
@@ -55,7 +55,7 @@ impl<T: IR> Parse<T> for InstrArgSelectParser<T> {
 
     fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
         let Self::Ready(items) = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
         Ok(items)
     }

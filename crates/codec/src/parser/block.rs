@@ -24,7 +24,7 @@ impl<T: IR> Parse<T> for BlockParser<T> {
                 AnyParser::BlockType(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::BlockType(parser) = last_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
                     let block_type = parser.production(irgen)?;
 
@@ -37,10 +37,10 @@ impl<T: IR> Parse<T> for BlockParser<T> {
                 AnyParser::Expr(Default::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::Expr(parser) = last_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
                     let AnyParser::Block(Self::BlockType(block_type)) = this_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
                     let expr = parser.production(irgen)?;
 
@@ -57,7 +57,7 @@ impl<T: IR> Parse<T> for BlockParser<T> {
 
     fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
         let Self::Ready(block_type, expr) = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
 
         Ok((block_type, expr))

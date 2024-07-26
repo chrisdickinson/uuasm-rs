@@ -63,20 +63,24 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
         chunk: &'a [u8],
         eos: bool,
     ) -> Result<(Target, &'a [u8]), ParseError<T::Error>> {
-        let (mut state, mut resume, mut bound) = self.state.pop().unwrap();
-        let mut window = DecodeWindow::new(chunk, 0, self.position, eos, bound);
         let offset = 0;
         let mut consumed = 0;
         loop {
+            let (state, resume, bound) = self.state.last_mut().unwrap();
+            let window = DecodeWindow::new(&chunk[consumed..], 0, self.position, eos, *bound);
             let offset = match state.advance(&mut self.irgen, window) {
                 Ok(Advancement::Ready(offset)) => {
+                    drop(state);
+                    drop(resume);
+                    drop(bound);
+                    let (n_state, n_resume, n_bound) = self.state.pop().unwrap();
                     let Some((receiver, last_resume, last_bound)) = self.state.pop() else {
                         cold();
-                        let output = Target::extract(state.production(&mut self.irgen)?)?;
+                        let output = Target::extract(n_state.production(&mut self.irgen)?)?;
                         return Ok((output, &chunk[offset..]));
                     };
 
-                    let resumed = match resume(&mut self.irgen, state, receiver) {
+                    let resumed = match n_resume(&mut self.irgen, n_state, receiver) {
                         Ok(v) => v,
                         Err(e) => {
                             self.state.push((
@@ -96,7 +100,9 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
                     if let Some(xs) = bound.as_mut() {
                         *xs = xs.saturating_sub((new_offset - offset) as u32);
                     }
-                    self.state.push((state, resume, bound));
+                    drop(state);
+                    drop(resume);
+                    let bound = *bound;
                     self.state.push((next_state, next_resume, bound));
                     new_offset
                 }
@@ -119,7 +125,6 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
                             return Err(e);
                         }
                     }
-                    self.state.push((state, resume, bound));
                     self.state.push((next_state, next_resume, Some(next_bound)));
                     offset
                 }
@@ -128,7 +133,6 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
                     if let Some(xs) = bound.as_mut() {
                         *xs = xs.saturating_sub((chunk.len() - offset) as u32);
                     }
-                    self.state.push((state, resume, bound));
                     return Err(err);
                 }
 
@@ -143,8 +147,6 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
             };
             consumed += offset;
             self.position += offset;
-            window = DecodeWindow::new(&chunk[consumed..], 0, self.position, eos, bound);
-            (state, resume, bound) = self.state.pop().unwrap();
         }
     }
 

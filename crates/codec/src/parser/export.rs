@@ -27,7 +27,7 @@ impl<T: IR> Parse<T> for ExportParser<T> {
                 AnyParser::Name(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::Name(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let name = parser.production(irgen)?;
@@ -40,11 +40,11 @@ impl<T: IR> Parse<T> for ExportParser<T> {
                 AnyParser::ExportDesc(Default::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::ExportDesc(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let AnyParser::Export(Self::Name(name)) = this_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let desc = parser.production(irgen)?;
@@ -61,7 +61,7 @@ impl<T: IR> Parse<T> for ExportParser<T> {
         irgen: &mut T,
     ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
         let Self::Ready(name, desc) = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
 
         Ok(irgen.make_export(name, desc).map_err(IRError)?)

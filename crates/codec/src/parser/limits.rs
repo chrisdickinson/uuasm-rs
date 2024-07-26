@@ -33,7 +33,7 @@ impl<T: IR> Parse<T> for LimitsParser {
                 AnyParser::LEBU32(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::LEBU32(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
                     let bound = parser.production(irgen)?;
                     Ok(AnyParser::Limits(Self::Ready(bound, None)))
@@ -45,7 +45,7 @@ impl<T: IR> Parse<T> for LimitsParser {
                 AnyParser::LEBU32(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::LEBU32(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
                     let bound = parser.production(irgen)?;
                     Ok(AnyParser::Limits(Self::GotLowerBound(bound)))
@@ -57,10 +57,10 @@ impl<T: IR> Parse<T> for LimitsParser {
                 AnyParser::LEBU32(Default::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::LEBU32(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
                     let AnyParser::Limits(Self::GotLowerBound(lower)) = this_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
                     let bound = parser.production(irgen)?;
                     Ok(AnyParser::Limits(Self::Ready(lower, Some(bound))))
@@ -72,7 +72,7 @@ impl<T: IR> Parse<T> for LimitsParser {
 
     fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
         let Self::Ready(lower, upper) = self else {
-            unreachable!();
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
         };
 
         Ok(irgen.make_limits(lower, upper).map_err(IRError)?)

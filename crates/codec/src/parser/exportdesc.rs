@@ -38,7 +38,7 @@ impl<T: IR> Parse<T> for ExportDescParser<T> {
                 AnyParser::FuncIdx(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::FuncIdx(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let func_idx = parser.production(irgen)?;
@@ -54,7 +54,7 @@ impl<T: IR> Parse<T> for ExportDescParser<T> {
                 AnyParser::TableIdx(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::TableIdx(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let table_type = parser.production(irgen)?;
@@ -70,7 +70,7 @@ impl<T: IR> Parse<T> for ExportDescParser<T> {
                 AnyParser::GlobalIdx(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::GlobalIdx(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let global_idx = parser.production(irgen)?;
@@ -86,7 +86,7 @@ impl<T: IR> Parse<T> for ExportDescParser<T> {
                 AnyParser::MemIdx(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::MemIdx(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let mem_idx = parser.production(irgen)?;
@@ -102,7 +102,7 @@ impl<T: IR> Parse<T> for ExportDescParser<T> {
 
     fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
         let Self::Ready(production) = self else {
-            unreachable!();
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
         };
         Ok(production)
     }

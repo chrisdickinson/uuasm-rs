@@ -21,7 +21,7 @@ impl<T: IR> Parse<T> for MemTypeParser<T> {
                 AnyParser::Limits(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::Limits(parser) = last_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
                     let limits = parser.production(irgen)?;
 
@@ -34,7 +34,7 @@ impl<T: IR> Parse<T> for MemTypeParser<T> {
 
     fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
         let Self::Ready(production) = self else {
-            unreachable!();
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
         };
         Ok(irgen.make_mem_type(production).map_err(IRError)?)
     }

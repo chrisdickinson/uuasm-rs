@@ -26,7 +26,7 @@ impl<T: IR> Parse<T> for InstrArgTableParser {
                 AnyParser::RepeatedLEBU32(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::RepeatedLEBU32(parser) = last_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
                     let items = parser.production(irgen)?;
                     Ok(AnyParser::ArgTable(Self::Items(items)))
@@ -37,10 +37,10 @@ impl<T: IR> Parse<T> for InstrArgTableParser {
                 AnyParser::LEBU32(Default::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::LEBU32(parser) = last_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
                     let AnyParser::ArgTable(Self::Items(items)) = this_state else {
-                        unreachable!()
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                     };
                     let alternate = parser.production(irgen)?;
                     Ok(AnyParser::ArgTable(Self::Ready(items, alternate)))
@@ -52,7 +52,7 @@ impl<T: IR> Parse<T> for InstrArgTableParser {
 
     fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
         let Self::Ready(items, alternate) = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
         Ok((items, alternate))
     }

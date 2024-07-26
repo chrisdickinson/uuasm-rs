@@ -37,7 +37,7 @@ impl<T: IR> Parse<T> for ImportDescParser<T> {
                 AnyParser::TypeIdx(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::TypeIdx(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let type_idx = parser.production(irgen)?;
@@ -53,7 +53,7 @@ impl<T: IR> Parse<T> for ImportDescParser<T> {
                 AnyParser::TableType(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::TableType(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let table_type = parser.production(irgen)?;
@@ -69,7 +69,7 @@ impl<T: IR> Parse<T> for ImportDescParser<T> {
                 AnyParser::GlobalType(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::GlobalType(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let global_type = parser.production(irgen)?;
@@ -86,7 +86,7 @@ impl<T: IR> Parse<T> for ImportDescParser<T> {
                 AnyParser::Limits(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::Limits(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let limits = parser.production(irgen)?;
@@ -102,7 +102,7 @@ impl<T: IR> Parse<T> for ImportDescParser<T> {
 
     fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
         let Self::Ready(desc) = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
 
         Ok(desc)

@@ -30,11 +30,11 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                     AnyParser::LEBU32(LEBParser::default()),
                     |irgen, last_state, this_state| {
                         let AnyParser::LEBU32(leb) = last_state else {
-                            unreachable!();
+                             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
 
                         let AnyParser::Type(Self::Init) = this_state else {
-                            unreachable!();
+                             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
 
                         let entry_count = leb.production(irgen)?;
@@ -54,10 +54,10 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                     AnyParser::Accumulate(Accumulator::new(size)),
                     |irgen, last_state, this_state| {
                         let AnyParser::Accumulate(accum) = last_state else {
-                            unreachable!()
+                             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                         };
                         let AnyParser::Type(Self::InputSize(_)) = this_state else {
-                            unreachable!();
+                             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
 
                         let input_buf = accum.production(irgen)?;
@@ -72,11 +72,11 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                 AnyParser::LEBU32(LEBParser::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::LEBU32(leb) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let AnyParser::Type(Self::Input(result_type)) = this_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
                     let entry_count = leb.production(irgen)?;
 
@@ -96,11 +96,11 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                     AnyParser::Accumulate(Accumulator::new(size)),
                     |irgen, last_state, this_state| {
                         let AnyParser::Accumulate(accum) = last_state else {
-                            unreachable!()
+                             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
                         };
                         let AnyParser::Type(Self::OutputSize(input_result_type, _)) = this_state
                         else {
-                            unreachable!();
+                             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
 
                         let output_buf = accum.production(irgen)?;
@@ -119,7 +119,7 @@ impl<T: IR> Parse<T> for TypeParser<T> {
 
     fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
         let Self::Output(params, returns) = self else {
-            unreachable!();
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
         };
 
         Ok(irgen.make_func_type(params, returns).map_err(IRError)?)

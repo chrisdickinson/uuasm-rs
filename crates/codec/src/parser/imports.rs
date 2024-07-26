@@ -30,7 +30,7 @@ impl<T: IR> Parse<T> for ImportParser<T> {
                 AnyParser::Name(NameParser::default()),
                 |irgen, last_state, _| {
                     let AnyParser::Name(name) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let name = name.production(irgen)?;
@@ -43,11 +43,11 @@ impl<T: IR> Parse<T> for ImportParser<T> {
                 AnyParser::Name(NameParser::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::Name(name) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let AnyParser::Import(ImportParser::GotModule(modname)) = this_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
                     let name = name.production(irgen)?;
                     Ok(AnyParser::Import(Self::GotModuleAndName(modname, name)))
@@ -59,13 +59,13 @@ impl<T: IR> Parse<T> for ImportParser<T> {
                 AnyParser::ImportDesc(ImportDescParser::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::ImportDesc(desc) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let AnyParser::Import(ImportParser::GotModuleAndName(modname, name)) =
                         this_state
                     else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
                     let desc = desc.production(irgen)?;
                     Ok(AnyParser::Import(Self::Ready(modname, name, desc)))

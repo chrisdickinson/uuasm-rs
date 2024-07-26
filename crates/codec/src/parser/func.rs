@@ -23,7 +23,7 @@ impl<T: IR> Parse<T> for FuncParser<T> {
                 AnyParser::LocalList(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::LocalList(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let locals = parser.production(irgen)?;
@@ -37,11 +37,11 @@ impl<T: IR> Parse<T> for FuncParser<T> {
                 AnyParser::Expr(Default::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::Expr(parser) = last_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let AnyParser::Func(Self::Locals(locals)) = this_state else {
-                        unreachable!();
+                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                     };
 
                     let expr = parser.production(irgen)?;
@@ -62,7 +62,7 @@ impl<T: IR> Parse<T> for FuncParser<T> {
         irgen: &mut T,
     ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
         let Self::Ready(locals, expr) = self else {
-            unreachable!()
+             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
         };
 
         Ok(irgen.make_func(locals, expr).map_err(IRError)?)
