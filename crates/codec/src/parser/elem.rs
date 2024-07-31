@@ -1,11 +1,22 @@
+use std::mem;
+
 use uuasm_nodes::IR;
 
 use crate::{Advancement, IRError, Parse};
 
 use super::any::AnyParser;
 
-// ┌─── element type+exprs vs element kind + element idx
-// │┌── explicit table index (or distinguishes passive from declarative)
+enum ElementMode<T: IR> {
+    Passive,
+    Active(T::TableIdx, T::Expr),
+    Declarative,
+}
+
+// Elem is { reftype, init(vec expr), mode }
+// mode is passive | declarative | active { tableidx, offset expr }
+
+// ┌─── element type+exprs vs element kind + element idx; vec of func idx or vec of expr
+// │┌── if low bit is 1: passive or declarative; if low bit is 0: whether or not we have a tableidx
 // ││┌─ Passive or Declarative
 // ↓↓↓
 // 000: expr vec<funcidx>                      -> active
@@ -25,10 +36,27 @@ use super::any::AnyParser;
 // 011: elemkind vec<funcidx>                  -> declarative
 // 101: reftype vec<expr>                      -> passive
 // 111: reftype vec<expr>                      -> declarative
+
+// 000: expr vec<funcidx>                      -> active
+// 010: tableidx expr elemkind vec<funcidx>    -> active
+// 100: expr vec<expr>                         -> active
+// 110: tableidx expr reftype vec<expr>        -> active
+// 001: elemkind vec<funcidx>                  -> passive
+// 011: elemkind vec<funcidx>                  -> declarative
+// 101: reftype vec<expr>                      -> passive
+// 111: reftype vec<expr>                      -> declarative
 #[derive(Default)]
 pub enum ElemParser<T: IR> {
     #[default]
     Init,
+
+    Flags(u8),
+
+    ParseActiveModeTableIdx(u8, T::TableIdx),
+
+    ParseMode(u8, ElementMode<T>),
+    ParseElemKind(u8, ElementMode<T>, Option<u32>),
+    ParseRefType(u8, ElementMode<T>, Option<T::RefType>),
 
     Ready(T::Elem),
 }
@@ -38,10 +66,156 @@ impl<T: IR> Parse<T> for ElemParser<T> {
 
     fn advance(
         &mut self,
-        _irgen: &mut T,
-        _window: crate::window::DecodeWindow,
+        irgen: &mut T,
+        mut window: crate::window::DecodeWindow,
     ) -> crate::ParseResult<T> {
-        todo!()
+        'restart: loop {
+            return Ok(match self {
+                Self::Init => {
+                    let flags = window.take()?;
+
+                    *self = Self::Flags(flags);
+                    if flags & 0b11 == 0b10 {
+                        Advancement::YieldTo(
+                            window.offset(),
+                            AnyParser::LEBU32(Default::default()),
+                            |irgen, last_state, this_state| {
+                                let AnyParser::LEBU32(parser) = last_state else {
+                                    unreachable!();
+                                };
+                                let AnyParser::Elem(Self::Flags(flags)) = this_state else {
+                                    unreachable!();
+                                };
+
+                                let candidate = parser.production(irgen)?;
+
+                                Ok(AnyParser::Elem(Self::ParseActiveModeTableIdx(
+                                    flags,
+                                    irgen.make_table_index(candidate).map_err(IRError)?,
+                                )))
+                            },
+                        )
+                    } else if flags & 0b1 == 0 {
+                        *self = Self::ParseActiveModeTableIdx(
+                            flags,
+                            irgen.make_table_index(0).map_err(IRError)?,
+                        );
+                        continue 'restart;
+                    } else {
+                        let mode = if flags & 0b010 == 0 {
+                            ElementMode::Declarative
+                        } else {
+                            ElementMode::Passive
+                        };
+
+                        *self = Self::ParseMode(flags, mode);
+                        continue 'restart;
+                    }
+                }
+
+                Self::Flags(_) => unreachable!(),
+
+                Self::ParseActiveModeTableIdx(_, _) => Advancement::YieldTo(
+                    window.offset(),
+                    AnyParser::Expr(Default::default()),
+                    |irgen, last_state, this_state| {
+                        let AnyParser::Expr(parser) = last_state else {
+                            unreachable!();
+                        };
+                        let AnyParser::Elem(Self::ParseActiveModeTableIdx(flags, table_idx)) =
+                            this_state
+                        else {
+                            unreachable!();
+                        };
+
+                        let expr = parser.production(irgen)?;
+                        Ok(AnyParser::Elem(Self::ParseMode(
+                            flags,
+                            ElementMode::Active(table_idx, expr),
+                        )))
+                    },
+                ),
+
+                Self::ParseMode(_, _) => {
+                    let Self::ParseMode(flags, mode) = mem::take(self) else {
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        }
+                    };
+                    let has_type = flags & 0b11 != 0;
+                    if flags & 0b100 == 0 {
+                        // elemkind vec<funcidx>
+                        *self = Self::ParseElemKind(
+                            flags,
+                            mode,
+                            if has_type {
+                                Some(window.take()? as u32)
+                            } else {
+                                None
+                            },
+                        );
+                        continue 'restart;
+                    }
+                    // reftype vec<expr>
+                    *self = Self::ParseRefType(
+                        flags,
+                        mode,
+                        if has_type {
+                            let ref_type = irgen.make_ref_type(window.take()?).map_err(IRError)?;
+                            Some(ref_type)
+                        } else {
+                            None
+                        },
+                    );
+                    continue 'restart;
+                }
+
+                Self::ParseElemKind(_, _, _) => Advancement::YieldTo(
+                    window.offset(),
+                    AnyParser::RepeatedLEBU32(Default::default()),
+                    |irgen, last_state, this_state| {
+                        let AnyParser::RepeatedLEBU32(parser) = last_state else {
+                            unreachable!();
+                        };
+                        let AnyParser::Elem(Self::ParseElemKind(flags, mode, kind)) = this_state
+                        else {
+                            unreachable!();
+                        };
+
+                        let mode = make_elem_mode(irgen, mode)?;
+                        let func_indices = parser.production(irgen)?;
+                        let elem = irgen
+                            .make_elem_from_indices(kind, mode, func_indices, flags)
+                            .map_err(IRError)?;
+                        Ok(AnyParser::Elem(Self::Ready(elem)))
+                    },
+                ),
+
+                Self::ParseRefType(_, _, _) => Advancement::YieldTo(
+                    window.offset(),
+                    AnyParser::ExprList(Default::default()),
+                    |irgen, last_state, this_state| {
+                        let AnyParser::ExprList(parser) = last_state else {
+                            unreachable!();
+                        };
+                        let AnyParser::Elem(Self::ParseRefType(flags, mode, kind)) = this_state
+                        else {
+                            unreachable!();
+                        };
+
+                        let mode = make_elem_mode(irgen, mode)?;
+                        let expr_list = parser.production(irgen)?;
+                        let elem = irgen
+                            .make_elem_from_exprs(kind, mode, expr_list, flags)
+                            .map_err(IRError)?;
+                        Ok(AnyParser::Elem(Self::Ready(elem)))
+                    },
+                ),
+
+                Self::Ready(_) => Advancement::Ready(window.offset()),
+            });
+        }
     }
 
     fn production(
@@ -49,9 +223,24 @@ impl<T: IR> Parse<T> for ElemParser<T> {
         _irgen: &mut T,
     ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
         let Self::Ready(production) = self else {
-             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+            unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            }
         };
 
         Ok(production)
     }
+}
+
+fn make_elem_mode<T: IR>(
+    irgen: &mut T,
+    mode: ElementMode<T>,
+) -> Result<T::ElemMode, crate::ParseError<<T as IR>::Error>> {
+    Ok(match mode {
+        ElementMode::Passive => irgen.make_elem_mode_passive(),
+        ElementMode::Active(table_idx, expr) => irgen.make_elem_mode_active(table_idx, expr),
+        ElementMode::Declarative => irgen.make_elem_mode_declarative(),
+    }
+    .map_err(IRError)?)
 }

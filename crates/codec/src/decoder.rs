@@ -66,14 +66,22 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
         let offset = 0;
         let mut consumed = 0;
         loop {
+            eprintln!(
+                "{:x} {}",
+                offset + self.position,
+                self.state
+                    .iter()
+                    .map(|(parser, _, _)| format!("{parser:?}"))
+                    .collect::<Vec<_>>()
+                    .join("/")
+            );
+
             let (state, resume, bound) = self.state.last_mut().unwrap();
             let window = DecodeWindow::new(&chunk[consumed..], 0, self.position, eos, *bound);
             let offset = match state.advance(&mut self.irgen, window) {
                 Ok(Advancement::Ready(offset)) => {
-                    drop(state);
-                    drop(resume);
-                    drop(bound);
-                    let (n_state, n_resume, n_bound) = self.state.pop().unwrap();
+                    let (_, _, _) = (state, resume, bound);
+                    let (n_state, n_resume, _) = self.state.pop().unwrap();
                     let Some((receiver, last_resume, last_bound)) = self.state.pop() else {
                         cold();
                         let output = Target::extract(n_state.production(&mut self.irgen)?)?;
@@ -100,8 +108,7 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
                     if let Some(xs) = bound.as_mut() {
                         *xs = xs.saturating_sub((new_offset - offset) as u32);
                     }
-                    drop(state);
-                    drop(resume);
+                    let (_, _) = (state, resume);
                     let bound = *bound;
                     self.state.push((next_state, next_resume, bound));
                     new_offset

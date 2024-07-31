@@ -1056,11 +1056,30 @@ impl<'a> ParseWasmBinary<'a> for Elem {
         match flags & 7 {
             0b000 => map(
                 tuple((Expr::from_wasm_bytes, Vec::<FuncIdx>::from_wasm_bytes)),
-                |(ex, fs)| Elem::ActiveSegmentFuncs(ex, fs),
+                |(ex, fs)| Elem {
+                    flags: 0b000,
+                    mode: ElemMode::Active {
+                        table_idx: TableIdx(0),
+                        offset: ex,
+                    },
+                    kind: RefType::FuncRef,
+                    exprs: fs
+                        .into_iter()
+                        .map(|xs| Expr(vec![Instr::RefFunc(xs)]))
+                        .collect(),
+                },
             )(input),
             0b001 => map(
                 tuple((u32::from_wasm_bytes, Vec::<FuncIdx>::from_wasm_bytes)),
-                |(el, fs)| Elem::PassiveSegment(el, fs),
+                |(el, fs)| Elem {
+                    flags: 0b001,
+                    mode: ElemMode::Passive,
+                    kind: RefType::FuncRef,
+                    exprs: fs
+                        .into_iter()
+                        .map(|xs| Expr(vec![Instr::RefFunc(xs)]))
+                        .collect(),
+                },
             )(input),
             0b010 => map(
                 tuple((
@@ -1069,19 +1088,51 @@ impl<'a> ParseWasmBinary<'a> for Elem {
                     u32::from_wasm_bytes,
                     Vec::<FuncIdx>::from_wasm_bytes,
                 )),
-                |(a, b, c, d)| Elem::ActiveSegment(a, b, c, d),
+                |(a, b, c, d)| Elem {
+                    flags: 0b010,
+                    mode: ElemMode::Active {
+                        table_idx: a,
+                        offset: b,
+                    },
+                    kind: RefType::FuncRef,
+                    exprs: d
+                        .into_iter()
+                        .map(|xs| Expr(vec![Instr::RefFunc(xs)]))
+                        .collect(),
+                },
             )(input),
             0b011 => map(
                 tuple((u32::from_wasm_bytes, Vec::<FuncIdx>::from_wasm_bytes)),
-                |(el, fs)| Elem::DeclarativeSegment(el, fs),
+                |(el, fs)| Elem {
+                    flags: 0b011,
+                    mode: ElemMode::Declarative,
+                    kind: RefType::FuncRef,
+                    exprs: fs
+                        .into_iter()
+                        .map(|xs| Expr(vec![Instr::RefFunc(xs)]))
+                        .collect(),
+                },
             )(input),
             0b100 => map(
                 tuple((Expr::from_wasm_bytes, Vec::<Expr>::from_wasm_bytes)),
-                |(ex, es)| Elem::ActiveSegmentExpr(ex, es),
+                |(ex, es)| Elem {
+                    flags: 0b100,
+                    mode: ElemMode::Active {
+                        table_idx: TableIdx(0),
+                        offset: ex,
+                    },
+                    kind: RefType::FuncRef,
+                    exprs: es.into(),
+                },
             )(input),
             0b101 => map(
                 tuple((RefType::from_wasm_bytes, Vec::<Expr>::from_wasm_bytes)),
-                |(rt, es)| Elem::PassiveSegmentExpr(rt, es),
+                |(rt, es)| Elem {
+                    flags: 0b101,
+                    mode: ElemMode::Passive,
+                    kind: rt,
+                    exprs: es.into(),
+                },
             )(input),
             0b110 => map(
                 tuple((
@@ -1090,11 +1141,24 @@ impl<'a> ParseWasmBinary<'a> for Elem {
                     RefType::from_wasm_bytes,
                     many0(Expr::from_wasm_bytes),
                 )),
-                |(a, b, c, d)| Elem::ActiveSegmentTableAndExpr(a, b, c, d),
+                |(a, b, c, d)| Elem {
+                    flags: 0b110,
+                    mode: ElemMode::Active {
+                        table_idx: a,
+                        offset: b,
+                    },
+                    kind: c,
+                    exprs: d.into(),
+                },
             )(input),
             0b111 => map(
                 tuple((RefType::from_wasm_bytes, Vec::<Expr>::from_wasm_bytes)),
-                |(rt, es)| Elem::DeclarativeSegmentExpr(rt, es),
+                |(rt, es)| Elem {
+                    flags: 0b111,
+                    mode: ElemMode::Declarative,
+                    kind: rt,
+                    exprs: es.into(),
+                },
             )(input),
             _ => unreachable!(),
         }

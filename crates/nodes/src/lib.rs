@@ -21,8 +21,9 @@ pub enum VecType {
     V128,
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum RefType {
+    #[default]
     FuncRef,
     ExternRef,
 }
@@ -481,33 +482,25 @@ pub enum ExportDesc {
     Global(GlobalIdx),
 }
 
-// TODO: Woof, this is a bad type. Parsed elements are much more straightforward than their
-// bit-flagged binary representation.
 #[derive(Debug, PartialEq, Clone)]
-pub enum Elem {
-    ActiveSegmentFuncs(Expr, Vec<FuncIdx>),
-    PassiveSegment(u32, Vec<FuncIdx>),
-    ActiveSegment(TableIdx, Expr, u32, Vec<FuncIdx>),
-    DeclarativeSegment(u32, Vec<FuncIdx>),
+pub enum ElemMode {
+    Passive,
+    Active { table_idx: TableIdx, offset: Expr },
+    Declarative,
+}
 
-    ActiveSegmentExpr(Expr, Vec<Expr>),
-    PassiveSegmentExpr(RefType, Vec<Expr>),
-    ActiveSegmentTableAndExpr(TableIdx, Expr, RefType, Vec<Expr>),
-    DeclarativeSegmentExpr(RefType, Vec<Expr>),
+#[derive(Debug, PartialEq, Clone)]
+pub struct Elem {
+    pub mode: ElemMode,
+    pub kind: RefType,
+    pub exprs: Box<[Expr]>,
+    /// The original flags the Elem was encoded with, so we can round-trip an elem.
+    pub flags: u8,
 }
 
 impl Elem {
     pub fn len(&self) -> usize {
-        match self {
-            Elem::ActiveSegmentFuncs(_, xs) => xs.len(),
-            Elem::PassiveSegment(_, xs) => xs.len(),
-            Elem::ActiveSegment(_, _, _, xs) => xs.len(),
-            Elem::DeclarativeSegment(_, xs) => xs.len(),
-            Elem::ActiveSegmentExpr(_, xs) => xs.len(),
-            Elem::PassiveSegmentExpr(_, xs) => xs.len(),
-            Elem::ActiveSegmentTableAndExpr(_, _, _, xs) => xs.len(),
-            Elem::DeclarativeSegmentExpr(_, xs) => xs.len(),
-        }
+        self.exprs.len()
     }
 }
 
@@ -812,6 +805,7 @@ pub trait IR {
     type CodeIdx;
     type Data;
     type DataIdx;
+    type ElemMode;
     type Elem;
     type ElemIdx;
     type Export;
@@ -911,7 +905,28 @@ pub trait IR {
     ) -> Result<Self::Data, Self::Error>;
     fn make_data_passive(&mut self, bytes: Box<[u8]>) -> Result<Self::Data, Self::Error>;
 
-    fn make_elem(&mut self, item: Elem) -> Result<Self::Elem, Self::Error>;
+    fn make_elem_from_indices(
+        &mut self,
+        kind: Option<u32>,
+        mode: Self::ElemMode,
+        idxs: Box<[u32]>,
+        flags: u8,
+    ) -> Result<Self::Elem, Self::Error>;
+    fn make_elem_from_exprs(
+        &mut self,
+        kind: Option<Self::RefType>,
+        mode: Self::ElemMode,
+        exprs: Box<[Self::Expr]>,
+        flags: u8,
+    ) -> Result<Self::Elem, Self::Error>;
+
+    fn make_elem_mode_passive(&mut self) -> Result<Self::ElemMode, Self::Error>;
+    fn make_elem_mode_declarative(&mut self) -> Result<Self::ElemMode, Self::Error>;
+    fn make_elem_mode_active(
+        &mut self,
+        table_idx: Self::TableIdx,
+        expr: Self::Expr,
+    ) -> Result<Self::ElemMode, Self::Error>;
 
     fn make_limits(&mut self, lower: u32, upper: Option<u32>) -> Result<Self::Limits, Self::Error>;
 
@@ -922,6 +937,8 @@ pub trait IR {
     ) -> Result<Self::Export, Self::Error>;
 
     fn make_expr(&mut self, instrs: Vec<Self::Instr>) -> Result<Self::Expr, Self::Error>;
+
+    fn start_func(&mut self) {}
 
     fn make_func(
         &mut self,
@@ -992,6 +1009,7 @@ pub trait IR {
     ) -> Result<Self::BlockType, Self::Error>;
 
     fn make_val_type(&mut self, data: u8) -> Result<Self::ValType, Self::Error>;
+    fn make_ref_type(&mut self, data: u8) -> Result<Self::RefType, Self::Error>;
     fn make_global_type(
         &mut self,
         valtype: Self::ValType,
@@ -1010,6 +1028,7 @@ pub trait IR {
     fn make_mem_index(&mut self, candidate: u32) -> Result<Self::MemIdx, Self::Error>;
     fn make_global_index(&mut self, candidate: u32) -> Result<Self::GlobalIdx, Self::Error>;
     fn make_func_index(&mut self, candidate: u32) -> Result<Self::FuncIdx, Self::Error>;
+    fn make_local_index(&mut self, candidate: u32) -> Result<Self::LocalIdx, Self::Error>;
     fn make_func_type(
         &mut self,
         params: Option<Self::ResultType>,
@@ -1062,6 +1081,436 @@ pub trait IR {
     fn make_module(&mut self, sections: Vec<Self::Section>) -> Result<Self::Module, Self::Error>;
 }
 
+#[derive(Default, Clone, Debug)]
+pub struct EmptyIRGenerator;
+
+impl EmptyIRGenerator {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Never {}
+impl Error for Never {}
+impl std::fmt::Display for Never {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("never!")
+    }
+}
+
+impl IR for EmptyIRGenerator {
+    type Error = Never;
+
+    type BlockType = ();
+    type MemType = ();
+    type ByteVec = ();
+    type Code = ();
+    type CodeIdx = ();
+    type Data = ();
+    type DataIdx = ();
+    type Elem = ();
+    type ElemMode = ();
+    type ElemIdx = ();
+    type Export = ();
+    type ExportDesc = ();
+    type Expr = ();
+    type Func = ();
+    type FuncIdx = ();
+    type Global = ();
+    type GlobalIdx = ();
+    type GlobalType = ();
+    type Import = ();
+    type ImportDesc = ();
+    type Instr = ();
+    type LabelIdx = ();
+    type Limits = ();
+    type Local = ();
+    type LocalIdx = ();
+    type MemArg = ();
+    type MemIdx = ();
+    type Module = ();
+    type Name = ();
+    type NumType = ();
+    type RefType = ();
+    type ResultType = ();
+    type Section = ();
+    type TableIdx = ();
+    type TableType = ();
+    type Type = ();
+    type TypeIdx = ();
+    type ValType = ();
+    type VecType = ();
+
+    fn make_instr_select(
+        &mut self,
+        types: Box<[Self::ValType]>,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn make_instr_table(
+        &mut self,
+        items: Box<[u32]>,
+        alternate: u32,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn make_instr_unary64(
+        &mut self,
+        code: u8,
+        arg0: u64,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn make_instr_binary(
+        &mut self,
+        code: u8,
+        arg0: u32,
+        arg1: u32,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn make_instr_unary(
+        &mut self,
+        code: u8,
+        arg0: u32,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn make_instr_nullary(
+        &mut self,
+        code: u8,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn make_instr_block(
+        &mut self,
+        block_kind: u8,
+        block_type: Self::BlockType,
+        expr: Self::Expr,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn make_instr_block_ifelse(
+        &mut self,
+        block_type: Self::BlockType,
+        consequent: Self::Expr,
+        alternate: Option<Self::Expr>,
+        instrs: &mut Vec<Self::Instr>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn make_code(&mut self, item: Self::Func) -> Result<Self::Code, Self::Error> {
+        Ok(())
+    }
+
+    fn make_data_active(
+        &mut self,
+        bytes: Box<[u8]>,
+        mem_idx: Self::MemIdx,
+        expr: Self::Expr,
+    ) -> Result<Self::Data, Self::Error> {
+        Ok(())
+    }
+    fn make_data_passive(&mut self, bytes: Box<[u8]>) -> Result<Self::Data, Self::Error> {
+        Ok(())
+    }
+
+    fn make_limits(&mut self, lower: u32, upper: Option<u32>) -> Result<Self::Limits, Self::Error> {
+        Ok(())
+    }
+
+    fn make_export(
+        &mut self,
+        name: Self::Name,
+        desc: Self::ExportDesc,
+    ) -> Result<Self::Export, Self::Error> {
+        Ok(())
+    }
+
+    fn make_expr(&mut self, instrs: Vec<Self::Instr>) -> Result<Self::Expr, Self::Error> {
+        Ok(())
+    }
+
+    fn make_func(
+        &mut self,
+        locals: Box<[Self::Local]>,
+        expr: Self::Expr,
+    ) -> Result<Self::Func, Self::Error> {
+        Ok(())
+    }
+
+    fn make_global(
+        &mut self,
+        global_type: Self::GlobalType,
+        expr: Self::Expr,
+    ) -> Result<Self::Global, Self::Error> {
+        Ok(())
+    }
+
+    fn make_local(
+        &mut self,
+        count: u32,
+        val_type: Self::ValType,
+    ) -> Result<Self::Local, Self::Error> {
+        Ok(())
+    }
+
+    fn make_name(&mut self, data: Box<[u8]>) -> Result<Self::Name, Self::Error> {
+        Ok(())
+    }
+    fn make_custom_section(&mut self, data: Box<[u8]>) -> Result<Self::Section, Self::Error> {
+        Ok(())
+    }
+    fn make_type_section(&mut self, data: Box<[Self::Type]>) -> Result<Self::Section, Self::Error> {
+        Ok(())
+    }
+    fn make_import_section(
+        &mut self,
+        data: Box<[Self::Import]>,
+    ) -> Result<Self::Section, Self::Error> {
+        Ok(())
+    }
+    fn make_function_section(
+        &mut self,
+        data: Box<[Self::TypeIdx]>,
+    ) -> Result<Self::Section, Self::Error> {
+        Ok(())
+    }
+    fn make_table_section(
+        &mut self,
+        data: Box<[Self::TableType]>,
+    ) -> Result<Self::Section, Self::Error> {
+        Ok(())
+    }
+    fn make_memory_section(
+        &mut self,
+        data: Box<[Self::MemType]>,
+    ) -> Result<Self::Section, Self::Error> {
+        Ok(())
+    }
+    fn make_global_section(
+        &mut self,
+        data: Box<[Self::Global]>,
+    ) -> Result<Self::Section, Self::Error> {
+        Ok(())
+    }
+    fn make_export_section(
+        &mut self,
+        data: Box<[Self::Export]>,
+    ) -> Result<Self::Section, Self::Error> {
+        Ok(())
+    }
+
+    fn make_start_section(&mut self, data: Self::FuncIdx) -> Result<Self::Section, Self::Error> {
+        Ok(())
+    }
+
+    fn make_element_section(
+        &mut self,
+        data: Box<[Self::Elem]>,
+    ) -> Result<Self::Section, Self::Error> {
+        Ok(())
+    }
+
+    fn make_code_section(&mut self, data: Box<[Self::Code]>) -> Result<Self::Section, Self::Error> {
+        Ok(())
+    }
+    fn make_data_section(&mut self, data: Box<[Self::Data]>) -> Result<Self::Section, Self::Error> {
+        Ok(())
+    }
+
+    fn make_datacount_section(&mut self, data: u32) -> Result<Self::Section, Self::Error> {
+        Ok(())
+    }
+
+    fn make_block_type_empty(&mut self) -> Result<Self::BlockType, Self::Error> {
+        Ok(())
+    }
+    fn make_block_type_val_type(
+        &mut self,
+        vt: Self::ValType,
+    ) -> Result<Self::BlockType, Self::Error> {
+        Ok(())
+    }
+    fn make_block_type_type_index(
+        &mut self,
+        ti: Self::TypeIdx,
+    ) -> Result<Self::BlockType, Self::Error> {
+        Ok(())
+    }
+
+    fn make_val_type(&mut self, data: u8) -> Result<Self::ValType, Self::Error> {
+        Ok(())
+    }
+    fn make_global_type(
+        &mut self,
+        valtype: Self::ValType,
+        is_mutable: bool,
+    ) -> Result<Self::GlobalType, Self::Error> {
+        Ok(())
+    }
+    fn make_table_type(
+        &mut self,
+        reftype_candidate: u8,
+        limits: Self::Limits,
+    ) -> Result<Self::TableType, Self::Error> {
+        Ok(())
+    }
+    fn make_mem_type(&mut self, limits: Self::Limits) -> Result<Self::MemType, Self::Error> {
+        Ok(())
+    }
+
+    fn make_result_type(&mut self, data: &[u8]) -> Result<Self::ResultType, Self::Error> {
+        Ok(())
+    }
+    fn make_type_index(&mut self, candidate: u32) -> Result<Self::TypeIdx, Self::Error> {
+        Ok(())
+    }
+    fn make_table_index(&mut self, candidate: u32) -> Result<Self::TableIdx, Self::Error> {
+        Ok(())
+    }
+    fn make_mem_index(&mut self, candidate: u32) -> Result<Self::MemIdx, Self::Error> {
+        Ok(())
+    }
+    fn make_global_index(&mut self, candidate: u32) -> Result<Self::GlobalIdx, Self::Error> {
+        Ok(())
+    }
+    fn make_func_index(&mut self, candidate: u32) -> Result<Self::FuncIdx, Self::Error> {
+        Ok(())
+    }
+    fn make_local_index(&mut self, candidate: u32) -> Result<Self::FuncIdx, Self::Error> {
+        Ok(())
+    }
+    fn make_func_type(
+        &mut self,
+        params: Option<Self::ResultType>,
+        returns: Option<Self::ResultType>,
+    ) -> Result<Self::Type, Self::Error> {
+        Ok(())
+    }
+
+    fn make_import_desc_func(
+        &mut self,
+        type_idx: Self::TypeIdx,
+    ) -> Result<Self::ImportDesc, Self::Error> {
+        Ok(())
+    }
+    fn make_import_desc_global(
+        &mut self,
+        global_type: Self::GlobalType,
+    ) -> Result<Self::ImportDesc, Self::Error> {
+        Ok(())
+    }
+    fn make_import_desc_table(
+        &mut self,
+        global_type: Self::TableType,
+    ) -> Result<Self::ImportDesc, Self::Error> {
+        Ok(())
+    }
+    fn make_import_desc_memtype(
+        &mut self,
+        global_type: Self::Limits,
+    ) -> Result<Self::ImportDesc, Self::Error> {
+        Ok(())
+    }
+
+    fn make_export_desc_func(
+        &mut self,
+        func_idx: Self::FuncIdx,
+    ) -> Result<Self::ExportDesc, Self::Error> {
+        Ok(())
+    }
+
+    fn make_export_desc_global(
+        &mut self,
+        global_idx: Self::GlobalIdx,
+    ) -> Result<Self::ExportDesc, Self::Error> {
+        Ok(())
+    }
+
+    fn make_export_desc_memtype(
+        &mut self,
+        mem_idx: Self::MemIdx,
+    ) -> Result<Self::ExportDesc, Self::Error> {
+        Ok(())
+    }
+
+    fn make_export_desc_table(
+        &mut self,
+        table_idx: Self::TableIdx,
+    ) -> Result<Self::ExportDesc, Self::Error> {
+        Ok(())
+    }
+
+    fn make_import(
+        &mut self,
+        modname: Self::Name,
+        name: Self::Name,
+        desc: Self::ImportDesc,
+    ) -> Result<Self::Import, Self::Error> {
+        Ok(())
+    }
+    fn make_module(&mut self, sections: Vec<Self::Section>) -> Result<Self::Module, Self::Error> {
+        Ok(())
+    }
+
+    fn make_elem_from_indices(
+        &mut self,
+        _kind: Option<u32>,
+        _mode: Self::ElemMode,
+        _idxs: Box<[u32]>,
+        _flags: u8,
+    ) -> Result<Self::Elem, Self::Error> {
+        Ok(())
+    }
+
+    fn make_elem_from_exprs(
+        &mut self,
+        _kind: Option<Self::RefType>,
+        _mode: Self::ElemMode,
+        _exprs: Box<[Self::Expr]>,
+        _flags: u8,
+    ) -> Result<Self::Elem, Self::Error> {
+        Ok(())
+    }
+
+    fn make_elem_mode_passive(&mut self) -> Result<Self::ElemMode, Self::Error> {
+        Ok(())
+    }
+
+    fn make_elem_mode_declarative(&mut self) -> Result<Self::ElemMode, Self::Error> {
+        Ok(())
+    }
+
+    fn make_elem_mode_active(
+        &mut self,
+        table_idx: Self::TableIdx,
+        expr: Self::Expr,
+    ) -> Result<Self::ElemMode, Self::Error> {
+        Ok(())
+    }
+
+    fn make_ref_type(&mut self, data: u8) -> Result<Self::RefType, Self::Error> {
+        Ok(())
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 pub enum DefaultIRGeneratorError {
     #[error("Invalid name: {0}")]
@@ -1081,6 +1530,9 @@ pub enum DefaultIRGeneratorError {
 
     #[error("Invalid table index (got {0}; max is {1})")]
     InvalidTableIndex(u32, u32),
+
+    #[error("Invalid local index (got {0}; max is {1})")]
+    InvalidLocalIndex(u32, u32),
 
     #[error("Invalid func index (got {0}; max is {1})")]
     InvalidFuncIndex(u32, u32),
@@ -1109,6 +1561,12 @@ pub struct DefaultIRGenerator {
     local_function_count: u32,
     max_valid_mem_index: u32,
     last_section_discrim: u32,
+
+    next_func_idx: u32,
+
+    current_locals: Vec<ValType>,
+    blocks: Vec<BlockType>,
+    stack: Vec<ValType>,
 }
 
 impl DefaultIRGenerator {
@@ -1128,6 +1586,7 @@ impl IR for DefaultIRGenerator {
     type Data = Data;
     type DataIdx = DataIdx;
     type Elem = Elem;
+    type ElemMode = ElemMode;
     type ElemIdx = ElemIdx;
     type Export = Export;
     type ExportDesc = ExportDesc;
@@ -1470,6 +1929,16 @@ impl IR for DefaultIRGenerator {
         }
     }
 
+    fn make_local_index(&mut self, candidate: u32) -> Result<Self::LocalIdx, Self::Error> {
+        if candidate as usize >= self.current_locals.len() {
+            return Err(Self::Error::InvalidLocalIndex(
+                candidate,
+                self.current_locals.len() as u32,
+            ));
+        }
+        Ok(LocalIdx(candidate))
+    }
+
     fn make_func_type(
         &mut self,
         params: Option<Self::ResultType>,
@@ -1593,9 +2062,6 @@ impl IR for DefaultIRGenerator {
         Ok(Data::Passive(ByteVec(bytes)))
     }
 
-    fn make_elem(&mut self, _item: Elem) -> Result<Self::Elem, Self::Error> {
-        todo!("implement make_elem")
-    }
     fn make_limits(&mut self, lower: u32, upper: Option<u32>) -> Result<Self::Limits, Self::Error> {
         Ok(if let Some(upper) = upper {
             Limits::Range(lower, upper)
@@ -1616,11 +2082,17 @@ impl IR for DefaultIRGenerator {
         Ok(Expr(instrs))
     }
 
+    fn start_func(&mut self) {
+        self.next_func_idx += 1;
+    }
+
     fn make_func(
         &mut self,
         locals: Box<[Self::Local]>,
         expr: Self::Expr,
     ) -> Result<Self::Func, Self::Error> {
+        eprintln!("clearing locals");
+        self.current_locals.clear();
         Ok(Func { locals, expr })
     }
 
@@ -1637,7 +2109,13 @@ impl IR for DefaultIRGenerator {
         count: u32,
         val_type: Self::ValType,
     ) -> Result<Self::Local, Self::Error> {
-        Ok(Local(count, val_type))
+        let local = Local(count, val_type);
+        self.current_locals.extend((0..local.0).map(|_| local.1));
+        eprintln!(
+            "adding {count} locals for a grand total of {}",
+            self.current_locals.len()
+        );
+        Ok(local)
     }
 
     fn make_instr_select(
@@ -1657,7 +2135,6 @@ impl IR for DefaultIRGenerator {
     ) -> Result<(), Self::Error> {
         let items = items.iter().map(|xs| LabelIdx(*xs)).collect();
         instrs.push(Instr::BrTable(items, LabelIdx(alternate)));
-        // TODO
         Ok(())
     }
 
@@ -1722,10 +2199,9 @@ impl IR for DefaultIRGenerator {
             0x10 => Instr::Call(self.make_func_index(arg0)?),
             0x41 => Instr::I32Const(arg0 as i32),
             0x43 => Instr::F32Const(f32::from_bits(arg0)),
-            // TODO: add "make_local_index"
-            0x20 => Instr::LocalGet(LocalIdx(arg0)),
-            0x21 => Instr::LocalSet(LocalIdx(arg0)),
-            0x22 => Instr::LocalTee(LocalIdx(arg0)),
+            0x20 => Instr::LocalGet(self.make_local_index(arg0)?),
+            0x21 => Instr::LocalSet(self.make_local_index(arg0)?),
+            0x22 => Instr::LocalTee(self.make_local_index(arg0)?),
             0x23 => Instr::GlobalGet(self.make_global_index(arg0)?),
             0x24 => Instr::GlobalSet(self.make_global_index(arg0)?),
             0x25 => Instr::TableGet(self.make_table_index(arg0)?),
@@ -1893,7 +2369,11 @@ impl IR for DefaultIRGenerator {
         expr: Self::Expr,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        // TODO
+        match block_kind {
+            0x02 => instrs.push(Instr::Block(block_type, expr.0.into_boxed_slice())),
+            0x03 => instrs.push(Instr::Loop(block_type, expr.0.into_boxed_slice())),
+            unk => return Err(DefaultIRGeneratorError::InvalidInstruction(unk)),
+        }
         Ok(())
     }
 
@@ -1904,7 +2384,90 @@ impl IR for DefaultIRGenerator {
         alternate: Option<Self::Expr>,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        // TODO
+        instrs.push(if let Some(alternate) = alternate {
+            Instr::IfElse(
+                block_type,
+                consequent.0.into_boxed_slice(),
+                alternate.0.into_boxed_slice(),
+            )
+        } else {
+            Instr::If(block_type, consequent.0.into_boxed_slice())
+        });
         Ok(())
+    }
+
+    fn make_elem_from_indices(
+        &mut self,
+        kind: Option<u32>,
+        mode: Self::ElemMode,
+        idxs: Box<[u32]>,
+        flags: u8,
+    ) -> Result<Self::Elem, Self::Error> {
+        let exprs = idxs
+            .iter()
+            .map(|xs| Ok(Expr(vec![Instr::RefFunc(self.make_func_index(*xs)?)])))
+            .collect::<Result<Box<[_]>, Self::Error>>()?;
+
+        let kind = kind.unwrap_or_default();
+        if kind != 0 {
+            // TODO: create a better error
+            return Err(DefaultIRGeneratorError::InvalidRefType(kind as u8));
+        }
+
+        Ok(Elem {
+            mode,
+            kind: RefType::FuncRef,
+            exprs,
+            flags,
+        })
+    }
+
+    fn make_elem_from_exprs(
+        &mut self,
+        kind: Option<Self::RefType>,
+        mode: Self::ElemMode,
+        exprs: Box<[Self::Expr]>,
+        flags: u8,
+    ) -> Result<Self::Elem, Self::Error> {
+        Ok(Elem {
+            mode,
+            kind: kind.unwrap_or_default(),
+            exprs,
+            flags,
+        })
+    }
+
+    fn make_elem_mode_passive(&mut self) -> Result<Self::ElemMode, Self::Error> {
+        Ok(ElemMode::Passive)
+    }
+
+    fn make_elem_mode_declarative(&mut self) -> Result<Self::ElemMode, Self::Error> {
+        Ok(ElemMode::Declarative)
+    }
+
+    fn make_elem_mode_active(
+        &mut self,
+        table_idx: Self::TableIdx,
+        expr: Self::Expr,
+    ) -> Result<Self::ElemMode, Self::Error> {
+        if table_idx.0 >= self.max_valid_table_index {
+            return Err(DefaultIRGeneratorError::InvalidTableIndex(
+                table_idx.0,
+                self.max_valid_table_index,
+            ));
+        }
+
+        Ok(ElemMode::Active {
+            table_idx,
+            offset: expr,
+        })
+    }
+
+    fn make_ref_type(&mut self, data: u8) -> Result<Self::RefType, Self::Error> {
+        let ValType::RefType(ref_type) = self.make_val_type(data)? else {
+            return Err(DefaultIRGeneratorError::InvalidRefType(data));
+        };
+
+        Ok(ref_type)
     }
 }
