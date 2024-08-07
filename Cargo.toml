@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/codec", "crates/nodes", "crates/rt", "crates/wastjson-gen"]
+members = ["crates/codec", "crates/nodes", "crates/rt"]
 resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

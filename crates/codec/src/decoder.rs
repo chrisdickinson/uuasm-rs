@@ -66,6 +66,7 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
         let offset = 0;
         let mut consumed = 0;
         loop {
+            #[cfg(any())]
             eprintln!(
                 "{:x} {}",
                 offset + self.position,

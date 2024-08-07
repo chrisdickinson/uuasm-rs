@@ -1071,7 +1071,7 @@ impl<'a> ParseWasmBinary<'a> for Elem {
             )(input),
             0b001 => map(
                 tuple((u32::from_wasm_bytes, Vec::<FuncIdx>::from_wasm_bytes)),
-                |(el, fs)| Elem {
+                |(_el, fs)| Elem {
                     flags: 0b001,
                     mode: ElemMode::Passive,
                     kind: RefType::FuncRef,
@@ -1088,7 +1088,7 @@ impl<'a> ParseWasmBinary<'a> for Elem {
                     u32::from_wasm_bytes,
                     Vec::<FuncIdx>::from_wasm_bytes,
                 )),
-                |(a, b, c, d)| Elem {
+                |(a, b, _c, d)| Elem {
                     flags: 0b010,
                     mode: ElemMode::Active {
                         table_idx: a,
@@ -1103,7 +1103,7 @@ impl<'a> ParseWasmBinary<'a> for Elem {
             )(input),
             0b011 => map(
                 tuple((u32::from_wasm_bytes, Vec::<FuncIdx>::from_wasm_bytes)),
-                |(el, fs)| Elem {
+                |(_el, fs)| Elem {
                     flags: 0b011,
                     mode: ElemMode::Declarative,
                     kind: RefType::FuncRef,
@@ -1264,7 +1264,7 @@ impl<'a> ParseWasmBinary<'a> for SectionType {
             0x9 => SectionType::Element(Vec::<Elem>::from_wasm_bytes(section)?.1.into()),
             0xa => SectionType::Code(Vec::<Code>::from_wasm_bytes(section)?.1.into()),
             0xb => SectionType::Data(Vec::<Data>::from_wasm_bytes(section)?.1.into()),
-            0xc => SectionType::DataCount(u32::from_wasm_bytes(section)?.1.into()),
+            0xc => SectionType::DataCount(u32::from_wasm_bytes(section)?.1),
             _ => return fail::<_, Self, _>(section),
         };
 

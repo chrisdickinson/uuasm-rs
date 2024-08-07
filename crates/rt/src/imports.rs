@@ -107,13 +107,10 @@ impl Imports {
             .code_section(
                 vec![Code(Func {
                     locals: vec![].into(),
-                    expr: Expr(
-                        vec![
-                            Instr::CallIntrinsic(self.external_functions.len()),
-                            Instr::Return,
-                        ]
-                        .into(),
-                    ),
+                    expr: Expr(vec![
+                        Instr::CallIntrinsic(self.external_functions.len()),
+                        Instr::Return,
+                    ]),
                 })]
                 .into(),
             )

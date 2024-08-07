@@ -14,7 +14,7 @@ pub(crate) mod value;
 
 pub(crate) use value::Value;
 
-use uuasm_nodes::{Local, NumType, RefType, Type, ValType, VecType};
+use uuasm_nodes::{NumType, RefType, ValType, VecType};
 
 pub(crate) mod prelude {
     use crate::Value;
@@ -55,6 +55,7 @@ impl prelude::ValTypeExtras for ValType {
     }
 }
 
+/*
 macro_rules! Instrs {
     ($input:expr, $exec:ident) => {
         match $input {
@@ -253,20 +254,21 @@ macro_rules! Instrs {
         }
     };
 }
+*/
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct TKTK;
 
 #[cfg(test)]
 mod test {
-
     use uuasm_codec::parse;
+    use uuasm_nodes::DefaultIRGenerator as IRGen;
 
     #[test]
     fn test_create_store() {
         let bytes = include_bytes!("../../../example2.wasm");
 
-        let _wasm = parse(bytes).unwrap();
+        let _wasm = parse(IRGen::new(), bytes).unwrap();
 
         /*
         let mut instance = module

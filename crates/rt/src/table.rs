@@ -1,7 +1,7 @@
 use uuasm_nodes::{Import, TableIdx, TableType};
 
 use super::{
-    imports::{Extern, GuestIndex, Imports, LookupImport},
+    imports::{Extern, GuestIndex, LookupImport},
     machine::MachineTableIndex,
 };
 

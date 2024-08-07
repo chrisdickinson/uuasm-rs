@@ -49,7 +49,7 @@ impl ElemValue for Elem {
         machine: &Machine,
         resources: &mut Resources,
     ) -> anyhow::Result<Value> {
-        Ok(machine.compute_constant_expr(module_idx, self.exprs[idx].0.as_slice(), resources)?)
+        machine.compute_constant_expr(module_idx, self.exprs[idx].0.as_slice(), resources)
     }
 }
 
@@ -67,9 +67,11 @@ struct Frame<'a> {
     guest_index: GuestIndex,
 }
 
+pub type FuncWrap = Arc<dyn Fn(&[Value], &mut [Value]) -> anyhow::Result<()> + Send + Sync>;
+
 #[derive(Clone)]
 pub(crate) struct ExternalFunction {
-    pub(crate) func: Arc<dyn Fn(&[Value], &mut [Value]) -> anyhow::Result<()> + Send + Sync>,
+    pub(crate) func: FuncWrap,
     pub(crate) typedef: Type,
 }
 
@@ -276,7 +278,7 @@ impl Machine {
         let mut globals = Vec::with_capacity(global_section.len() + import_global_count);
         let mut memories = Vec::with_capacity(memory_section.len() + import_mem_count);
         let mut tables = Vec::with_capacity(table_section.len() + import_table_count);
-        for imp in &import_section {
+        for imp in import_section.iter() {
             match imp.desc() {
                 ImportDesc::Func(desc) => {
                     functions.push(FuncInst::resolve(*desc, imp, self)?);
@@ -295,29 +297,26 @@ impl Machine {
 
         let mut saw_error = false;
         let code_max = code_section.len();
-        functions.extend(
-            function_section
-                .into_iter()
-                .enumerate()
-                .map(|(code_idx, xs)| {
-                    if code_idx >= code_max {
-                        saw_error = true;
-                    }
-                    FuncInst::new(xs, CodeIdx(code_idx as u32))
-                }),
-        );
+        functions.extend(IntoIterator::into_iter(function_section).enumerate().map(
+            |(code_idx, xs)| {
+                if code_idx >= code_max {
+                    saw_error = true;
+                }
+                FuncInst::new(xs, CodeIdx(code_idx as u32))
+            },
+        ));
 
         if saw_error {
             anyhow::bail!("code idx out of range");
         }
 
-        memories.extend(memory_section.into_iter().map(|memtype| {
+        memories.extend(IntoIterator::into_iter(memory_section).map(|memtype| {
             let memory_region_idx = resources.memory_regions.len();
             resources.memory_regions.push(MemoryRegion::new(memtype.0));
             MemInst::new(memtype, memory_region_idx)
         }));
 
-        tables.extend(table_section.into_iter().map(|tabletype| {
+        tables.extend(IntoIterator::into_iter(table_section).map(|tabletype| {
             let table_instance_idx = resources.table_instances.len();
             eprintln!("initializing {table_instance_idx:?}");
             resources.table_instances.push(Table {
@@ -329,21 +328,26 @@ impl Machine {
 
         let global_base_offset = resources.global_values.len();
         resources.global_values.reserve(global_section.len());
-        globals.extend(global_section.into_iter().enumerate().map(|(idx, global)| {
-            let Global(global_type, Expr(instrs)) = global;
-            resources.global_values.push(global_type.0.instantiate());
-            GlobalInst::new(
-                global_type,
-                global_base_offset + idx,
-                instrs.into_boxed_slice(),
-            )
-        }));
 
-        self.imports.push(import_section.into_boxed_slice());
-        self.exports.push(export_section.into_boxed_slice());
-        self.code.push(code_section.into_boxed_slice());
-        self.data.push(data_section.into_boxed_slice());
-        self.elements.push(element_section.into_boxed_slice());
+        globals.extend(
+            IntoIterator::into_iter(global_section)
+                .enumerate()
+                .map(|(idx, global)| {
+                    let Global(global_type, Expr(instrs)) = global;
+                    resources.global_values.push(global_type.0.instantiate());
+                    GlobalInst::new(
+                        global_type,
+                        global_base_offset + idx,
+                        instrs.into_boxed_slice(),
+                    )
+                }),
+        );
+
+        self.imports.push(import_section);
+        self.exports.push(export_section);
+        self.code.push(code_section);
+        self.data.push(data_section);
+        self.elements.push(element_section);
         self.functions.push(functions.into_boxed_slice());
         self.globals.push(globals.into_boxed_slice());
         self.memories.push(memories.into_boxed_slice());
@@ -448,10 +452,7 @@ impl Machine {
         mut func_idx: FuncIdx,
     ) -> Option<(GuestIndex, &FuncInst)> {
         loop {
-            let func = self.functions.get(module_idx)?.get(func_idx.0 as usize);
-            let Some(func) = func else {
-                return None;
-            };
+            let func = self.functions.get(module_idx)?.get(func_idx.0 as usize)?;
 
             match func.r#impl {
                 super::function::FuncInstImpl::Local(_) => return Some((module_idx, func)),
@@ -526,10 +527,7 @@ impl Machine {
         }
 
         let mut active_elems = Vec::new();
-        for elem in Arc::get_mut(&mut self.elements[at_idx])
-            .iter_mut()
-            .flat_map(|xs| xs.iter_mut())
-        {
+        for elem in self.elements[at_idx].iter_mut() {
             let ElemMode::Active { .. } = &elem.mode else {
                 continue;
             };
@@ -659,8 +657,8 @@ impl Machine {
         // TODO: do we clone the "start" section?
         let module = ModuleBuilder::new()
             .type_section(types.into())
-            .import_section(imports)
-            .export_section(exports)
+            .import_section(imports.into_boxed_slice())
+            .export_section(exports.into_boxed_slice())
             .build();
 
         self.link_module(to_modname, module)
@@ -763,7 +761,7 @@ impl Machine {
         }
 
         let code = self.code(module_idx, function.codeidx());
-        let locals = code.0.locals.as_slice();
+        let locals = &code.0.locals;
 
         let mut locals: Vec<Value> = args
             .iter()

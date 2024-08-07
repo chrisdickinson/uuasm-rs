@@ -49,13 +49,10 @@ impl<T: IR, C: LEBConstants> Parse<T> for LEBParser<C> {
 }
 
 trait LEBConstants {
-    const MAX_BYTES: usize;
-    const SIGNED: bool = false;
     fn from_u64(i: u64) -> Self;
 }
 
 impl LEBConstants for u32 {
-    const MAX_BYTES: usize = 5;
     #[inline]
     fn from_u64(i: u64) -> Self {
         i as u32
@@ -63,7 +60,6 @@ impl LEBConstants for u32 {
 }
 
 impl LEBConstants for u64 {
-    const MAX_BYTES: usize = 10;
     #[inline]
     fn from_u64(i: u64) -> Self {
         i
@@ -71,8 +67,6 @@ impl LEBConstants for u64 {
 }
 
 impl LEBConstants for i32 {
-    const MAX_BYTES: usize = 5;
-    const SIGNED: bool = true;
     #[inline]
     fn from_u64(i: u64) -> Self {
         i as i32
@@ -80,8 +74,6 @@ impl LEBConstants for i32 {
 }
 
 impl LEBConstants for i64 {
-    const MAX_BYTES: usize = 10;
-    const SIGNED: bool = true;
     #[inline]
     fn from_u64(i: u64) -> Self {
         i as i64

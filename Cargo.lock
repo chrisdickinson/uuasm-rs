@@ -743,16 +743,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "wastjson-gen"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "quote",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "web-sys"
 version = "0.3.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"

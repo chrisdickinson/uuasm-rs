@@ -106,3 +106,11 @@ pub trait Parse<T: IR> {
 pub trait ExtractTarget<T>: Sized {
     fn extract(value: T) -> Result<Self, ExtractError>;
 }
+
+pub fn parse<T: IR>(irgen: T, input: &[u8]) -> Result<T::Module, ParseError<T::Error>> {
+    let mut parser =
+        Decoder::<T, T::Module>::new(AnyParser::Module(ModuleParser::default()), irgen);
+
+    parser.write(input)?;
+    parser.flush()
+}

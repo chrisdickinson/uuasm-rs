@@ -3,6 +3,7 @@ use uuasm_nodes::IR;
 use crate::{Parse, ParseError};
 
 pub struct InstrArgMultibyteParser<T: IR> {
+    #[allow(dead_code)]
     data: Vec<T::Instr>,
 }
 
@@ -19,13 +20,13 @@ impl<T: IR> Parse<T> for InstrArgMultibyteParser<T> {
 
     fn advance(
         &mut self,
-        irgen: &mut T,
-        window: crate::window::DecodeWindow,
+        _irgen: &mut T,
+        _window: crate::window::DecodeWindow,
     ) -> crate::ParseResult<T> {
         todo!()
     }
 
-    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
         todo!()
     }
 }

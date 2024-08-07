@@ -24,10 +24,16 @@ impl<T: IR> Parse<T> for ModuleParser<T> {
                 AnyParser::Accumulate(Accumulator::new(8)),
                 |irgen, last_state, this_state| {
                     let AnyParser::Accumulate(accum) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        }
                     };
                     let AnyParser::Module(_) = this_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        }
                     };
                     let production = accum.production(irgen)?;
 
@@ -49,7 +55,7 @@ impl<T: IR> Parse<T> for ModuleParser<T> {
                 },
             )),
 
-            ModuleParser::TakeSection(builder) => {
+            ModuleParser::TakeSection(_) => {
                 match window.peek() {
                     Err(AdvancementError::Expected(1, _)) => {
                         return Ok(Advancement::Ready(window.offset()));
@@ -63,11 +69,17 @@ impl<T: IR> Parse<T> for ModuleParser<T> {
                     AnyParser::Section(Default::default()),
                     |irgen, last_state, this_state| {
                         let AnyParser::Section(section) = last_state else {
-                             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            };
                         };
                         let AnyParser::Module(ModuleParser::TakeSection(mut sections)) = this_state
                         else {
-                             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            };
                         };
 
                         sections.push(section.production(irgen)?);
@@ -81,7 +93,10 @@ impl<T: IR> Parse<T> for ModuleParser<T> {
 
     fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
         let ModuleParser::TakeSection(sections) = self else {
-             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+            unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            };
         };
 
         Ok(irgen.make_module(sections).map_err(IRError)?)

@@ -6,7 +6,7 @@ use crate::{Advancement, IRError, Parse};
 
 use super::any::AnyParser;
 
-enum ElementMode<T: IR> {
+pub enum ElementMode<T: IR> {
     Passive,
     Active(T::TableIdx, T::Expr),
     Declarative,
