@@ -10,9 +10,9 @@ use anyhow::Context;
 use crate::memory_region::MemoryRegion;
 use crate::prelude::*;
 use uuasm_nodes::{
-    BlockType, ByteVec, Code, CodeIdx, Data, Elem, Export, ExportDesc, Expr, FuncIdx, Global,
-    GlobalIdx, Import, ImportDesc, Instr, MemIdx, Module, ModuleBuilder, ModuleIntoInner, Name,
-    TableIdx, TableType, Type, TypeIdx,
+    BlockType, ByteVec, Code, CodeIdx, Data, Elem, ElemMode, Export, ExportDesc, Expr, FuncIdx,
+    Global, GlobalIdx, Import, ImportDesc, Instr, MemIdx, Module, ModuleBuilder, ModuleIntoInner,
+    Name, TableIdx, TableType, Type, TypeIdx,
 };
 
 use super::{
@@ -49,18 +49,7 @@ impl ElemValue for Elem {
         machine: &Machine,
         resources: &mut Resources,
     ) -> anyhow::Result<Value> {
-        Ok(match self {
-            Elem::ActiveSegmentFuncs(_, xs)
-            | Elem::PassiveSegment(_, xs)
-            | Elem::ActiveSegment(_, _, _, xs)
-            | Elem::DeclarativeSegment(_, xs) => Value::RefFunc(xs[idx]),
-            Elem::ActiveSegmentExpr(_, xs)
-            | Elem::PassiveSegmentExpr(_, xs)
-            | Elem::ActiveSegmentTableAndExpr(_, _, _, xs)
-            | Elem::DeclarativeSegmentExpr(_, xs) => {
-                machine.compute_constant_expr(module_idx, xs[idx].0.as_slice(), resources)?
-            }
-        })
+        Ok(machine.compute_constant_expr(module_idx, self.exprs[idx].0.as_slice(), resources)?)
     }
 }
 
@@ -537,110 +526,50 @@ impl Machine {
         }
 
         let mut active_elems = Vec::new();
-        for elem in self.elements[at_idx].iter_mut() {
-            if matches!(
-                elem,
-                Elem::ActiveSegmentFuncs(_, _)
-                    | Elem::ActiveSegment(_, _, _, _)
-                    | Elem::ActiveSegmentExpr(_, _)
-                    | Elem::ActiveSegmentTableAndExpr(_, _, _, _)
-            ) {
-                let mut empty = Elem::PassiveSegment(0, vec![]);
-                mem::swap(elem, &mut empty);
-                active_elems.push(empty);
-            }
+        for elem in Arc::get_mut(&mut self.elements[at_idx])
+            .iter_mut()
+            .flat_map(|xs| xs.iter_mut())
+        {
+            let ElemMode::Active { .. } = &elem.mode else {
+                continue;
+            };
+
+            let mut empty = Elem {
+                mode: ElemMode::Passive,
+                kind: elem.kind,
+                exprs: elem.exprs.clone(),
+                flags: elem.flags,
+            };
+
+            mem::swap(elem, &mut empty);
+            active_elems.push(empty);
         }
 
         for elem in active_elems {
-            match elem {
-                Elem::ActiveSegmentFuncs(expr, func_indices) => {
-                    let offset = self.compute_constant_expr(at_idx, &expr.0, &mut *resources)?;
-                    let offset = offset
-                        .as_usize()
-                        .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
+            let ElemMode::Active { table_idx, offset } = &elem.mode else {
+                continue;
+            };
+            let offset = self.compute_constant_expr(at_idx, &offset.0, &mut *resources)?;
+            let offset = offset
+                .as_usize()
+                .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
 
-                    let tableidx = self.table(at_idx, TableIdx(0));
-                    let table = resources
-                        .table_instances
-                        .get_mut(tableidx)
-                        .ok_or_else(|| anyhow::anyhow!("no such table"))?;
+            let values = elem
+                .exprs
+                .iter()
+                .map(|xs| self.compute_constant_expr(at_idx, &xs.0, &mut *resources))
+                .collect::<anyhow::Result<Vec<_>>>()?;
 
-                    eprintln!("activating offset={offset:?}; funcindexes={func_indices:?} tableidx={tableidx:?}");
-                    for (idx, xs) in func_indices.iter().enumerate() {
-                        table[idx + offset] = Value::RefFunc(*xs);
-                    }
-                    eprintln!("table={:?}", &table.values);
-                }
+            let tableidx = self.table(at_idx, *table_idx);
+            let table = resources
+                .table_instances
+                .get_mut(tableidx)
+                .ok_or_else(|| anyhow::anyhow!("no such table"))?;
 
-                // "elemkind" means "funcref" or "externref"
-                Elem::ActiveSegment(table_idx, expr, _elemkind, func_indices) => {
-                    let offset = self.compute_constant_expr(at_idx, &expr.0, &mut *resources)?;
-                    let offset = offset
-                        .as_usize()
-                        .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
-
-                    let tableidx = self.table(at_idx, table_idx);
-                    let table = resources
-                        .table_instances
-                        .get_mut(tableidx)
-                        .ok_or_else(|| anyhow::anyhow!("no such table"))?;
-
-                    eprintln!("activating activesegment offset={offset:?}; funcindexes={func_indices:?} tableidx={tableidx:?}");
-                    for (idx, xs) in func_indices.iter().enumerate() {
-                        table[idx + offset] = Value::RefFunc(*xs);
-                    }
-                }
-
-                Elem::ActiveSegmentExpr(expr, exprs) => {
-                    let offset = self.compute_constant_expr(at_idx, &expr.0, &mut *resources)?;
-                    let offset = offset
-                        .as_usize()
-                        .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
-
-                    let values = exprs
-                        .iter()
-                        .map(|xs| self.compute_constant_expr(at_idx, &xs.0, &mut *resources))
-                        .collect::<anyhow::Result<Vec<_>>>()?;
-
-                    let tableidx = self.table(at_idx, TableIdx(0));
-                    let table = resources
-                        .table_instances
-                        .get_mut(tableidx)
-                        .ok_or_else(|| anyhow::anyhow!("no such table"))?;
-
-                    eprintln!("activating activesegment offset={offset:?}; values={values:?} tableidx={tableidx:?}");
-                    for (idx, xs) in values.iter().enumerate() {
-                        table[idx + offset] = *xs;
-                    }
-                }
-
-                Elem::ActiveSegmentTableAndExpr(table_idx, expr, _ref_type, exprs) => {
-                    let offset = self.compute_constant_expr(at_idx, &expr.0, &mut *resources)?;
-                    let offset = offset
-                        .as_usize()
-                        .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
-
-                    let values = exprs
-                        .iter()
-                        .map(|xs| self.compute_constant_expr(at_idx, &xs.0, &mut *resources))
-                        .collect::<anyhow::Result<Vec<_>>>()?;
-
-                    let tableidx = self.table(at_idx, table_idx);
-                    let table = resources
-                        .table_instances
-                        .get_mut(tableidx)
-                        .ok_or_else(|| anyhow::anyhow!("no such table"))?;
-
-                    for (idx, xs) in values.iter().enumerate() {
-                        table[idx + offset] = *xs;
-                    }
-                }
-
-                _ => (), // passive and declarative segments do not participate in
-                         // initialization
+            for (idx, xs) in values.iter().enumerate() {
+                table[idx + offset] = *xs;
             }
         }
-
         // TODO: do we have a start section? an initialize export? call them.
 
         Ok(())
@@ -1524,10 +1453,7 @@ impl Machine {
                     }
 
                     // TODO: is there any context in which a declarative elem can be used?
-                    if matches!(
-                        elem,
-                        Elem::DeclarativeSegment(_, _) | Elem::DeclarativeSegmentExpr(_, _)
-                    ) {
+                    if elem.mode == ElemMode::Declarative {
                         anyhow::bail!("out of bounds table access");
                     }
 

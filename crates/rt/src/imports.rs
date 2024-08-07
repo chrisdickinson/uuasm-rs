@@ -103,14 +103,20 @@ impl Imports {
 
         let module = ModuleBuilder::new()
             .type_section(vec![typedef.clone()].into())
-            .function_section(vec![TypeIdx(0)])
-            .code_section(vec![Code(Func {
-                locals: typedef.clone().into(),
-                expr: Expr(vec![
-                    Instr::CallIntrinsic(self.external_functions.len()),
-                    Instr::Return,
-                ]),
-            })])
+            .function_section(vec![TypeIdx(0)].into())
+            .code_section(
+                vec![Code(Func {
+                    locals: vec![].into(),
+                    expr: Expr(
+                        vec![
+                            Instr::CallIntrinsic(self.external_functions.len()),
+                            Instr::Return,
+                        ]
+                        .into(),
+                    ),
+                })]
+                .into(),
+            )
             .build();
 
         self.externs

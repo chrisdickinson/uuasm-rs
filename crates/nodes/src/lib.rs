@@ -846,7 +846,7 @@ pub trait IR {
 
     fn make_instr_table(
         &mut self,
-        items: Box<[u32]>,
+        items: &[u32],
         alternate: u32,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error>;
@@ -1152,7 +1152,7 @@ impl IR for EmptyIRGenerator {
 
     fn make_instr_table(
         &mut self,
-        items: Box<[u32]>,
+        items: &[u32],
         alternate: u32,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
@@ -1564,6 +1564,9 @@ pub struct DefaultIRGenerator {
 
     next_func_idx: u32,
 
+    types: Option<Box<[Type]>>,
+    func_types: Option<Box<[TypeIdx]>>,
+
     current_locals: Vec<ValType>,
     blocks: Vec<BlockType>,
     stack: Vec<ValType>,
@@ -1706,6 +1709,7 @@ impl IR for DefaultIRGenerator {
             ));
         }
 
+        self.types = Some(data.clone());
         self.max_valid_type_index = data.len() as u32;
         self.last_section_discrim = 1;
         Ok(SectionType::Type(data))
@@ -1735,6 +1739,7 @@ impl IR for DefaultIRGenerator {
                 self.last_section_discrim,
             ));
         }
+        self.func_types = Some(data.clone());
         self.local_function_count = data.len() as u32;
         self.max_valid_func_index += self.local_function_count;
         self.last_section_discrim = 3;
@@ -2083,6 +2088,15 @@ impl IR for DefaultIRGenerator {
     }
 
     fn start_func(&mut self) {
+        if let Some(typeinfo) = self
+            .func_types
+            .as_ref()
+            .and_then(|xs| xs.get(self.next_func_idx as usize))
+            .and_then(|tyidx| self.types.as_ref().and_then(|xs| xs.get(tyidx.0 as usize)))
+        {
+            self.current_locals.extend(typeinfo.0 .0.iter().cloned())
+        }
+
         self.next_func_idx += 1;
     }
 
@@ -2111,10 +2125,6 @@ impl IR for DefaultIRGenerator {
     ) -> Result<Self::Local, Self::Error> {
         let local = Local(count, val_type);
         self.current_locals.extend((0..local.0).map(|_| local.1));
-        eprintln!(
-            "adding {count} locals for a grand total of {}",
-            self.current_locals.len()
-        );
         Ok(local)
     }
 
@@ -2129,7 +2139,7 @@ impl IR for DefaultIRGenerator {
 
     fn make_instr_table(
         &mut self,
-        items: Box<[u32]>,
+        items: &[u32],
         alternate: u32,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {

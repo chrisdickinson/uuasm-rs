@@ -60,7 +60,7 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
                         let (items, alternate) = parser.production(irgen)?;
-                        irgen.make_instr_table(items, alternate, &mut instrs).map_err(IRError)?;
+                        irgen.make_instr_table(&*items, alternate, &mut instrs).map_err(IRError)?;
                         Ok(AnyParser::Expr(Self { state: State::Empty, instrs }))
                     }))
                 }
