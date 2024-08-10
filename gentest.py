@@ -22,7 +22,7 @@ module_count = 0
 output.append("""
 #![allow(unused_mut)]
 #![allow(unused)]
-use crate::rt::*;
+use crate::*;
 use crate::test_utils::*;
 
 #[test]

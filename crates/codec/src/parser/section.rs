@@ -16,7 +16,7 @@ pub enum SectionParser<T: IR> {
 impl<T: IR> Parse<T> for SectionParser<T> {
     type Production = T::Section;
 
-    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
         loop {
             match self {
                 SectionParser::ParseType => {
@@ -29,11 +29,17 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                         AnyParser::LEBU32(LEBParser::new()),
                         |irgen, last_state, this_state| {
                             let AnyParser::LEBU32(leb) = last_state else {
-                                 unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+                                unsafe {
+                                    crate::cold();
+                                    std::hint::unreachable_unchecked()
+                                }
                             };
                             let AnyParser::Section(SectionParser::ParseLength(kind)) = this_state
                             else {
-                                 unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+                                unsafe {
+                                    crate::cold();
+                                    std::hint::unreachable_unchecked()
+                                }
                             };
 
                             let len = leb.production(irgen)?;
@@ -44,13 +50,17 @@ impl<T: IR> Parse<T> for SectionParser<T> {
 
                 SectionParser::SectionContent(kind, length) => {
                     let length = *length as usize;
+                    irgen.start_section(*kind, length as u32);
                     return Ok(match *kind {
                         0x0 => Advancement::YieldTo(
                             window.offset(),
                             AnyParser::Accumulate(Accumulator::new(length)),
                             |irgen, last_state, _| {
                                 let AnyParser::Accumulate(acc) = last_state else {
-                                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                    unsafe {
+                                        crate::cold();
+                                        std::hint::unreachable_unchecked()
+                                    };
                                 };
 
                                 let bytes = acc.production(irgen)?;
@@ -65,7 +75,10 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             AnyParser::TypeSection(Repeated::default()),
                             |irgen, last_state, _| {
                                 let AnyParser::TypeSection(ts) = last_state else {
-                                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                    unsafe {
+                                        crate::cold();
+                                        std::hint::unreachable_unchecked()
+                                    };
                                 };
 
                                 let items = ts.production(irgen)?;
@@ -79,7 +92,10 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             AnyParser::ImportSection(Repeated::default()),
                             |irgen, last_state, _| {
                                 let AnyParser::ImportSection(ts) = last_state else {
-                                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                    unsafe {
+                                        crate::cold();
+                                        std::hint::unreachable_unchecked()
+                                    };
                                 };
 
                                 let items = ts.production(irgen)?;
@@ -93,7 +109,10 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             AnyParser::FunctionSection(Repeated::default()),
                             |irgen, last_state, _| {
                                 let AnyParser::FunctionSection(ts) = last_state else {
-                                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                    unsafe {
+                                        crate::cold();
+                                        std::hint::unreachable_unchecked()
+                                    };
                                 };
 
                                 let items = ts.production(irgen)?;
@@ -108,7 +127,10 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             AnyParser::TableSection(Repeated::default()),
                             |irgen, last_state, _| {
                                 let AnyParser::TableSection(ts) = last_state else {
-                                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                    unsafe {
+                                        crate::cold();
+                                        std::hint::unreachable_unchecked()
+                                    };
                                 };
 
                                 let items = ts.production(irgen)?;
@@ -122,7 +144,10 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             AnyParser::MemorySection(Repeated::default()),
                             |irgen, last_state, _| {
                                 let AnyParser::MemorySection(ts) = last_state else {
-                                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                    unsafe {
+                                        crate::cold();
+                                        std::hint::unreachable_unchecked()
+                                    };
                                 };
 
                                 let items = ts.production(irgen)?;
@@ -136,7 +161,10 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             AnyParser::GlobalSection(Repeated::default()),
                             |irgen, last_state, _| {
                                 let AnyParser::GlobalSection(ts) = last_state else {
-                                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                    unsafe {
+                                        crate::cold();
+                                        std::hint::unreachable_unchecked()
+                                    };
                                 };
 
                                 let items = ts.production(irgen)?;
@@ -150,7 +178,10 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             AnyParser::ExportSection(Repeated::default()),
                             |irgen, last_state, _| {
                                 let AnyParser::ExportSection(ts) = last_state else {
-                                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                    unsafe {
+                                        crate::cold();
+                                        std::hint::unreachable_unchecked()
+                                    };
                                 };
 
                                 let items = ts.production(irgen)?;
@@ -164,7 +195,10 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             AnyParser::LEBU32(Default::default()),
                             |irgen, last_state, _| {
                                 let AnyParser::LEBU32(ts) = last_state else {
-                                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                    unsafe {
+                                        crate::cold();
+                                        std::hint::unreachable_unchecked()
+                                    };
                                 };
 
                                 let func_idx = ts.production(irgen)?;
@@ -181,7 +215,10 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             AnyParser::ElementSection(Repeated::default()),
                             |irgen, last_state, _| {
                                 let AnyParser::ElementSection(ts) = last_state else {
-                                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                    unsafe {
+                                        crate::cold();
+                                        std::hint::unreachable_unchecked()
+                                    };
                                 };
 
                                 let items = ts.production(irgen)?;
@@ -195,7 +232,10 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             AnyParser::CodeSection(Repeated::default()),
                             |irgen, last_state, _| {
                                 let AnyParser::CodeSection(ts) = last_state else {
-                                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                    unsafe {
+                                        crate::cold();
+                                        std::hint::unreachable_unchecked()
+                                    };
                                 };
 
                                 let items = ts.production(irgen)?;
@@ -209,7 +249,10 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             AnyParser::DataSection(Repeated::default()),
                             |irgen, last_state, _| {
                                 let AnyParser::DataSection(ts) = last_state else {
-                                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                    unsafe {
+                                        crate::cold();
+                                        std::hint::unreachable_unchecked()
+                                    };
                                 };
 
                                 let items = ts.production(irgen)?;
@@ -223,7 +266,10 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                             AnyParser::LEBU32(Default::default()),
                             |irgen, last_state, _| {
                                 let AnyParser::LEBU32(ts) = last_state else {
-                                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                    unsafe {
+                                        crate::cold();
+                                        std::hint::unreachable_unchecked()
+                                    };
                                 };
 
                                 let count = ts.production(irgen)?;
@@ -249,7 +295,10 @@ impl<T: IR> Parse<T> for SectionParser<T> {
 
     fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
         let Self::Done(section_type) = self else {
-             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+            unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            };
         };
 
         Ok(section_type)

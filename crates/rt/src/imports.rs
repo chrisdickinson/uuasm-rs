@@ -143,14 +143,17 @@ mod test {
 
     use crate::Value;
     use uuasm_codec::parse;
-    use uuasm_nodes::{NumType, ResultType, ValType};
+    use uuasm_nodes::{DefaultIRGenerator, NumType, ResultType, ValType};
 
     use super::*;
 
     #[test]
     fn imports_create() -> anyhow::Result<()> {
         let mut imports = Imports::new();
-        let wasm = parse(include_bytes!("../../../example.wasm"))?;
+        let wasm = parse(
+            DefaultIRGenerator::new(),
+            include_bytes!("../../../example.wasm"),
+        )?;
 
         imports.link_module("env", wasm);
         let mut machine = imports.instantiate()?;
@@ -167,7 +170,10 @@ mod test {
     #[test]
     fn host_imports() -> anyhow::Result<()> {
         let mut imports = Imports::new();
-        let wasm = parse(include_bytes!("../../../example3.wasm"))?;
+        let wasm = parse(
+            DefaultIRGenerator::new(),
+            include_bytes!("../../../example3.wasm"),
+        )?;
 
         imports.link_hostfn(
             "env",

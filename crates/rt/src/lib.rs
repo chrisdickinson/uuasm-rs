@@ -12,6 +12,12 @@ pub(crate) mod stack;
 pub(crate) mod table;
 pub(crate) mod value;
 
+#[cfg(test)]
+mod testsuite;
+
+#[cfg(test)]
+mod test_utils;
+
 pub(crate) use value::Value;
 
 use uuasm_nodes::{NumType, RefType, ValType, VecType};

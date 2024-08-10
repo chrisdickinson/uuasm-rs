@@ -129,6 +129,8 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                         };
 
                         let expr = parser.production(irgen)?;
+
+                        // need to take one from the window lolol
                         Ok(AnyParser::Elem(Self::ParseMode(
                             flags,
                             ElementMode::Active(table_idx, expr),

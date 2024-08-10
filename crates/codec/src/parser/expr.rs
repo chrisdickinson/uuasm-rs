@@ -14,6 +14,17 @@ enum State {
 pub struct ExprParser<T: IR> {
     instrs: Vec<T::Instr>,
     state: State,
+    shift_last: bool,
+}
+
+impl<T: IR> ExprParser<T> {
+    pub(crate) fn no_shift() -> Self {
+        Self {
+            instrs: Vec::new(),
+            state: State::default(),
+            shift_last: false,
+        }
+    }
 }
 
 impl<T: IR> Default for ExprParser<T> {
@@ -21,6 +32,7 @@ impl<T: IR> Default for ExprParser<T> {
         Self {
             instrs: Vec::new(),
             state: State::default(),
+            shift_last: true,
         }
     }
 }
@@ -48,7 +60,13 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                 // else
                 0x05 |
                 // end block
-                0x0b => return Ok(Advancement::Ready(window.offset())),
+                0x0b => {
+                    if self.shift_last {
+                        let _ = window.take();
+                    }
+
+                    return Ok(Advancement::Ready(window.offset()))
+                },
 
                 // ## wingding: vec of u32 values, followed by a u32 value
                 // - br.table
@@ -56,12 +74,12 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                     window.take().unwrap();
                     return Ok(Advancement::YieldTo(window.offset(), AnyParser::ArgTable(Default::default()), |irgen, last_state, this_state| {
                         let AnyParser::ArgTable(parser) = last_state else {  unsafe { crate::cold(); std::hint::unreachable_unchecked() } };
-                        let AnyParser::Expr(Self { mut instrs, .. }) = this_state else {
+                        let AnyParser::Expr(Self { mut instrs, shift_last, .. }) = this_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
                         let (items, alternate) = parser.production(irgen)?;
                         irgen.make_instr_table(&items, alternate, &mut instrs).map_err(IRError)?;
-                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs }))
+                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs, shift_last }))
                     }))
                 }
 
@@ -76,12 +94,12 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                         let AnyParser::Block(parser) = last_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
-                        let AnyParser::Expr(Self { state: State::LastInstr(code), mut instrs }) = this_state else {
+                        let AnyParser::Expr(Self { state: State::LastInstr(code), mut instrs, shift_last }) = this_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
                         let (block_type, block_instrs) = parser.production(irgen)?;
                         irgen.make_instr_block(code, block_type, block_instrs, &mut instrs).map_err(IRError)?;
-                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs }))
+                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs, shift_last }))
                     }))
                 }
 
@@ -92,12 +110,12 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                         let AnyParser::IfElseBlock(parser) = last_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
-                        let AnyParser::Expr(Self { mut instrs, .. }) = this_state else {
+                        let AnyParser::Expr(Self { mut instrs, shift_last, .. }) = this_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
                         let (block_type, consequent, alternate) = parser.production(irgen)?;
                         irgen.make_instr_block_ifelse(block_type, consequent, alternate, &mut instrs).map_err(IRError)?;
-                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs }))
+                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs, shift_last }))
                     }))
                 },
 
@@ -110,12 +128,12 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                         let AnyParser::ArgRefNull(parser) = last_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
-                        let AnyParser::Expr(Self { mut instrs, .. }) = this_state else {
+                        let AnyParser::Expr(Self { mut instrs, shift_last, .. }) = this_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
                         let value = parser.production(irgen)?;
                         irgen.make_instr_unary(0xd0, value as u32, &mut instrs).map_err(IRError)?;
-                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs }))
+                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs, shift_last }))
                     }))
                 },
 
@@ -127,7 +145,7 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                         let AnyParser::ByteVec(parser) = last_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
-                        let AnyParser::Expr(Self { mut instrs, .. }) = this_state else {
+                        let AnyParser::Expr(Self { mut instrs, shift_last, .. }) = this_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
                         let types = parser.production(irgen)?;
@@ -137,7 +155,7 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                             .collect::<Result<_, T::Error>>()
                             .map_err(IRError)?;
                         irgen.make_instr_select(types, &mut instrs).map_err(IRError)?;
-                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs }))
+                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs, shift_last }))
                     }))
                 }
 
@@ -150,7 +168,7 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                         let AnyParser::Accumulate(parser) = last_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
-                        let AnyParser::Expr(Self { state: State::LastInstr(code), mut instrs }) = this_state else {
+                        let AnyParser::Expr(Self { state: State::LastInstr(code), mut instrs, shift_last }) = this_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
                         let lhs = parser.production(irgen)?;
@@ -159,7 +177,7 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                         }
                         let lhs: u64 = u64::from_le_bytes((&*lhs).try_into().unwrap());
                         irgen.make_instr_unary64(code, lhs, &mut instrs).map_err(IRError)?;
-                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs }))
+                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs, shift_last }))
                     }))
                 },
 
@@ -172,7 +190,7 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                         let AnyParser::Accumulate(parser) = last_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
-                        let AnyParser::Expr(Self { state: State::LastInstr(code), mut instrs }) = this_state else {
+                        let AnyParser::Expr(Self { state: State::LastInstr(code), mut instrs, shift_last }) = this_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
                         let lhs = parser.production(irgen)?;
@@ -181,7 +199,7 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                         }
                         let lhs: u32 = u32::from_le_bytes((&*lhs).try_into().unwrap());
                         irgen.make_instr_unary(code, lhs, &mut instrs).map_err(IRError)?;
-                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs }))
+                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs, shift_last }))
                     }))
                 },
 
@@ -194,12 +212,12 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                         let AnyParser::LEBU64(parser) = last_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
-                        let AnyParser::Expr(Self { state: State::LastInstr(code), mut instrs }) = this_state else {
+                        let AnyParser::Expr(Self { state: State::LastInstr(code), mut instrs, shift_last }) = this_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
                         let lhs = parser.production(irgen)?;
                         irgen.make_instr_unary64(code, lhs, &mut instrs).map_err(IRError)?;
-                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs }))
+                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs, shift_last }))
                     }))
                 }
 ,
@@ -215,12 +233,12 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                         let AnyParser::RepeatedLEBU32(parser) = last_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
-                        let AnyParser::Expr(Self { state: State::LastInstr(code), mut instrs }) = this_state else {
+                        let AnyParser::Expr(Self { state: State::LastInstr(code), mut instrs, shift_last }) = this_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
                         let items = parser.production(irgen)?;
                         irgen.make_instr_binary(code, items[0], items[1], &mut instrs).map_err(IRError)?;
-                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs }))
+                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs, shift_last }))
                     }))
                 }
 
@@ -245,12 +263,12 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                         let AnyParser::LEBU32(parser) = last_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
-                        let AnyParser::Expr(Self { state: State::LastInstr(code), mut instrs }) = this_state else {
+                        let AnyParser::Expr(Self { state: State::LastInstr(code), mut instrs, shift_last, }) = this_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
                         let arg0 = parser.production(irgen)?;
                         irgen.make_instr_unary(code, arg0, &mut instrs).map_err(IRError)?;
-                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs }))
+                        Ok(AnyParser::Expr(Self { state: State::Empty, instrs, shift_last, }))
                     }))
                 }
 

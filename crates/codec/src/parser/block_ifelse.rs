@@ -2,7 +2,7 @@ use uuasm_nodes::IR;
 
 use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
 
-use super::any::AnyParser;
+use super::{any::AnyParser, expr::ExprParser};
 
 #[derive(Default)]
 pub enum IfElseBlockParser<T: IR> {
@@ -26,7 +26,10 @@ impl<T: IR> Parse<T> for IfElseBlockParser<T> {
                 AnyParser::BlockType(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::BlockType(parser) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     let production = parser.production(irgen)?;
@@ -36,13 +39,19 @@ impl<T: IR> Parse<T> for IfElseBlockParser<T> {
 
             Self::BlockType(_) => Advancement::YieldTo(
                 window.offset(),
-                AnyParser::Expr(Default::default()),
+                AnyParser::Expr(ExprParser::no_shift()),
                 |irgen, last_state, this_state| {
                     let AnyParser::Expr(parser) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
                     let AnyParser::IfElseBlock(Self::BlockType(block_type)) = this_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     let production = parser.production(irgen)?;
@@ -60,12 +69,18 @@ impl<T: IR> Parse<T> for IfElseBlockParser<T> {
                         AnyParser::Expr(Default::default()),
                         |irgen, last_state, this_state| {
                             let AnyParser::Expr(parser) = last_state else {
-                                 unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                unsafe {
+                                    crate::cold();
+                                    std::hint::unreachable_unchecked()
+                                };
                             };
                             let AnyParser::IfElseBlock(Self::Consequent(block_type, consequent)) =
                                 this_state
                             else {
-                                 unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                unsafe {
+                                    crate::cold();
+                                    std::hint::unreachable_unchecked()
+                                };
                             };
 
                             let production = parser.production(irgen)?;
@@ -92,7 +107,10 @@ impl<T: IR> Parse<T> for IfElseBlockParser<T> {
 
     fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
         Ok(match self {
-            IfElseBlockParser::Init | IfElseBlockParser::BlockType(_) =>  unsafe { crate::cold(); std::hint::unreachable_unchecked() },
+            IfElseBlockParser::Init | IfElseBlockParser::BlockType(_) => unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            },
             IfElseBlockParser::Consequent(block_type, consequent) => (block_type, consequent, None),
             IfElseBlockParser::Alternate(block_type, consequent, alternate) => {
                 (block_type, consequent, Some(alternate))

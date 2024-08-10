@@ -62,10 +62,7 @@ impl<T: IR> Parse<T> for FuncParser<T> {
                 },
             )),
 
-            Self::Ready(_, _) => {
-                window.take()?;
-                Ok(Advancement::Ready(window.offset()))
-            }
+            Self::Ready(_, _) => Ok(Advancement::Ready(window.offset())),
         }
     }
 

@@ -7,19 +7,19 @@ generate_test for_json interp="{{}}":
 setup_tests:
   #!/bin/bash
   git submodule update --init --recursive
-  rm -rf src/testsuite
-  mkdir -p src/testsuite
+  rm -rf crates/rt/src/testsuite
+  mkdir -p crates/rt/src/testsuite
 
   for i in $(find vendor/testsuite -name '*.wast' | grep -v proposals); do
     filename=$(basename "$i")
     filename=${filename%.wast}
 
-    wast2json -o "$(pwd)/src/testsuite/${filename}.json" "$i" &
+    wast2json -o "$(pwd)/crates/rt/src/testsuite/${filename}.json" "$i" &
   done
   wait
 
-  find src/testsuite -name '*.json' | xargs -P0 -I{} python3 gentest.py {}
-  for mod in $(find src/testsuite -name '*.rs' | grep -v simd); do
+  find crates/rt/src/testsuite -name '*.json' | xargs -P0 -I{} python3 gentest.py {}
+  for mod in $(find crates/rt/src/testsuite -name '*.rs' | grep -v simd); do
     mod=${mod%.rs}
 
     mod=$(basename "$mod")
@@ -29,7 +29,7 @@ setup_tests:
       ;;
     esac
 
-    echo "mod $mod;" >> src/testsuite/mod.rs
+    echo "mod $mod;" >> crates/rt/src/testsuite/mod.rs
   done
 
 test:

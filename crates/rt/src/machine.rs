@@ -788,6 +788,7 @@ impl Machine {
             guest_index: module_idx,
         };
 
+        #[cfg(any())]
         eprintln!("call {funcname} = = = = = = = = = = = = = = = = = = = = =");
         loop {
             if frame.pc >= frame.instrs.len() {
@@ -990,7 +991,6 @@ impl Machine {
                     };
 
                     if !v.is_zero()? {
-                        eprintln!("taking branch!");
                         if idx.0 > 0 {
                             frames.truncate(frames.len() - (idx.0 - 1) as usize);
                             frame = frames

@@ -161,8 +161,12 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
     pub fn write<'a>(
         &'_ mut self,
         chunk: &'a [u8],
-    ) -> Result<(Target, &'a [u8]), ParseError<T::Error>> {
-        self.write_inner(chunk, false)
+    ) -> Result<Option<(Target, &'a [u8])>, ParseError<T::Error>> {
+        match self.write_inner(chunk, false) {
+            Ok(xs) => Ok(Some(xs)),
+            Err(ParseError::Advancement(AdvancementError::Incomplete(_))) => Ok(None),
+            Err(e) => Err(e),
+        }
     }
 
     pub fn flush(&mut self) -> Result<Target, ParseError<T::Error>> {
@@ -206,7 +210,7 @@ mod test {
     fn parser2_works_fr_fr() -> anyhow::Result<()> {
         let mut parser = Decoder::default();
 
-        dbg!(parser.write(include_bytes!("../../../src/testsuite/func.0.wasm")));
+        dbg!(parser.write(include_bytes!("../../rt/src/testsuite/func.0.wasm")));
         dbg!(parser.flush());
         Ok(())
     }

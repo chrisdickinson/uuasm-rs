@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-use std::{error::Error, fmt::Debug};
+use std::{collections::HashSet, error::Error, fmt::Debug};
 
 use thiserror::Error;
 
@@ -943,6 +943,7 @@ pub trait IR {
 
     fn make_expr(&mut self, instrs: Vec<Self::Instr>) -> Result<Self::Expr, Self::Error>;
 
+    fn start_section(&mut self, section_id: u8, _section_size: u32) {}
     fn start_func(&mut self) {}
 
     fn make_func(
@@ -1531,7 +1532,7 @@ impl IR for EmptyIRGenerator {
 
 #[derive(Clone, Debug, Error)]
 pub enum DefaultIRGeneratorError {
-    #[error("Invalid name: {0}")]
+    #[error("malformed UTF-8 encoding: {0}")]
     InvalidName(#[from] std::str::Utf8Error),
 
     #[error("Invalid instruction (got {0:X}H)")]
@@ -1540,23 +1541,43 @@ pub enum DefaultIRGeneratorError {
     #[error("Invalid type (got {0:X}H)")]
     InvalidType(u8),
 
-    #[error("Invalid type index (got {0}; max is {1})")]
+    #[error("unknown type index (got {0}; max is {1})")]
     InvalidTypeIndex(u32, u32),
 
-    #[error("Invalid global index (got {0}; max is {1})")]
+    #[error("unknown global index (got {0}; max is {1})")]
     InvalidGlobalIndex(u32, u32),
 
-    #[error("Invalid table index (got {0}; max is {1})")]
+    #[error("unknown table index (got {0}; max is {1})")]
     InvalidTableIndex(u32, u32),
 
-    #[error("Invalid local index (got {0}; max is {1})")]
+    #[error("unknown local index (got {0}; max is {1})")]
     InvalidLocalIndex(u32, u32),
 
-    #[error("Invalid func index (got {0}; max is {1})")]
+    #[error("unknown function {0} (max is {1})")]
     InvalidFuncIndex(u32, u32),
 
-    #[error("Invalid memory index (got {0}; max is {1})")]
+    #[error(
+        "undeclared function reference (id {0} is not declared in an element, export, or import)"
+    )]
+    UndeclaredFuncIndex(u32),
+
+    #[error("unknown memory index (got {0}; max is {1})")]
     InvalidMemIndex(u32, u32),
+
+    #[error(
+        "Invalid memory lower bound: size minimum must not be greater than maximum, got {0} {1}"
+    )]
+    MemoryBoundInvalid(u32, u32),
+
+    #[error(
+        "Invalid memory lower bound: memory size must be at most 65536 pages (4GiB), got {0} pages"
+    )]
+    MemoryLowerBoundTooLarge(u32),
+
+    #[error(
+        "Invalid memory upper bound: memory size must be at most 65536 pages (4GiB), got {0} pages"
+    )]
+    MemoryUpperBoundTooLarge(u32),
 
     #[error("Types out of order (got section type {0} after type {1})")]
     InvalidSectionOrder(u32, u32),
@@ -1566,6 +1587,14 @@ pub enum DefaultIRGeneratorError {
 
     #[error("Invalid reference type {0}")]
     InvalidRefType(u8),
+
+    #[error("Invalid memory: multiple memories are not enabled")]
+    MultimemoryDisabled,
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct Features {
+    enable_multiple_memories: bool,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -1588,6 +1617,10 @@ pub struct DefaultIRGenerator {
     current_locals: Vec<ValType>,
     blocks: Vec<BlockType>,
     stack: Vec<ValType>,
+
+    current_section_id: u8,
+    valid_function_indices: HashSet<u32>,
+    features: Features,
 }
 
 impl DefaultIRGenerator {
@@ -1704,6 +1737,20 @@ impl IR for DefaultIRGenerator {
     }
 
     fn make_mem_type(&mut self, limits: Self::Limits) -> Result<Self::MemType, Self::Error> {
+        let min = limits.min();
+        let max = limits.max().unwrap_or_else(|| limits.min());
+        if min > 0x10000 {
+            return Err(Self::Error::MemoryLowerBoundTooLarge(min));
+        }
+
+        if max > 0x10000 {
+            return Err(Self::Error::MemoryUpperBoundTooLarge(max));
+        }
+
+        if min > max {
+            return Err(Self::Error::MemoryBoundInvalid(min, max));
+        }
+
         Ok(MemType(limits))
     }
 
@@ -1790,6 +1837,10 @@ impl IR for DefaultIRGenerator {
             ));
         }
         self.max_valid_mem_index += data.len() as u32;
+        if self.max_valid_mem_index > 1 && !self.features.enable_multiple_memories {
+            return Err(Self::Error::MultimemoryDisabled);
+        }
+
         self.last_section_discrim = 5;
         Ok(SectionType::Memory(data))
     }
@@ -1943,9 +1994,13 @@ impl IR for DefaultIRGenerator {
 
     fn make_func_index(&mut self, candidate: u32) -> Result<Self::FuncIdx, Self::Error> {
         if candidate < self.max_valid_func_index {
+            if self.current_section_id != 0x08 {
+                self.valid_function_indices.insert(candidate);
+            }
+
             Ok(FuncIdx(candidate))
         } else {
-            Err(DefaultIRGeneratorError::InvalidMemIndex(
+            Err(DefaultIRGeneratorError::InvalidFuncIndex(
                 candidate,
                 self.max_valid_func_index,
             ))
@@ -2022,6 +2077,9 @@ impl IR for DefaultIRGenerator {
         mem_type: Self::Limits,
     ) -> Result<Self::ImportDesc, Self::Error> {
         self.max_valid_mem_index += 1;
+        if self.max_valid_mem_index > 1 && !self.features.enable_multiple_memories {
+            return Err(Self::Error::MultimemoryDisabled);
+        }
         Ok(ImportDesc::Mem(MemType(mem_type)))
     }
 
@@ -2103,6 +2161,10 @@ impl IR for DefaultIRGenerator {
 
     fn make_expr(&mut self, instrs: Vec<Self::Instr>) -> Result<Self::Expr, Self::Error> {
         Ok(Expr(instrs))
+    }
+
+    fn start_section(&mut self, section_id: u8, _section_size: u32) {
+        self.current_section_id = section_id;
     }
 
     fn start_func(&mut self) {
@@ -2188,6 +2250,9 @@ impl IR for DefaultIRGenerator {
     ) -> Result<(), Self::Error> {
         instrs.push(match code {
             0x11 => Instr::CallIndirect(self.make_type_index(arg0)?, self.make_table_index(arg1)?),
+            0x28..=0x3e if self.max_valid_mem_index == 0 => {
+                return Err(Self::Error::InvalidMemIndex(0, 0))
+            }
             0x28 => Instr::I32Load(MemArg(arg0, arg1)),
             0x29 => Instr::I64Load(MemArg(arg0, arg1)),
             0x2a => Instr::F32Load(MemArg(arg0, arg1)),
@@ -2233,9 +2298,20 @@ impl IR for DefaultIRGenerator {
             0x24 => Instr::GlobalSet(self.make_global_index(arg0)?),
             0x25 => Instr::TableGet(self.make_table_index(arg0)?),
             0x26 => Instr::TableSet(self.make_table_index(arg0)?),
+            0x3f..=0x40 if self.max_valid_mem_index == 0 => {
+                return Err(Self::Error::InvalidMemIndex(0, 0))
+            }
             0x3f => Instr::MemorySize(MemIdx(arg0)),
             0x40 => Instr::MemoryGrow(MemIdx(arg0)),
-            0xd2 => Instr::RefFunc(self.make_func_index(arg0)?),
+            0xd2 => {
+                // If we're in the code section, validate the function index
+                // against "Context.Refs"
+                if self.current_section_id == 0x0a && !self.valid_function_indices.contains(&arg0) {
+                    return Err(Self::Error::UndeclaredFuncIndex(arg0));
+                }
+
+                Instr::RefFunc(self.make_func_index(arg0)?)
+            }
             // TODO: "make_label_idx"
             0x0c => Instr::Br(LabelIdx(arg0)),
             0x0d => Instr::BrIf(LabelIdx(arg0)),

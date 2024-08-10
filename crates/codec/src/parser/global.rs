@@ -23,7 +23,10 @@ impl<T: IR> Parse<T> for GlobalParser<T> {
                 AnyParser::GlobalType(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::GlobalType(parser) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     let production = parser.production(irgen)?;
@@ -35,10 +38,16 @@ impl<T: IR> Parse<T> for GlobalParser<T> {
                 AnyParser::Expr(ExprParser::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::Expr(parser) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
                     let AnyParser::Global(Self::GlobalType(global_type)) = this_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     Ok(AnyParser::Global(Self::Ready(
@@ -47,10 +56,7 @@ impl<T: IR> Parse<T> for GlobalParser<T> {
                     )))
                 },
             )),
-            GlobalParser::Ready(_, _) => {
-                window.take()?;
-                Ok(Advancement::Ready(window.offset()))
-            }
+            GlobalParser::Ready(_, _) => Ok(Advancement::Ready(window.offset())),
         }
     }
 
@@ -59,7 +65,10 @@ impl<T: IR> Parse<T> for GlobalParser<T> {
         irgen: &mut T,
     ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
         let Self::Ready(global_type, expr) = self else {
-             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+            unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            }
         };
 
         Ok(irgen.make_global(global_type, expr).map_err(IRError)?)
