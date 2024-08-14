@@ -1203,6 +1203,7 @@ impl Machine {
                         anyhow::bail!("undefined element: table index out of range");
                     };
 
+                    #[cfg(any())]
                     eprintln!(
                         "{idx:?} {v:?} tbl={table_instance_idx:?} values={:?}",
                         &table.values

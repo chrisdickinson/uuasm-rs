@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
+use crate::{window::DecodeWindow, Advancement, Parse, ParseErrorKind, ParseResult};
 
 use super::{any::AnyParser, expr::ExprParser};
 
@@ -19,10 +19,9 @@ pub enum IfElseBlockParser<T: IR> {
 impl<T: IR> Parse<T> for IfElseBlockParser<T> {
     type Production = (T::BlockType, T::Expr, Option<T::Expr>);
 
-    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
         Ok(match self {
             Self::Init => Advancement::YieldTo(
-                window.offset(),
                 AnyParser::BlockType(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::BlockType(parser) = last_state else {
@@ -38,7 +37,6 @@ impl<T: IR> Parse<T> for IfElseBlockParser<T> {
             ),
 
             Self::BlockType(_) => Advancement::YieldTo(
-                window.offset(),
                 AnyParser::Expr(ExprParser::no_shift()),
                 |irgen, last_state, this_state| {
                     let AnyParser::Expr(parser) = last_state else {
@@ -65,7 +63,6 @@ impl<T: IR> Parse<T> for IfElseBlockParser<T> {
                 let next = window.take()?;
                 if next == 0x05 {
                     Advancement::YieldTo(
-                        window.offset(),
                         AnyParser::Expr(Default::default()),
                         |irgen, last_state, this_state| {
                             let AnyParser::Expr(parser) = last_state else {
@@ -90,22 +87,22 @@ impl<T: IR> Parse<T> for IfElseBlockParser<T> {
                         },
                     )
                 } else if next == 0x0b {
-                    Advancement::Ready(window.offset())
+                    Advancement::Ready
                 } else {
-                    return Err(ParseError::InvalidState(
+                    return Err(ParseErrorKind::InvalidState(
                         "Got a non-block-terminating value",
                     ));
                 }
             }
 
-            Self::Alternate(_, _, _) => {
-                window.take()?;
-                Advancement::Ready(window.offset() + 1)
-            }
+            Self::Alternate(_, _, _) => Advancement::Ready,
         })
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
+    fn production(
+        self,
+        _irgen: &mut T,
+    ) -> Result<Self::Production, ParseErrorKind<<T as IR>::Error>> {
         Ok(match self {
             IfElseBlockParser::Init | IfElseBlockParser::BlockType(_) => unsafe {
                 crate::cold();

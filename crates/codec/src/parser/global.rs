@@ -16,10 +16,9 @@ pub enum GlobalParser<T: IR> {
 impl<T: IR> Parse<T> for GlobalParser<T> {
     type Production = T::Global;
 
-    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, mut window: &mut DecodeWindow) -> ParseResult<T> {
         match self {
             GlobalParser::Init => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::GlobalType(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::GlobalType(parser) = last_state else {
@@ -34,7 +33,6 @@ impl<T: IR> Parse<T> for GlobalParser<T> {
                 },
             )),
             GlobalParser::GlobalType(_) => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::Expr(ExprParser::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::Expr(parser) = last_state else {
@@ -56,14 +54,14 @@ impl<T: IR> Parse<T> for GlobalParser<T> {
                     )))
                 },
             )),
-            GlobalParser::Ready(_, _) => Ok(Advancement::Ready(window.offset())),
+            GlobalParser::Ready(_, _) => Ok(Advancement::Ready),
         }
     }
 
     fn production(
         self,
         irgen: &mut T,
-    ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
+    ) -> Result<Self::Production, crate::ParseErrorKind<<T as IR>::Error>> {
         let Self::Ready(global_type, expr) = self else {
             unsafe {
                 crate::cold();

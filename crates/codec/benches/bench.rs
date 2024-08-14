@@ -3,7 +3,7 @@ use uuasm_codec::{old_parse, Decoder};
 use uuasm_nodes::EmptyIRGenerator;
 use wasmparser::FunctionBody;
 
-const WASM: &[u8] = include_bytes!("../../../src/testsuite/func.0.wasm");
+const WASM: &[u8] = include_bytes!("../../rt/src/testsuite/func.0.wasm");
 
 pub fn basic(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("basic");

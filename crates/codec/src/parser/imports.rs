@@ -2,7 +2,8 @@ use uuasm_nodes::IR;
 
 use crate::{
     parser::{any::AnyParser, names::NameParser},
-    Advancement, IRError, Parse, ParseError,
+    window::DecodeWindow,
+    Advancement, IRError, Parse, ParseErrorKind,
 };
 
 use super::importdescs::ImportDescParser;
@@ -19,18 +20,16 @@ pub enum ImportParser<T: IR> {
 impl<T: IR> Parse<T> for ImportParser<T> {
     type Production = <T as IR>::Import;
 
-    fn advance(
-        &mut self,
-        _irgen: &mut T,
-        window: crate::window::DecodeWindow,
-    ) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         match self {
             ImportParser::Init => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::Name(NameParser::default()),
                 |irgen, last_state, _| {
                     let AnyParser::Name(name) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     let name = name.production(irgen)?;
@@ -39,15 +38,20 @@ impl<T: IR> Parse<T> for ImportParser<T> {
             )),
 
             ImportParser::GotModule(_) => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::Name(NameParser::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::Name(name) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     let AnyParser::Import(ImportParser::GotModule(modname)) = this_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
                     let name = name.production(irgen)?;
                     Ok(AnyParser::Import(Self::GotModuleAndName(modname, name)))
@@ -55,30 +59,38 @@ impl<T: IR> Parse<T> for ImportParser<T> {
             )),
 
             ImportParser::GotModuleAndName(_, _) => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::ImportDesc(ImportDescParser::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::ImportDesc(desc) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     let AnyParser::Import(ImportParser::GotModuleAndName(modname, name)) =
                         this_state
                     else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
                     let desc = desc.production(irgen)?;
                     Ok(AnyParser::Import(Self::Ready(modname, name, desc)))
                 },
             )),
 
-            ImportParser::Ready(_, _, _) => Ok(Advancement::Ready(window.offset())),
+            ImportParser::Ready(_, _, _) => Ok(Advancement::Ready),
         }
     }
 
-    fn production(self, irgen: &mut T) -> Result<Self::Production, crate::ParseError<T::Error>> {
+    fn production(
+        self,
+        irgen: &mut T,
+    ) -> Result<Self::Production, crate::ParseErrorKind<T::Error>> {
         let Self::Ready(modname, name, desc) = self else {
-            return Err(ParseError::InvalidState(
+            return Err(ParseErrorKind::InvalidState(
                 "Expected import to be in Ready state",
             ));
         };

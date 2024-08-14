@@ -2,7 +2,7 @@ use std::mem;
 
 use uuasm_nodes::IR;
 
-use crate::{Advancement, IRError, Parse};
+use crate::{window::DecodeWindow, Advancement, IRError, Parse};
 
 use super::any::AnyParser;
 
@@ -64,11 +64,7 @@ pub enum ElemParser<T: IR> {
 impl<T: IR> Parse<T> for ElemParser<T> {
     type Production = T::Elem;
 
-    fn advance(
-        &mut self,
-        irgen: &mut T,
-        mut window: crate::window::DecodeWindow,
-    ) -> crate::ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, mut window: &mut DecodeWindow) -> crate::ParseResult<T> {
         'restart: loop {
             return Ok(match self {
                 Self::Init => {
@@ -77,7 +73,6 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                     *self = Self::Flags(flags);
                     if flags & 0b11 == 0b10 {
                         Advancement::YieldTo(
-                            window.offset(),
                             AnyParser::LEBU32(Default::default()),
                             |irgen, last_state, this_state| {
                                 let AnyParser::LEBU32(parser) = last_state else {
@@ -116,7 +111,6 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                 Self::Flags(_) => unreachable!(),
 
                 Self::ParseActiveModeTableIdx(_, _) => Advancement::YieldTo(
-                    window.offset(),
                     AnyParser::Expr(Default::default()),
                     |irgen, last_state, this_state| {
                         let AnyParser::Expr(parser) = last_state else {
@@ -174,7 +168,6 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                 }
 
                 Self::ParseElemKind(_, _, _) => Advancement::YieldTo(
-                    window.offset(),
                     AnyParser::RepeatedLEBU32(Default::default()),
                     |irgen, last_state, this_state| {
                         let AnyParser::RepeatedLEBU32(parser) = last_state else {
@@ -195,7 +188,6 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                 ),
 
                 Self::ParseRefType(_, _, _) => Advancement::YieldTo(
-                    window.offset(),
                     AnyParser::ExprList(Default::default()),
                     |irgen, last_state, this_state| {
                         let AnyParser::ExprList(parser) = last_state else {
@@ -215,7 +207,7 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                     },
                 ),
 
-                Self::Ready(_) => Advancement::Ready(window.offset()),
+                Self::Ready(_) => Advancement::Ready,
             });
         }
     }
@@ -223,7 +215,7 @@ impl<T: IR> Parse<T> for ElemParser<T> {
     fn production(
         self,
         _irgen: &mut T,
-    ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
+    ) -> Result<Self::Production, crate::ParseErrorKind<<T as IR>::Error>> {
         let Self::Ready(production) = self else {
             unsafe {
                 crate::cold();
@@ -238,7 +230,7 @@ impl<T: IR> Parse<T> for ElemParser<T> {
 fn make_elem_mode<T: IR>(
     irgen: &mut T,
     mode: ElementMode<T>,
-) -> Result<T::ElemMode, crate::ParseError<<T as IR>::Error>> {
+) -> Result<T::ElemMode, crate::ParseErrorKind<<T as IR>::Error>> {
     Ok(match mode {
         ElementMode::Passive => irgen.make_elem_mode_passive(),
         ElementMode::Active(table_idx, expr) => irgen.make_elem_mode_active(table_idx, expr),

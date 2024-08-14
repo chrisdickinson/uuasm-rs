@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{IRError, Parse};
+use crate::{window::DecodeWindow, IRError, Parse};
 
 use super::any::AnyParser;
 
@@ -15,11 +15,7 @@ pub enum TableTypeParser<T: IR> {
 impl<T: IR> Parse<T> for TableTypeParser<T> {
     type Production = T::TableType;
 
-    fn advance(
-        &mut self,
-        _irgen: &mut T,
-        mut window: crate::window::DecodeWindow,
-    ) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, mut window: &mut DecodeWindow) -> crate::ParseResult<T> {
         loop {
             *self = match self {
                 TableTypeParser::Init => {
@@ -33,14 +29,19 @@ impl<T: IR> Parse<T> for TableTypeParser<T> {
                 }
                 TableTypeParser::RefType(_) => {
                     return Ok(crate::Advancement::YieldTo(
-                        window.offset(),
                         AnyParser::Limits(Default::default()),
                         |irgen, last_state, this_state| {
                             let AnyParser::Limits(parser) = last_state else {
-                                 unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                unsafe {
+                                    crate::cold();
+                                    std::hint::unreachable_unchecked()
+                                };
                             };
                             let AnyParser::TableType(Self::RefType(rt)) = this_state else {
-                                 unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                                unsafe {
+                                    crate::cold();
+                                    std::hint::unreachable_unchecked()
+                                };
                             };
 
                             let lims = parser.production(irgen)?;
@@ -48,9 +49,7 @@ impl<T: IR> Parse<T> for TableTypeParser<T> {
                         },
                     ))
                 }
-                TableTypeParser::Ready(_, _) => {
-                    return Ok(crate::Advancement::Ready(window.offset()))
-                }
+                TableTypeParser::Ready(_, _) => return Ok(crate::Advancement::Ready),
             }
         }
     }
@@ -58,9 +57,12 @@ impl<T: IR> Parse<T> for TableTypeParser<T> {
     fn production(
         self,
         irgen: &mut T,
-    ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
+    ) -> Result<Self::Production, crate::ParseErrorKind<<T as IR>::Error>> {
         let Self::Ready(ref_type, limits) = self else {
-             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+            unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            }
         };
 
         Ok(irgen.make_table_type(ref_type, limits).map_err(IRError)?)

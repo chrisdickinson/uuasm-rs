@@ -2,7 +2,7 @@ use uuasm_nodes::IR;
 
 use crate::{
     window::{AdvancementError, DecodeWindow},
-    Advancement, IRError, Parse, ParseError, ParseResult,
+    Advancement, IRError, Parse, ParseErrorKind, ParseResult,
 };
 
 use super::{accumulator::Accumulator, any::AnyParser};
@@ -17,10 +17,9 @@ pub enum ModuleParser<T: IR> {
 impl<T: IR> Parse<T> for ModuleParser<T> {
     type Production = <T as IR>::Module;
 
-    fn advance(&mut self, _irgen: &mut T, window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
         match self {
             ModuleParser::Magic => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::Accumulate(Accumulator::new(8)),
                 |irgen, last_state, this_state| {
                     let AnyParser::Accumulate(accum) = last_state else {
@@ -39,14 +38,14 @@ impl<T: IR> Parse<T> for ModuleParser<T> {
 
                     let magic = &production[0..4];
                     if magic != b"\x00asm" {
-                        return Err(ParseError::BadMagic(u32::from_ne_bytes(
+                        return Err(ParseErrorKind::BadMagic(u32::from_ne_bytes(
                             magic.try_into().unwrap(),
                         )));
                     }
 
                     let version = &production[4..];
                     if version != b"\x01\x00\x00\x00" {
-                        return Err(ParseError::UnexpectedVersion(u32::from_le_bytes(
+                        return Err(ParseErrorKind::UnexpectedVersion(u32::from_le_bytes(
                             magic.try_into().unwrap(),
                         )));
                     }
@@ -58,14 +57,13 @@ impl<T: IR> Parse<T> for ModuleParser<T> {
             ModuleParser::TakeSection(_) => {
                 match window.peek() {
                     Err(AdvancementError::Expected(1, _)) => {
-                        return Ok(Advancement::Ready(window.offset()));
+                        return Ok(Advancement::Ready);
                     }
                     Err(err) => return Err(err.into()),
                     _ => {}
                 }
 
                 Ok(Advancement::YieldTo(
-                    window.offset(),
                     AnyParser::Section(Default::default()),
                     |irgen, last_state, this_state| {
                         let AnyParser::Section(section) = last_state else {
@@ -91,7 +89,7 @@ impl<T: IR> Parse<T> for ModuleParser<T> {
         }
     }
 
-    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
+    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseErrorKind<T::Error>> {
         let ModuleParser::TakeSection(sections) = self else {
             unsafe {
                 crate::cold();

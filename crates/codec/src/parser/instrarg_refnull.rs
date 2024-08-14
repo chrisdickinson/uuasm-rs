@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
+use crate::{window::DecodeWindow, Advancement, Parse, ParseErrorKind, ParseResult};
 
 #[derive(Default)]
 pub struct InstrArgRefNullParser {
@@ -10,12 +10,15 @@ pub struct InstrArgRefNullParser {
 impl<T: IR> Parse<T> for InstrArgRefNullParser {
     type Production = u8;
 
-    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
         self.data = window.take()?;
-        Ok(Advancement::Ready(window.offset()))
+        Ok(Advancement::Ready)
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
+    fn production(
+        self,
+        _irgen: &mut T,
+    ) -> Result<Self::Production, ParseErrorKind<<T as IR>::Error>> {
         Ok(self.data)
     }
 }

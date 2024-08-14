@@ -2,12 +2,12 @@ use std::marker::PhantomData;
 
 use uuasm_nodes::IR;
 
-use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
+use crate::{window::DecodeWindow, Advancement, Parse, ParseErrorKind, ParseResult};
 
 #[derive(Default)]
 pub struct LEBParser<T> {
     repr: u64,
-    offs: usize,
+    offs: u8,
     _marker: PhantomData<T>,
 }
 
@@ -24,7 +24,7 @@ impl<T: num::Integer + Default> LEBParser<T> {
 impl<T: IR, C: LEBConstants> Parse<T> for LEBParser<C> {
     type Production = C;
 
-    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
         let mut next;
         let mut shift = self.offs * 7;
         while {
@@ -40,42 +40,52 @@ impl<T: IR, C: LEBConstants> Parse<T> for LEBParser<C> {
         }
         window.take().unwrap();
 
-        Ok(Advancement::Ready(window.offset()))
+        Ok(Advancement::Ready)
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
-        Ok(C::from_u64(self.repr))
+    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseErrorKind<T::Error>> {
+        Ok(C::from_u64(self.repr, self.offs - 1))
     }
 }
 
 trait LEBConstants {
-    fn from_u64(i: u64) -> Self;
+    fn from_u64(i: u64, offset: u8) -> Self;
 }
 
 impl LEBConstants for u32 {
     #[inline]
-    fn from_u64(i: u64) -> Self {
+    fn from_u64(i: u64, _offset: u8) -> Self {
         i as u32
     }
 }
 
 impl LEBConstants for u64 {
     #[inline]
-    fn from_u64(i: u64) -> Self {
+    fn from_u64(i: u64, _offset: u8) -> Self {
         i
     }
 }
 
 impl LEBConstants for i32 {
     #[inline]
-    fn from_u64(i: u64) -> Self {
-        i as i32
+    fn from_u64(i: u64, offset: u8) -> Self {
+        let mut result = i as i32;
+        let shift = offset as usize * 7;
+        if shift < 25 && i & (0x40 << shift) != 0 {
+            result |= !0 << (7 + shift);
+        }
+        result
     }
 }
 
 impl LEBConstants for i64 {
     #[inline]
-    fn from_u64(i: u64) -> Self {
-        i as i64
+    fn from_u64(i: u64, offset: u8) -> Self {
+        let mut result = i as i64;
+        let shift = offset as usize * 7;
+        if shift < 57 && i & (0x40 << shift) != 0 {
+            result |= !0 << (shift + 7);
+        }
+        result
     }
 }

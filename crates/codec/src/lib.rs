@@ -23,7 +23,15 @@ use window::{AdvancementError, DecodeWindow};
 pub struct IRError<T: Clone + std::fmt::Debug + std::error::Error>(#[from] T);
 
 #[derive(Error, Debug, Clone)]
-pub enum ParseError<T: Clone + std::fmt::Debug + std::error::Error> {
+#[error("{kind} (pos: {position})")]
+pub struct ParseError<T: Clone + std::fmt::Debug + std::error::Error> {
+    #[source]
+    pub kind: ParseErrorKind<T>,
+    pub position: usize,
+}
+
+#[derive(Error, Debug, Clone)]
+pub enum ParseErrorKind<T: Clone + std::fmt::Debug + std::error::Error> {
     #[error("Bad magic number (expected 0061736DH ('\\0asm'), got {0:X}H")]
     BadMagic(u32),
 
@@ -49,7 +57,7 @@ pub enum ParseError<T: Clone + std::fmt::Debug + std::error::Error> {
     BadInstruction(u8),
 
     #[error(
-        "Bad mutability value for global type definition (got {0:X}H; expected const=0 or mut=1)"
+        "malformed mutability value for global type definition (got {0:X}H; expected const=0 or mut=1)"
     )]
     BadMutability(u8),
 
@@ -85,22 +93,22 @@ pub enum ExtractError {
 }
 
 pub enum Advancement<T: IR> {
-    Ready(usize),
-    YieldTo(usize, AnyParser<T>, ResumeFunc<T>),
-    YieldToBounded(usize, u32, AnyParser<T>, ResumeFunc<T>),
+    Ready,
+    YieldTo(AnyParser<T>, ResumeFunc<T>),
+    YieldToBounded(u32, AnyParser<T>, ResumeFunc<T>),
 }
 
 #[allow(type_alias_bounds)]
 pub type ResumeFunc<T: IR> =
-    fn(&mut T, AnyParser<T>, AnyParser<T>) -> Result<AnyParser<T>, ParseError<T::Error>>;
+    fn(&mut T, AnyParser<T>, AnyParser<T>) -> Result<AnyParser<T>, ParseErrorKind<T::Error>>;
 #[allow(type_alias_bounds)]
-pub type ParseResult<T: IR> = Result<Advancement<T>, ParseError<T::Error>>;
+pub type ParseResult<T: IR> = Result<Advancement<T>, ParseErrorKind<T::Error>>;
 
 pub trait Parse<T: IR> {
     type Production: Sized;
 
-    fn advance(&mut self, irgen: &mut T, window: DecodeWindow) -> ParseResult<T>;
-    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>>;
+    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T>;
+    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseErrorKind<T::Error>>;
 }
 
 pub trait ExtractTarget<T>: Sized {

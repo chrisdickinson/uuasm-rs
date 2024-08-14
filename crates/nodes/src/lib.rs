@@ -856,31 +856,35 @@ pub trait IR {
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error>;
 
-    fn make_instr_unary64(
+    fn make_instr_arity1_64(
         &mut self,
         code: u8,
+        subcode: u32,
         arg0: u64,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error>;
 
-    fn make_instr_binary(
+    fn make_instr_arity2(
         &mut self,
         code: u8,
+        subcode: u32,
         arg0: u32,
         arg1: u32,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error>;
 
-    fn make_instr_unary(
+    fn make_instr_arity1(
         &mut self,
         code: u8,
+        subcode: u32,
         arg0: u32,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error>;
 
-    fn make_instr_nullary(
+    fn make_instr_arity0(
         &mut self,
         code: u8,
+        subcode: u32,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error>;
 
@@ -943,7 +947,7 @@ pub trait IR {
 
     fn make_expr(&mut self, instrs: Vec<Self::Instr>) -> Result<Self::Expr, Self::Error>;
 
-    fn start_section(&mut self, section_id: u8, _section_size: u32) {}
+    fn start_section(&mut self, _section_id: u8, _section_size: u32) {}
     fn start_func(&mut self) {}
 
     fn make_func(
@@ -1035,6 +1039,8 @@ pub trait IR {
     fn make_global_index(&mut self, candidate: u32) -> Result<Self::GlobalIdx, Self::Error>;
     fn make_func_index(&mut self, candidate: u32) -> Result<Self::FuncIdx, Self::Error>;
     fn make_local_index(&mut self, candidate: u32) -> Result<Self::LocalIdx, Self::Error>;
+    fn make_data_index(&mut self, candidate: u32) -> Result<Self::DataIdx, Self::Error>;
+    fn make_elem_index(&mut self, candidate: u32) -> Result<Self::ElemIdx, Self::Error>;
     fn make_func_type(
         &mut self,
         params: Option<Self::ResultType>,
@@ -1165,18 +1171,20 @@ impl IR for EmptyIRGenerator {
         Ok(())
     }
 
-    fn make_instr_unary64(
+    fn make_instr_arity1_64(
         &mut self,
         _code: u8,
+        _subcode: u32,
         _arg0: u64,
         _instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn make_instr_binary(
+    fn make_instr_arity2(
         &mut self,
         _code: u8,
+        _subcode: u32,
         _arg0: u32,
         _arg1: u32,
         _instrs: &mut Vec<Self::Instr>,
@@ -1184,18 +1192,20 @@ impl IR for EmptyIRGenerator {
         Ok(())
     }
 
-    fn make_instr_unary(
+    fn make_instr_arity1(
         &mut self,
         _code: u8,
+        _subcode: u32,
         _arg0: u32,
         _instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
         Ok(())
     }
 
-    fn make_instr_nullary(
+    fn make_instr_arity0(
         &mut self,
         _code: u8,
+        _subcode: u32,
         _instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
         Ok(())
@@ -1416,6 +1426,12 @@ impl IR for EmptyIRGenerator {
     fn make_local_index(&mut self, _candidate: u32) -> Result<Self::FuncIdx, Self::Error> {
         Ok(())
     }
+    fn make_data_index(&mut self, _candidate: u32) -> Result<Self::DataIdx, Self::Error> {
+        Ok(())
+    }
+    fn make_elem_index(&mut self, _candidate: u32) -> Result<Self::ElemIdx, Self::Error> {
+        Ok(())
+    }
     fn make_func_type(
         &mut self,
         _params: Option<Self::ResultType>,
@@ -1535,8 +1551,8 @@ pub enum DefaultIRGeneratorError {
     #[error("malformed UTF-8 encoding: {0}")]
     InvalidName(#[from] std::str::Utf8Error),
 
-    #[error("Invalid instruction (got {0:X}H)")]
-    InvalidInstruction(u8),
+    #[error("Invalid instruction (got {0:X}H {1:X}H)")]
+    InvalidInstruction(u8, u32),
 
     #[error("Invalid type (got {0:X}H)")]
     InvalidType(u8),
@@ -1563,6 +1579,12 @@ pub enum DefaultIRGeneratorError {
 
     #[error("unknown memory index (got {0}; max is {1})")]
     InvalidMemIndex(u32, u32),
+
+    #[error("unknown data index (got {0}; max is {1})")]
+    InvalidDataIndex(u32, u32),
+
+    #[error("unknown element index (got {0}; max is {1})")]
+    InvalidElementIndex(u32, u32),
 
     #[error(
         "Invalid memory lower bound: size minimum must not be greater than maximum, got {0} {1}"
@@ -2017,6 +2039,24 @@ impl IR for DefaultIRGenerator {
         Ok(LocalIdx(candidate))
     }
 
+    fn make_data_index(&mut self, candidate: u32) -> Result<Self::DataIdx, Self::Error> {
+        let data_count = self.max_valid_data_index.unwrap_or_default();
+        if candidate > data_count {
+            return Err(Self::Error::InvalidDataIndex(candidate, data_count));
+        }
+        Ok(DataIdx(candidate))
+    }
+
+    fn make_elem_index(&mut self, candidate: u32) -> Result<Self::ElemIdx, Self::Error> {
+        if candidate > self.max_valid_element_index {
+            return Err(Self::Error::InvalidElementIndex(
+                candidate,
+                self.max_valid_element_index,
+            ));
+        }
+        Ok(ElemIdx(candidate))
+    }
+
     fn make_func_type(
         &mut self,
         params: Option<Self::ResultType>,
@@ -2227,83 +2267,103 @@ impl IR for DefaultIRGenerator {
         Ok(())
     }
 
-    fn make_instr_unary64(
+    fn make_instr_arity1_64(
         &mut self,
         code: u8,
+        subcode: u32,
         arg0: u64,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        match code {
-            0x42 => instrs.push(Instr::I64Const(arg0 as i64)),
-            0x44 => instrs.push(Instr::F64Const(f64::from_bits(arg0))),
-            _ => return Err(DefaultIRGeneratorError::InvalidInstruction(code)),
+        match (code, subcode) {
+            (0x42, 0) => instrs.push(Instr::I64Const(arg0 as i64)),
+            (0x44, 0) => instrs.push(Instr::F64Const(f64::from_bits(arg0))),
+            _ => return Err(DefaultIRGeneratorError::InvalidInstruction(code, subcode)),
         }
         Ok(())
     }
 
-    fn make_instr_binary(
+    fn make_instr_arity2(
         &mut self,
         code: u8,
+        subcode: u32,
         arg0: u32,
         arg1: u32,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        instrs.push(match code {
-            0x11 => Instr::CallIndirect(self.make_type_index(arg0)?, self.make_table_index(arg1)?),
-            0x28..=0x3e if self.max_valid_mem_index == 0 => {
+        instrs.push(match (code, subcode) {
+            (0x11, 0) => {
+                Instr::CallIndirect(self.make_type_index(arg0)?, self.make_table_index(arg1)?)
+            }
+            (0x28..=0x3e, 0) if self.max_valid_mem_index == 0 => {
                 return Err(Self::Error::InvalidMemIndex(0, 0))
             }
-            0x28 => Instr::I32Load(MemArg(arg0, arg1)),
-            0x29 => Instr::I64Load(MemArg(arg0, arg1)),
-            0x2a => Instr::F32Load(MemArg(arg0, arg1)),
-            0x2b => Instr::F64Load(MemArg(arg0, arg1)),
-            0x2c => Instr::I32Load8S(MemArg(arg0, arg1)),
-            0x2d => Instr::I32Load8U(MemArg(arg0, arg1)),
-            0x2e => Instr::I32Load16S(MemArg(arg0, arg1)),
-            0x2f => Instr::I32Load16U(MemArg(arg0, arg1)),
-            0x30 => Instr::I64Load8S(MemArg(arg0, arg1)),
-            0x31 => Instr::I64Load8U(MemArg(arg0, arg1)),
-            0x32 => Instr::I64Load16S(MemArg(arg0, arg1)),
-            0x33 => Instr::I64Load16U(MemArg(arg0, arg1)),
-            0x34 => Instr::I64Load32S(MemArg(arg0, arg1)),
-            0x35 => Instr::I64Load32U(MemArg(arg0, arg1)),
-            0x36 => Instr::I32Store(MemArg(arg0, arg1)),
-            0x37 => Instr::I64Store(MemArg(arg0, arg1)),
-            0x38 => Instr::F32Store(MemArg(arg0, arg1)),
-            0x39 => Instr::F64Store(MemArg(arg0, arg1)),
-            0x3a => Instr::I32Store8(MemArg(arg0, arg1)),
-            0x3b => Instr::I32Store16(MemArg(arg0, arg1)),
-            0x3c => Instr::I64Store8(MemArg(arg0, arg1)),
-            0x3d => Instr::I64Store16(MemArg(arg0, arg1)),
-            0x3e => Instr::I64Store32(MemArg(arg0, arg1)),
-            unk => return Err(DefaultIRGeneratorError::InvalidInstruction(unk)),
+            (0x28, 0) => Instr::I32Load(MemArg(arg0, arg1)),
+            (0x29, 0) => Instr::I64Load(MemArg(arg0, arg1)),
+            (0x2a, 0) => Instr::F32Load(MemArg(arg0, arg1)),
+            (0x2b, 0) => Instr::F64Load(MemArg(arg0, arg1)),
+            (0x2c, 0) => Instr::I32Load8S(MemArg(arg0, arg1)),
+            (0x2d, 0) => Instr::I32Load8U(MemArg(arg0, arg1)),
+            (0x2e, 0) => Instr::I32Load16S(MemArg(arg0, arg1)),
+            (0x2f, 0) => Instr::I32Load16U(MemArg(arg0, arg1)),
+            (0x30, 0) => Instr::I64Load8S(MemArg(arg0, arg1)),
+            (0x31, 0) => Instr::I64Load8U(MemArg(arg0, arg1)),
+            (0x32, 0) => Instr::I64Load16S(MemArg(arg0, arg1)),
+            (0x33, 0) => Instr::I64Load16U(MemArg(arg0, arg1)),
+            (0x34, 0) => Instr::I64Load32S(MemArg(arg0, arg1)),
+            (0x35, 0) => Instr::I64Load32U(MemArg(arg0, arg1)),
+            (0x36, 0) => Instr::I32Store(MemArg(arg0, arg1)),
+            (0x37, 0) => Instr::I64Store(MemArg(arg0, arg1)),
+            (0x38, 0) => Instr::F32Store(MemArg(arg0, arg1)),
+            (0x39, 0) => Instr::F64Store(MemArg(arg0, arg1)),
+            (0x3a, 0) => Instr::I32Store8(MemArg(arg0, arg1)),
+            (0x3b, 0) => Instr::I32Store16(MemArg(arg0, arg1)),
+            (0x3c, 0) => Instr::I64Store8(MemArg(arg0, arg1)),
+            (0x3d, 0) => Instr::I64Store16(MemArg(arg0, arg1)),
+            (0x3e, 0) => Instr::I64Store32(MemArg(arg0, arg1)),
+
+            (0xfc, 0x08) => {
+                Instr::MemoryInit(self.make_data_index(arg0)?, self.make_mem_index(arg1)?)
+            }
+            (0xfc, 0x0a) => {
+                Instr::MemoryCopy(self.make_mem_index(arg0)?, self.make_mem_index(arg1)?)
+            }
+            (0xfc, 0x0c) => {
+                Instr::TableInit(self.make_elem_index(arg0)?, self.make_table_index(arg1)?)
+            }
+            (0xfc, 0x0e) => {
+                Instr::TableCopy(self.make_table_index(arg0)?, self.make_table_index(arg1)?)
+            }
+
+            _ => return Err(DefaultIRGeneratorError::InvalidInstruction(code, subcode)),
         });
         Ok(())
     }
 
-    fn make_instr_unary(
+    fn make_instr_arity1(
         &mut self,
         code: u8,
+        subcode: u32,
         arg0: u32,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        instrs.push(match code {
-            0x10 => Instr::Call(self.make_func_index(arg0)?),
-            0x41 => Instr::I32Const(arg0 as i32),
-            0x43 => Instr::F32Const(f32::from_bits(arg0)),
-            0x20 => Instr::LocalGet(self.make_local_index(arg0)?),
-            0x21 => Instr::LocalSet(self.make_local_index(arg0)?),
-            0x22 => Instr::LocalTee(self.make_local_index(arg0)?),
-            0x23 => Instr::GlobalGet(self.make_global_index(arg0)?),
-            0x24 => Instr::GlobalSet(self.make_global_index(arg0)?),
-            0x25 => Instr::TableGet(self.make_table_index(arg0)?),
-            0x26 => Instr::TableSet(self.make_table_index(arg0)?),
-            0x3f..=0x40 if self.max_valid_mem_index == 0 => {
+        instrs.push(match (code, subcode) {
+            (0x10, 0) => Instr::Call(self.make_func_index(arg0)?),
+            (0x41, 0) => Instr::I32Const(arg0 as i32),
+            (0x43, 0) => Instr::F32Const(f32::from_bits(arg0)),
+            (0x20, 0) => Instr::LocalGet(self.make_local_index(arg0)?),
+            (0x21, 0) => Instr::LocalSet(self.make_local_index(arg0)?),
+            (0x22, 0) => Instr::LocalTee(self.make_local_index(arg0)?),
+            (0x23, 0) => Instr::GlobalGet(self.make_global_index(arg0)?),
+            (0x24, 0) => Instr::GlobalSet(self.make_global_index(arg0)?),
+            (0x25, 0) => Instr::TableGet(self.make_table_index(arg0)?),
+            (0x26, 0) => Instr::TableSet(self.make_table_index(arg0)?),
+            (0x3f..=0x40, 0) if self.max_valid_mem_index == 0 => {
                 return Err(Self::Error::InvalidMemIndex(0, 0))
             }
-            0x3f => Instr::MemorySize(MemIdx(arg0)),
-            0x40 => Instr::MemoryGrow(MemIdx(arg0)),
-            0xd2 => {
+            (0x3f, 0) => Instr::MemorySize(MemIdx(arg0)),
+            (0x40, 0) => Instr::MemoryGrow(MemIdx(arg0)),
+            (0xd0, 0) => Instr::RefNull(self.make_ref_type(arg0 as u8)?),
+            (0xd2, 0) => {
                 // If we're in the code section, validate the function index
                 // against "Context.Refs"
                 if self.current_section_id == 0x0a && !self.valid_function_indices.contains(&arg0) {
@@ -2313,154 +2373,170 @@ impl IR for DefaultIRGenerator {
                 Instr::RefFunc(self.make_func_index(arg0)?)
             }
             // TODO: "make_label_idx"
-            0x0c => Instr::Br(LabelIdx(arg0)),
-            0x0d => Instr::BrIf(LabelIdx(arg0)),
-            unk => return Err(DefaultIRGeneratorError::InvalidInstruction(unk)),
+            (0x0c, 0) => Instr::Br(LabelIdx(arg0)),
+            (0x0d, 0) => Instr::BrIf(LabelIdx(arg0)),
+
+            (0xfc, 0x09) => Instr::DataDrop(self.make_data_index(arg0)?),
+            (0xfc, 0x0b) => Instr::MemoryFill(self.make_mem_index(arg0)?),
+            (0xfc, 0x0d) => Instr::ElemDrop(self.make_elem_index(arg0)?),
+            (0xfc, 0x0f) => Instr::TableGrow(self.make_table_index(arg0)?),
+            (0xfc, 0x10) => Instr::TableSize(self.make_table_index(arg0)?),
+            (0xfc, 0x11) => Instr::TableFill(self.make_table_index(arg0)?),
+            _ => return Err(DefaultIRGeneratorError::InvalidInstruction(code, subcode)),
         });
         Ok(())
     }
 
-    fn make_instr_nullary(
+    fn make_instr_arity0(
         &mut self,
         code: u8,
+        subcode: u32,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        instrs.push(match code {
-            0x00 => Instr::Unreachable,
-            0x01 => Instr::Nop,
-            0xd1 => Instr::RefIsNull,
-            0x1a => Instr::Drop,
-            0x1b => Instr::SelectEmpty,
-            0x0f => Instr::Return,
-            0x45 => Instr::I32Eqz,
-            0x46 => Instr::I32Eq,
-            0x47 => Instr::I32Ne,
-            0x48 => Instr::I32LtS,
-            0x49 => Instr::I32LtU,
-            0x4a => Instr::I32GtS,
-            0x4b => Instr::I32GtU,
-            0x4c => Instr::I32LeS,
-            0x4d => Instr::I32LeU,
-            0x4e => Instr::I32GeS,
-            0x4f => Instr::I32GeU,
-            0x50 => Instr::I64Eqz,
-            0x51 => Instr::I64Eq,
-            0x52 => Instr::I64Ne,
-            0x53 => Instr::I64LtS,
-            0x54 => Instr::I64LtU,
-            0x55 => Instr::I64GtS,
-            0x56 => Instr::I64GtU,
-            0x57 => Instr::I64LeS,
-            0x58 => Instr::I64LeU,
-            0x59 => Instr::I64GeS,
-            0x5a => Instr::I64GeU,
-            0x5b => Instr::F32Eq,
-            0x5c => Instr::F32Ne,
-            0x5d => Instr::F32Lt,
-            0x5e => Instr::F32Gt,
-            0x5f => Instr::F32Le,
-            0x60 => Instr::F32Ge,
-            0x61 => Instr::F64Eq,
-            0x62 => Instr::F64Ne,
-            0x63 => Instr::F64Lt,
-            0x64 => Instr::F64Gt,
-            0x65 => Instr::F64Le,
-            0x66 => Instr::F64Ge,
-            0x67 => Instr::I32Clz,
-            0x68 => Instr::I32Ctz,
-            0x69 => Instr::I32Popcnt,
-            0x6a => Instr::I32Add,
-            0x6b => Instr::I32Sub,
-            0x6c => Instr::I32Mul,
-            0x6d => Instr::I32DivS,
-            0x6e => Instr::I32DivU,
-            0x6f => Instr::I32RemS,
-            0x70 => Instr::I32RemU,
-            0x71 => Instr::I32And,
-            0x72 => Instr::I32Ior,
-            0x73 => Instr::I32Xor,
-            0x74 => Instr::I32Shl,
-            0x75 => Instr::I32ShrS,
-            0x76 => Instr::I32ShrU,
-            0x77 => Instr::I32Rol,
-            0x78 => Instr::I32Ror,
-            0x79 => Instr::I64Clz,
-            0x7a => Instr::I64Ctz,
-            0x7b => Instr::I64Popcnt,
-            0x7c => Instr::I64Add,
-            0x7d => Instr::I64Sub,
-            0x7e => Instr::I64Mul,
-            0x7f => Instr::I64DivS,
-            0x80 => Instr::I64DivU,
-            0x81 => Instr::I64RemS,
-            0x82 => Instr::I64RemU,
-            0x83 => Instr::I64And,
-            0x84 => Instr::I64Ior,
-            0x85 => Instr::I64Xor,
-            0x86 => Instr::I64Shl,
-            0x87 => Instr::I64ShrS,
-            0x88 => Instr::I64ShrU,
-            0x89 => Instr::I64Rol,
-            0x8a => Instr::I64Ror,
-            0x8b => Instr::F32Abs,
-            0x8c => Instr::F32Neg,
-            0x8d => Instr::F32Ceil,
-            0x8e => Instr::F32Floor,
-            0x8f => Instr::F32Trunc,
-            0x90 => Instr::F32NearestInt,
-            0x91 => Instr::F32Sqrt,
-            0x92 => Instr::F32Add,
-            0x93 => Instr::F32Sub,
-            0x94 => Instr::F32Mul,
-            0x95 => Instr::F32Div,
-            0x96 => Instr::F32Min,
-            0x97 => Instr::F32Max,
-            0x98 => Instr::F32CopySign,
-            0x99 => Instr::F64Abs,
-            0x9a => Instr::F64Neg,
-            0x9b => Instr::F64Ceil,
-            0x9c => Instr::F64Floor,
-            0x9d => Instr::F64Trunc,
-            0x9e => Instr::F64NearestInt,
-            0x9f => Instr::F64Sqrt,
-            0xa0 => Instr::F64Add,
-            0xa1 => Instr::F64Sub,
-            0xa2 => Instr::F64Mul,
-            0xa3 => Instr::F64Div,
-            0xa4 => Instr::F64Min,
-            0xa5 => Instr::F64Max,
-            0xa6 => Instr::F64CopySign,
-            0xa7 => Instr::I32ConvertI64,
-            0xa8 => Instr::I32SConvertF32,
-            0xa9 => Instr::I32UConvertF32,
-            0xaa => Instr::I32SConvertF64,
-            0xab => Instr::I32UConvertF64,
-            0xac => Instr::I64SConvertI32,
-            0xad => Instr::I64UConvertI32,
-            0xae => Instr::I64SConvertF32,
-            0xaf => Instr::I64UConvertF32,
-            0xb0 => Instr::I64SConvertF64,
-            0xb1 => Instr::I64UConvertF64,
-            0xb2 => Instr::F32SConvertI32,
-            0xb3 => Instr::F32UConvertI32,
-            0xb4 => Instr::F32SConvertI64,
-            0xb5 => Instr::F32UConvertI64,
-            0xb6 => Instr::F32ConvertF64,
-            0xb7 => Instr::F64SConvertI32,
-            0xb8 => Instr::F64UConvertI32,
-            0xb9 => Instr::F64SConvertI64,
-            0xba => Instr::F64UConvertI64,
-            0xbb => Instr::F64ConvertF32,
-            0xbc => Instr::I32ReinterpretF32,
-            0xbd => Instr::I64ReinterpretF64,
-            0xbe => Instr::F32ReinterpretI32,
-            0xbf => Instr::F64ReinterpretI64,
-            0xc0 => Instr::I32SExtendI8,
-            0xc1 => Instr::I32SExtendI16,
-            0xc2 => Instr::I64SExtendI8,
-            0xc3 => Instr::I64SExtendI16,
-            0xc4 => Instr::I64SExtendI32,
-            unk => return Err(DefaultIRGeneratorError::InvalidInstruction(unk)),
+        instrs.push(match (code, subcode) {
+            (0x00, 0) => Instr::Unreachable,
+            (0x01, 0) => Instr::Nop,
+            (0xd1, 0) => Instr::RefIsNull,
+            (0x1a, 0) => Instr::Drop,
+            (0x1b, 0) => Instr::SelectEmpty,
+            (0x0f, 0) => Instr::Return,
+            (0x45, 0) => Instr::I32Eqz,
+            (0x46, 0) => Instr::I32Eq,
+            (0x47, 0) => Instr::I32Ne,
+            (0x48, 0) => Instr::I32LtS,
+            (0x49, 0) => Instr::I32LtU,
+            (0x4a, 0) => Instr::I32GtS,
+            (0x4b, 0) => Instr::I32GtU,
+            (0x4c, 0) => Instr::I32LeS,
+            (0x4d, 0) => Instr::I32LeU,
+            (0x4e, 0) => Instr::I32GeS,
+            (0x4f, 0) => Instr::I32GeU,
+            (0x50, 0) => Instr::I64Eqz,
+            (0x51, 0) => Instr::I64Eq,
+            (0x52, 0) => Instr::I64Ne,
+            (0x53, 0) => Instr::I64LtS,
+            (0x54, 0) => Instr::I64LtU,
+            (0x55, 0) => Instr::I64GtS,
+            (0x56, 0) => Instr::I64GtU,
+            (0x57, 0) => Instr::I64LeS,
+            (0x58, 0) => Instr::I64LeU,
+            (0x59, 0) => Instr::I64GeS,
+            (0x5a, 0) => Instr::I64GeU,
+            (0x5b, 0) => Instr::F32Eq,
+            (0x5c, 0) => Instr::F32Ne,
+            (0x5d, 0) => Instr::F32Lt,
+            (0x5e, 0) => Instr::F32Gt,
+            (0x5f, 0) => Instr::F32Le,
+            (0x60, 0) => Instr::F32Ge,
+            (0x61, 0) => Instr::F64Eq,
+            (0x62, 0) => Instr::F64Ne,
+            (0x63, 0) => Instr::F64Lt,
+            (0x64, 0) => Instr::F64Gt,
+            (0x65, 0) => Instr::F64Le,
+            (0x66, 0) => Instr::F64Ge,
+            (0x67, 0) => Instr::I32Clz,
+            (0x68, 0) => Instr::I32Ctz,
+            (0x69, 0) => Instr::I32Popcnt,
+            (0x6a, 0) => Instr::I32Add,
+            (0x6b, 0) => Instr::I32Sub,
+            (0x6c, 0) => Instr::I32Mul,
+            (0x6d, 0) => Instr::I32DivS,
+            (0x6e, 0) => Instr::I32DivU,
+            (0x6f, 0) => Instr::I32RemS,
+            (0x70, 0) => Instr::I32RemU,
+            (0x71, 0) => Instr::I32And,
+            (0x72, 0) => Instr::I32Ior,
+            (0x73, 0) => Instr::I32Xor,
+            (0x74, 0) => Instr::I32Shl,
+            (0x75, 0) => Instr::I32ShrS,
+            (0x76, 0) => Instr::I32ShrU,
+            (0x77, 0) => Instr::I32Rol,
+            (0x78, 0) => Instr::I32Ror,
+            (0x79, 0) => Instr::I64Clz,
+            (0x7a, 0) => Instr::I64Ctz,
+            (0x7b, 0) => Instr::I64Popcnt,
+            (0x7c, 0) => Instr::I64Add,
+            (0x7d, 0) => Instr::I64Sub,
+            (0x7e, 0) => Instr::I64Mul,
+            (0x7f, 0) => Instr::I64DivS,
+            (0x80, 0) => Instr::I64DivU,
+            (0x81, 0) => Instr::I64RemS,
+            (0x82, 0) => Instr::I64RemU,
+            (0x83, 0) => Instr::I64And,
+            (0x84, 0) => Instr::I64Ior,
+            (0x85, 0) => Instr::I64Xor,
+            (0x86, 0) => Instr::I64Shl,
+            (0x87, 0) => Instr::I64ShrS,
+            (0x88, 0) => Instr::I64ShrU,
+            (0x89, 0) => Instr::I64Rol,
+            (0x8a, 0) => Instr::I64Ror,
+            (0x8b, 0) => Instr::F32Abs,
+            (0x8c, 0) => Instr::F32Neg,
+            (0x8d, 0) => Instr::F32Ceil,
+            (0x8e, 0) => Instr::F32Floor,
+            (0x8f, 0) => Instr::F32Trunc,
+            (0x90, 0) => Instr::F32NearestInt,
+            (0x91, 0) => Instr::F32Sqrt,
+            (0x92, 0) => Instr::F32Add,
+            (0x93, 0) => Instr::F32Sub,
+            (0x94, 0) => Instr::F32Mul,
+            (0x95, 0) => Instr::F32Div,
+            (0x96, 0) => Instr::F32Min,
+            (0x97, 0) => Instr::F32Max,
+            (0x98, 0) => Instr::F32CopySign,
+            (0x99, 0) => Instr::F64Abs,
+            (0x9a, 0) => Instr::F64Neg,
+            (0x9b, 0) => Instr::F64Ceil,
+            (0x9c, 0) => Instr::F64Floor,
+            (0x9d, 0) => Instr::F64Trunc,
+            (0x9e, 0) => Instr::F64NearestInt,
+            (0x9f, 0) => Instr::F64Sqrt,
+            (0xa0, 0) => Instr::F64Add,
+            (0xa1, 0) => Instr::F64Sub,
+            (0xa2, 0) => Instr::F64Mul,
+            (0xa3, 0) => Instr::F64Div,
+            (0xa4, 0) => Instr::F64Min,
+            (0xa5, 0) => Instr::F64Max,
+            (0xa6, 0) => Instr::F64CopySign,
+            (0xa7, 0) => Instr::I32ConvertI64,
+            (0xa8, 0) => Instr::I32SConvertF32,
+            (0xa9, 0) => Instr::I32UConvertF32,
+            (0xaa, 0) => Instr::I32SConvertF64,
+            (0xab, 0) => Instr::I32UConvertF64,
+            (0xac, 0) => Instr::I64SConvertI32,
+            (0xad, 0) => Instr::I64UConvertI32,
+            (0xae, 0) => Instr::I64SConvertF32,
+            (0xaf, 0) => Instr::I64UConvertF32,
+            (0xb0, 0) => Instr::I64SConvertF64,
+            (0xb1, 0) => Instr::I64UConvertF64,
+            (0xb2, 0) => Instr::F32SConvertI32,
+            (0xb3, 0) => Instr::F32UConvertI32,
+            (0xb4, 0) => Instr::F32SConvertI64,
+            (0xb5, 0) => Instr::F32UConvertI64,
+            (0xb6, 0) => Instr::F32ConvertF64,
+            (0xb7, 0) => Instr::F64SConvertI32,
+            (0xb8, 0) => Instr::F64UConvertI32,
+            (0xb9, 0) => Instr::F64SConvertI64,
+            (0xba, 0) => Instr::F64UConvertI64,
+            (0xbb, 0) => Instr::F64ConvertF32,
+            (0xbc, 0) => Instr::I32ReinterpretF32,
+            (0xbd, 0) => Instr::I64ReinterpretF64,
+            (0xbe, 0) => Instr::F32ReinterpretI32,
+            (0xbf, 0) => Instr::F64ReinterpretI64,
+            (0xc0, 0) => Instr::I32SExtendI8,
+            (0xc1, 0) => Instr::I32SExtendI16,
+            (0xc2, 0) => Instr::I64SExtendI8,
+            (0xc3, 0) => Instr::I64SExtendI16,
+            (0xc4, 0) => Instr::I64SExtendI32,
+            (0xfc, 0x00) => Instr::I32SConvertSatF32,
+            (0xfc, 0x01) => Instr::I32UConvertSatF32,
+            (0xfc, 0x02) => Instr::I32SConvertSatF64,
+            (0xfc, 0x03) => Instr::I32UConvertSatF64,
+            (0xfc, 0x04) => Instr::I64SConvertSatF32,
+            (0xfc, 0x05) => Instr::I64UConvertSatF32,
+            (0xfc, 0x06) => Instr::I64SConvertSatF64,
+            (0xfc, 0x07) => Instr::I64UConvertSatF64,
+            _ => return Err(DefaultIRGeneratorError::InvalidInstruction(code, subcode)),
         });
         Ok(())
     }
@@ -2475,7 +2551,7 @@ impl IR for DefaultIRGenerator {
         match block_kind {
             0x02 => instrs.push(Instr::Block(block_type, expr.0.into_boxed_slice())),
             0x03 => instrs.push(Instr::Loop(block_type, expr.0.into_boxed_slice())),
-            unk => return Err(DefaultIRGeneratorError::InvalidInstruction(unk)),
+            unk => return Err(DefaultIRGeneratorError::InvalidInstruction(unk, 0)),
         }
         Ok(())
     }

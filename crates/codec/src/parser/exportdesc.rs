@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseError, ParseResult};
+use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseErrorKind, ParseResult};
 
 use super::any::AnyParser;
 
@@ -19,7 +19,7 @@ pub enum ExportDescParser<T: IR> {
 impl<T: IR> Parse<T> for ExportDescParser<T> {
     type Production = T::ExportDesc;
 
-    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, mut window: &mut DecodeWindow) -> ParseResult<T> {
         match self {
             Self::Init => {
                 let kind = window.take()?;
@@ -28,17 +28,19 @@ impl<T: IR> Parse<T> for ExportDescParser<T> {
                     0x1 => Self::ExportTable,
                     0x2 => Self::ExportMemory,
                     0x3 => Self::ExportGlobal,
-                    unk => return Err(ParseError::BadExportDesc(unk)),
+                    unk => return Err(ParseErrorKind::BadExportDesc(unk)),
                 };
                 self.advance(_irgen, window)
             }
 
             Self::ExportFunc => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::FuncIdx(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::FuncIdx(parser) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     let func_idx = parser.production(irgen)?;
@@ -50,11 +52,13 @@ impl<T: IR> Parse<T> for ExportDescParser<T> {
             )),
 
             Self::ExportTable => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::TableIdx(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::TableIdx(parser) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     let table_type = parser.production(irgen)?;
@@ -66,11 +70,13 @@ impl<T: IR> Parse<T> for ExportDescParser<T> {
             )),
 
             Self::ExportGlobal => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::GlobalIdx(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::GlobalIdx(parser) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     let global_idx = parser.production(irgen)?;
@@ -82,11 +88,13 @@ impl<T: IR> Parse<T> for ExportDescParser<T> {
             )),
 
             Self::ExportMemory => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::MemIdx(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::MemIdx(parser) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     let mem_idx = parser.production(irgen)?;
@@ -96,13 +104,19 @@ impl<T: IR> Parse<T> for ExportDescParser<T> {
                     Ok(AnyParser::ExportDesc(Self::Ready(memory_export_desc)))
                 },
             )),
-            Self::Ready(_) => Ok(Advancement::Ready(window.offset())),
+            Self::Ready(_) => Ok(Advancement::Ready),
         }
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, ParseError<<T as IR>::Error>> {
+    fn production(
+        self,
+        _irgen: &mut T,
+    ) -> Result<Self::Production, ParseErrorKind<<T as IR>::Error>> {
         let Self::Ready(production) = self else {
-             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+            unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            };
         };
         Ok(production)
     }

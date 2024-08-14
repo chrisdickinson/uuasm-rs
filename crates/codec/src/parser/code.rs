@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{Advancement, IRError, Parse};
+use crate::{window::DecodeWindow, Advancement, IRError, Parse};
 
 use super::{any::AnyParser, func::FuncParser};
 
@@ -15,18 +15,16 @@ pub enum CodeParser<T: IR> {
 impl<T: IR> Parse<T> for CodeParser<T> {
     type Production = T::Code;
 
-    fn advance(
-        &mut self,
-        _irgen: &mut T,
-        window: crate::window::DecodeWindow,
-    ) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         match self {
             Self::Init => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::LEBU32(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::LEBU32(parser) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     let size = parser.production(irgen)?;
@@ -36,12 +34,14 @@ impl<T: IR> Parse<T> for CodeParser<T> {
             )),
 
             Self::GotSize(expected) => Ok(Advancement::YieldToBounded(
-                window.offset(),
                 *expected,
                 AnyParser::Func(FuncParser::default()),
                 |irgen, last_state, _| {
                     let AnyParser::Func(parser) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     let body = parser.production(irgen)?;
@@ -50,16 +50,19 @@ impl<T: IR> Parse<T> for CodeParser<T> {
                 },
             )),
 
-            Self::Ready(_) => Ok(Advancement::Ready(window.offset())),
+            Self::Ready(_) => Ok(Advancement::Ready),
         }
     }
 
     fn production(
         self,
         irgen: &mut T,
-    ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
+    ) -> Result<Self::Production, crate::ParseErrorKind<<T as IR>::Error>> {
         let Self::Ready(production) = self else {
-             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+            unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            }
         };
 
         Ok(irgen.make_code(production).map_err(IRError)?)

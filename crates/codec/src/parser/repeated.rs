@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{window::DecodeWindow, Advancement, Parse, ParseError, ParseResult};
+use crate::{window::DecodeWindow, Advancement, Parse, ParseErrorKind, ParseResult};
 
 use super::{any::AnyParser, leb::LEBParser};
 
@@ -41,20 +41,22 @@ where
 impl<T, P> Parse<T> for Repeated<T, P>
 where
     T: IR,
-    Self: TryFrom<AnyParser<T>, Error = ParseError<T::Error>>,
-    P: Parse<T> + Default + TryFrom<AnyParser<T>, Error = ParseError<T::Error>>,
+    Self: TryFrom<AnyParser<T>, Error = ParseErrorKind<T::Error>>,
+    P: Parse<T> + Default + TryFrom<AnyParser<T>, Error = ParseErrorKind<T::Error>>,
     AnyParser<T>: From<P> + From<Self>,
 {
     type Production = Box<[P::Production]>;
 
-    fn advance(&mut self, _irgen: &mut T, window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
         if let Self::Init = self {
             return Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::LEBU32(LEBParser::default()),
                 |irgen, last_state, _| {
                     let AnyParser::LEBU32(v) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
                     let expected = v.production(irgen)? as usize;
                     Ok(Self::Collecting {
@@ -67,15 +69,17 @@ where
         }
 
         let Self::Collecting { result, expected } = &self else {
-             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+            unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            }
         };
 
         if *expected == result.len() {
-            return Ok(Advancement::Ready(window.offset()));
+            return Ok(Advancement::Ready);
         }
 
         Ok(Advancement::YieldTo(
-            window.offset(),
             P::default().into(),
             |irgen, last_state, this_state| {
                 let last_parser: P = last_state.try_into()?;
@@ -85,7 +89,10 @@ where
                     expected,
                 }: Self = this_state.try_into()?
                 else {
-                     unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+                    unsafe {
+                        crate::cold();
+                        std::hint::unreachable_unchecked()
+                    }
                 };
                 result.push(last_production);
                 Ok(Self::Collecting { result, expected }.into())
@@ -93,13 +100,19 @@ where
         ))
     }
 
-    fn production(self, _irgen: &mut T) -> Result<Self::Production, crate::ParseError<T::Error>> {
+    fn production(
+        self,
+        _irgen: &mut T,
+    ) -> Result<Self::Production, crate::ParseErrorKind<T::Error>> {
         let Self::Collecting { result, expected } = self else {
-             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+            unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            }
         };
 
         if result.len() != expected {
-            return Err(ParseError::InvalidState(
+            return Err(ParseErrorKind::InvalidState(
                 "called production() too early on Repeated<P>",
             ));
         }

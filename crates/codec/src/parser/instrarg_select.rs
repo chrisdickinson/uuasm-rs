@@ -18,11 +18,11 @@ impl<T: IR> Parse<T> for InstrArgSelectParser<T> {
     fn advance(
         &mut self,
         _irgen: &mut T,
-        window: crate::window::DecodeWindow,
+        window: &mut DecodeWindow,
     ) -> crate::ParseResult<T> {
         Ok(match self {
             Self::Init => Advancement::YieldTo(
-                window.offset(),
+                
                 AnyParser::LEBU32(Default::default()),
                 |irgen, last_state, _| {
                     let AnyParser::LEBU32(parser) = last_state else {
@@ -33,7 +33,7 @@ impl<T: IR> Parse<T> for InstrArgSelectParser<T> {
                 },
             ),
             Self::Count(count) => Advancement::YieldTo(
-                window.offset(),
+                
                 AnyParser::Accumulate(Accumulator::new(*count as usize)),
                 |irgen, last_state, _| {
                     let AnyParser::Accumulate(parser) = last_state else {
@@ -49,7 +49,7 @@ impl<T: IR> Parse<T> for InstrArgSelectParser<T> {
                     Ok(AnyParser::ArgSelect(Self::Ready(types)))
                 },
             ),
-            Self::Ready(_) => Advancement::Ready(window.offset()),
+            Self::Ready(_) => Advancement::Ready,
         })
     }
 

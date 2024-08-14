@@ -3,7 +3,7 @@ use uuasm_nodes::IR;
 use crate::{
     parser::{any::AnyParser, leb::LEBParser},
     window::DecodeWindow,
-    Advancement, IRError, Parse, ParseError,
+    Advancement, IRError, Parse, ParseErrorKind,
 };
 
 use super::accumulator::Accumulator;
@@ -19,14 +19,16 @@ pub enum NameParser {
 impl<T: IR> Parse<T> for NameParser {
     type Production = <T as IR>::Name;
 
-    fn advance(&mut self, _irgen: &mut T, window: DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         match self {
             NameParser::Init => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::LEBU32(LEBParser::default()),
                 |irgen, last_state, _| {
                     let AnyParser::LEBU32(parser) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        }
                     };
 
                     Ok(AnyParser::Name(NameParser::GotLen(
@@ -35,11 +37,13 @@ impl<T: IR> Parse<T> for NameParser {
                 },
             )),
             NameParser::GotLen(len) => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::Accumulate(Accumulator::new(*len as usize)),
                 |irgen, last_state, _| {
                     let AnyParser::Accumulate(parser) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        }
                     };
 
                     Ok(AnyParser::Name(NameParser::Ready(
@@ -47,13 +51,16 @@ impl<T: IR> Parse<T> for NameParser {
                     )))
                 },
             )),
-            NameParser::Ready(_) => Ok(Advancement::Ready(window.offset())),
+            NameParser::Ready(_) => Ok(Advancement::Ready),
         }
     }
 
-    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
+    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseErrorKind<T::Error>> {
         let Self::Ready(result) = self else {
-             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+            unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            }
         };
 
         Ok(irgen.make_name(result).map_err(IRError)?)

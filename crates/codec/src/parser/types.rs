@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseError, ParseResult};
+use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseErrorKind, ParseResult};
 
 use super::{accumulator::Accumulator, any::AnyParser, leb::LEBParser};
 
@@ -17,24 +17,29 @@ pub enum TypeParser<T: IR> {
 impl<T: IR> Parse<T> for TypeParser<T> {
     type Production = <T as IR>::Type;
 
-    fn advance(&mut self, _irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, mut window: &mut DecodeWindow) -> ParseResult<T> {
         match self {
             TypeParser::Init => {
                 let tag = window.take()?;
                 if tag != 0x60 {
-                    return Err(ParseError::BadTypePrefix(tag));
+                    return Err(ParseErrorKind::BadTypePrefix(tag));
                 }
 
                 Ok(Advancement::YieldTo(
-                    window.offset(),
                     AnyParser::LEBU32(LEBParser::default()),
                     |irgen, last_state, this_state| {
                         let AnyParser::LEBU32(leb) = last_state else {
-                             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            };
                         };
 
                         let AnyParser::Type(Self::Init) = this_state else {
-                             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            };
                         };
 
                         let entry_count = leb.production(irgen)?;
@@ -50,14 +55,19 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                 let size = *size as usize;
 
                 Ok(Advancement::YieldTo(
-                    window.offset(),
                     AnyParser::Accumulate(Accumulator::new(size)),
                     |irgen, last_state, this_state| {
                         let AnyParser::Accumulate(accum) = last_state else {
-                             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            }
                         };
                         let AnyParser::Type(Self::InputSize(_)) = this_state else {
-                             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            };
                         };
 
                         let input_buf = accum.production(irgen)?;
@@ -68,15 +78,20 @@ impl<T: IR> Parse<T> for TypeParser<T> {
             }
 
             TypeParser::Input(_) => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::LEBU32(LEBParser::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::LEBU32(leb) = last_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
 
                     let AnyParser::Type(Self::Input(result_type)) = this_state else {
-                         unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        };
                     };
                     let entry_count = leb.production(irgen)?;
 
@@ -92,15 +107,20 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                 let size = *size as usize;
 
                 Ok(Advancement::YieldTo(
-                    window.offset(),
                     AnyParser::Accumulate(Accumulator::new(size)),
                     |irgen, last_state, this_state| {
                         let AnyParser::Accumulate(accum) = last_state else {
-                             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            }
                         };
                         let AnyParser::Type(Self::OutputSize(input_result_type, _)) = this_state
                         else {
-                             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            };
                         };
 
                         let output_buf = accum.production(irgen)?;
@@ -113,13 +133,16 @@ impl<T: IR> Parse<T> for TypeParser<T> {
                     },
                 ))
             }
-            TypeParser::Output(_, _) => Ok(Advancement::Ready(window.offset())),
+            TypeParser::Output(_, _) => Ok(Advancement::Ready),
         }
     }
 
-    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
+    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseErrorKind<T::Error>> {
         let Self::Output(params, returns) = self else {
-             unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+            unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            };
         };
 
         Ok(irgen.make_func_type(params, returns).map_err(IRError)?)

@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{IRError, Parse, ParseError};
+use crate::{window::DecodeWindow, IRError, Parse, ParseErrorKind};
 
 #[derive(Default)]
 pub enum GlobalTypeParser<T: IR> {
@@ -13,11 +13,7 @@ pub enum GlobalTypeParser<T: IR> {
 impl<T: IR> Parse<T> for GlobalTypeParser<T> {
     type Production = T::GlobalType;
 
-    fn advance(
-        &mut self,
-        irgen: &mut T,
-        mut window: crate::window::DecodeWindow,
-    ) -> crate::ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, mut window: &mut DecodeWindow) -> crate::ParseResult<T> {
         loop {
             *self = match self {
                 GlobalTypeParser::Init => {
@@ -29,14 +25,12 @@ impl<T: IR> Parse<T> for GlobalTypeParser<T> {
                     let mutability = match window.take()? {
                         0x00 => false,
                         0x01 => true,
-                        unk => return Err(ParseError::BadMutability(unk)),
+                        unk => return Err(ParseErrorKind::BadMutability(unk)),
                     };
 
                     Self::Ready(val_type.take().unwrap(), mutability)
                 }
-                GlobalTypeParser::Ready(_, _) => {
-                    return Ok(crate::Advancement::Ready(window.offset()))
-                }
+                GlobalTypeParser::Ready(_, _) => return Ok(crate::Advancement::Ready),
             }
         }
     }
@@ -44,9 +38,12 @@ impl<T: IR> Parse<T> for GlobalTypeParser<T> {
     fn production(
         self,
         irgen: &mut T,
-    ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
+    ) -> Result<Self::Production, crate::ParseErrorKind<<T as IR>::Error>> {
         let Self::Ready(val_type, mutability) = self else {
-             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+            unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            }
         };
 
         Ok(irgen

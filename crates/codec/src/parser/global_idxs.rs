@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{Advancement, IRError, Parse};
+use crate::{window::DecodeWindow, Advancement, IRError, Parse};
 
 use super::any::AnyParser;
 
@@ -15,20 +15,18 @@ impl<T: IR> Default for GlobalIdxParser<T> {
 impl<T: IR> Parse<T> for GlobalIdxParser<T> {
     type Production = T::GlobalIdx;
 
-    fn advance(
-        &mut self,
-        _irgen: &mut T,
-        window: crate::window::DecodeWindow,
-    ) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         if self.0.is_some() {
-            return Ok(Advancement::Ready(window.offset()));
+            return Ok(Advancement::Ready);
         }
         Ok(Advancement::YieldTo(
-            window.offset(),
             AnyParser::LEBU32(Default::default()),
             |irgen, last_state, _| {
                 let AnyParser::LEBU32(parser) = last_state else {
-                     unsafe { crate::cold(); std::hint::unreachable_unchecked() };
+                    unsafe {
+                        crate::cold();
+                        std::hint::unreachable_unchecked()
+                    };
                 };
 
                 let idx = parser.production(irgen)?;
@@ -42,9 +40,12 @@ impl<T: IR> Parse<T> for GlobalIdxParser<T> {
     fn production(
         self,
         _irgen: &mut T,
-    ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
+    ) -> Result<Self::Production, crate::ParseErrorKind<<T as IR>::Error>> {
         let Self(Some(production)) = self else {
-             unsafe { crate::cold(); std::hint::unreachable_unchecked() }
+            unsafe {
+                crate::cold();
+                std::hint::unreachable_unchecked()
+            }
         };
 
         Ok(production)

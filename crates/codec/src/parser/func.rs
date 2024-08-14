@@ -16,12 +16,11 @@ pub enum FuncParser<T: IR> {
 impl<T: IR> Parse<T> for FuncParser<T> {
     type Production = T::Func;
 
-    fn advance(&mut self, irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, mut window: &mut DecodeWindow) -> ParseResult<T> {
         match self {
             Self::Init => {
                 irgen.start_func();
                 Ok(Advancement::YieldTo(
-                    window.offset(),
                     AnyParser::LocalList(Default::default()),
                     |irgen, last_state, _| {
                         let AnyParser::LocalList(parser) = last_state else {
@@ -39,7 +38,6 @@ impl<T: IR> Parse<T> for FuncParser<T> {
             }
 
             Self::Locals(_) => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::Expr(Default::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::Expr(parser) = last_state else {
@@ -62,14 +60,14 @@ impl<T: IR> Parse<T> for FuncParser<T> {
                 },
             )),
 
-            Self::Ready(_, _) => Ok(Advancement::Ready(window.offset())),
+            Self::Ready(_, _) => Ok(Advancement::Ready),
         }
     }
 
     fn production(
         self,
         irgen: &mut T,
-    ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
+    ) -> Result<Self::Production, crate::ParseErrorKind<<T as IR>::Error>> {
         let Self::Ready(locals, expr) = self else {
             unsafe {
                 crate::cold();

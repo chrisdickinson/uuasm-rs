@@ -45,7 +45,7 @@ impl<T: IR, P: Parse<T>> Take<T, P> {
 impl<T: IR, P: Parse<T>> Parse<T> for Take<T, P> {
     type Production = P::Production;
 
-    fn advance(&mut self, irgen: &mut T, mut window: DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, mut window: &mut DecodeWindow) -> ParseResult<T> {
         if self.offset + window.available() >= self.limit {
             window = window.slice(self.limit - self.offset);
             self.offset = self.limit;

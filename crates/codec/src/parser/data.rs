@@ -1,6 +1,6 @@
 use uuasm_nodes::IR;
 
-use crate::{Advancement, IRError, Parse, ParseError};
+use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseErrorKind};
 
 use super::{any::AnyParser, expr::ExprParser};
 
@@ -17,15 +17,10 @@ pub enum DataParser<T: IR> {
 impl<T: IR> Parse<T> for DataParser<T> {
     type Production = T::Data;
 
-    fn advance(
-        &mut self,
-        _irgen: &mut T,
-        mut window: crate::window::DecodeWindow,
-    ) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, mut window: &mut DecodeWindow) -> crate::ParseResult<T> {
         match self {
             Self::Init => match window.take()? {
                 0x00 => Ok(Advancement::YieldTo(
-                    window.offset(),
                     AnyParser::Expr(Default::default()),
                     // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
                     // expr)
@@ -46,7 +41,6 @@ impl<T: IR> Parse<T> for DataParser<T> {
 
                 // this parses a bytevec and becomes a data::passive
                 0x01 => Ok(Advancement::YieldTo(
-                    window.offset(),
                     AnyParser::ByteVec(Default::default()),
                     // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
                     // expr)
@@ -68,7 +62,6 @@ impl<T: IR> Parse<T> for DataParser<T> {
                 // this parses a memory index, const expr, and bytevec; producing
                 // an active data segment
                 0x02 => Ok(Advancement::YieldTo(
-                    window.offset(),
                     AnyParser::LEBU32(Default::default()),
                     // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
                     // expr)
@@ -87,11 +80,10 @@ impl<T: IR> Parse<T> for DataParser<T> {
                     },
                 )),
 
-                unk => Err(ParseError::BadDataType(unk)),
+                unk => Err(ParseErrorKind::BadDataType(unk)),
             },
 
             Self::MemIdx(_) => Ok(Advancement::YieldTo(
-                window.offset(),
                 AnyParser::Expr(Default::default()),
                 // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
                 // expr)
@@ -118,7 +110,6 @@ impl<T: IR> Parse<T> for DataParser<T> {
 
             Self::Expr(_, _) => {
                 Ok(Advancement::YieldTo(
-                    window.offset(),
                     AnyParser::ByteVec(Default::default()),
                     // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
                     // expr)
@@ -145,14 +136,14 @@ impl<T: IR> Parse<T> for DataParser<T> {
                     },
                 ))
             }
-            Self::Ready(_) => Ok(Advancement::Ready(window.offset())),
+            Self::Ready(_) => Ok(Advancement::Ready),
         }
     }
 
     fn production(
         self,
         _irgen: &mut T,
-    ) -> Result<Self::Production, crate::ParseError<<T as IR>::Error>> {
+    ) -> Result<Self::Production, crate::ParseErrorKind<<T as IR>::Error>> {
         let Self::Ready(production) = self else {
             unsafe {
                 crate::cold();

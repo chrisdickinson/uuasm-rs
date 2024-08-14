@@ -9,7 +9,7 @@ use crate::{
         module::ModuleParser,
     },
     window::{AdvancementError, DecodeWindow},
-    Advancement, ExtractTarget, Parse, ParseError, ResumeFunc,
+    Advancement, ExtractTarget, Parse, ParseError, ParseErrorKind, ResumeFunc,
 };
 
 /*
@@ -29,8 +29,10 @@ fn noop_resume<T: IR>(
     _irgen: &mut T,
     _last_state: AnyParser<T>,
     _this_state: AnyParser<T>,
-) -> Result<AnyParser<T>, ParseError<T::Error>> {
-    Err(ParseError::InvalidState("this state should be unreachable"))
+) -> Result<AnyParser<T>, ParseErrorKind<T::Error>> {
+    Err(ParseErrorKind::InvalidState(
+        "this state should be unreachable",
+    ))
 }
 
 impl Default for Decoder<DefaultIRGenerator, <DefaultIRGenerator as IR>::Module> {
@@ -63,85 +65,93 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
         chunk: &'a [u8],
         eos: bool,
     ) -> Result<(Target, &'a [u8]), ParseError<T::Error>> {
-        let offset = 0;
-        let mut consumed = 0;
+        let mut window = DecodeWindow::new(chunk, 0, self.position, eos, None);
         loop {
             #[cfg(any())]
             eprintln!(
                 "{:x} {}",
-                offset + self.position,
+                window.position(),
                 self.state
                     .iter()
                     .map(|(parser, _, _)| format!("{parser:?}"))
                     .collect::<Vec<_>>()
                     .join("/")
             );
-
+            // TODO: start checking bounds again
             let (state, resume, bound) = self.state.last_mut().unwrap();
-            let window = DecodeWindow::new(&chunk[consumed..], 0, self.position, eos, *bound);
-            let offset = match state.advance(&mut self.irgen, window) {
-                Ok(Advancement::Ready(offset)) => {
+
+            match state.advance(&mut self.irgen, &mut window) {
+                Ok(Advancement::Ready) => {
                     let (_, _, _) = (state, resume, bound);
                     let (n_state, n_resume, _) = self.state.pop().unwrap();
                     let Some((receiver, last_resume, last_bound)) = self.state.pop() else {
                         cold();
-                        let output = Target::extract(n_state.production(&mut self.irgen)?)?;
-                        return Ok((output, &chunk[offset..]));
+
+                        let output = n_state
+                            .production(&mut self.irgen)
+                            .and_then(|xs| Target::extract(xs).map_err(Into::into))
+                            .map_err(|kind| ParseError {
+                                kind,
+                                position: window.position(),
+                            })?;
+
+                        return Ok((output, &chunk[window.offset()..]));
                     };
 
                     let resumed = match n_resume(&mut self.irgen, n_state, receiver) {
                         Ok(v) => v,
-                        Err(e) => {
+                        Err(kind) => {
                             self.state.push((
-                                AnyParser::Failed(e.clone()),
+                                AnyParser::Failed(kind.clone()),
                                 noop_resume as ResumeFunc<T>,
                                 None,
                             ));
-                            return Err(e);
+                            return Err(ParseError {
+                                kind,
+                                position: window.position(),
+                            });
                         }
                     };
 
                     self.state.push((resumed, last_resume, last_bound));
-                    offset
                 }
 
-                Ok(Advancement::YieldTo(new_offset, next_state, next_resume)) => {
+                Ok(Advancement::YieldTo(next_state, next_resume)) => {
                     if let Some(xs) = bound.as_mut() {
-                        *xs = xs.saturating_sub((new_offset - offset) as u32);
+                        *xs = xs.saturating_sub((window.position() - self.position) as u32);
                     }
                     let (_, _) = (state, resume);
                     let bound = *bound;
                     self.state.push((next_state, next_resume, bound));
-                    new_offset
                 }
 
-                Ok(Advancement::YieldToBounded(
-                    new_offset,
-                    next_bound,
-                    next_state,
-                    next_resume,
-                )) => {
+                Ok(Advancement::YieldToBounded(next_bound, next_state, next_resume)) => {
                     if let Some(xs) = bound.as_mut() {
-                        *xs = xs.saturating_sub((new_offset - offset) as u32);
+                        *xs = xs.saturating_sub((window.position() - self.position) as u32);
                         if next_bound > *xs {
-                            let e = ParseError::UnexpectedEOS;
+                            let kind = ParseErrorKind::UnexpectedEOS;
                             self.state.push((
-                                AnyParser::Failed(e.clone()),
+                                AnyParser::Failed(kind.clone()),
                                 noop_resume as ResumeFunc<T>,
                                 None,
                             ));
-                            return Err(e);
+                            return Err(ParseError {
+                                kind,
+                                position: window.position(),
+                            });
                         }
                     }
                     self.state.push((next_state, next_resume, Some(next_bound)));
-                    offset
                 }
 
-                Err(err @ ParseError::Advancement(AdvancementError::Incomplete(_))) => {
+                Err(err @ ParseErrorKind::Advancement(AdvancementError::Incomplete(_))) => {
                     if let Some(xs) = bound.as_mut() {
-                        *xs = xs.saturating_sub((chunk.len() - offset) as u32);
+                        *xs = xs.saturating_sub((chunk.len() - window.offset()) as u32);
                     }
-                    return Err(err);
+                    return Err(ParseError {
+                        kind: err,
+                        position: window.position(),
+                    });
                 }
 
                 Err(e) => {
@@ -150,11 +160,13 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
                         noop_resume as ResumeFunc<T>,
                         None,
                     ));
-                    return Err(e);
+                    return Err(ParseError {
+                        kind: e,
+                        position: window.position(),
+                    });
                 }
-            };
-            consumed += offset;
-            self.position += offset;
+            }
+            self.position = window.position();
         }
     }
 
@@ -164,7 +176,10 @@ impl<T: IR, Target: ExtractTarget<AnyProduction<T>>> Decoder<T, Target> {
     ) -> Result<Option<(Target, &'a [u8])>, ParseError<T::Error>> {
         match self.write_inner(chunk, false) {
             Ok(xs) => Ok(Some(xs)),
-            Err(ParseError::Advancement(AdvancementError::Incomplete(_))) => Ok(None),
+            Err(ParseError {
+                kind: ParseErrorKind::Advancement(AdvancementError::Incomplete(_)),
+                ..
+            }) => Ok(None),
             Err(e) => Err(e),
         }
     }

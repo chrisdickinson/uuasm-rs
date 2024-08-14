@@ -1,6 +1,8 @@
 use uuasm_nodes::IR;
 
-use crate::{window::DecodeWindow, ExtractError, ExtractTarget, Parse, ParseError, ParseResult};
+use crate::{
+    window::DecodeWindow, ExtractError, ExtractTarget, Parse, ParseErrorKind, ParseResult,
+};
 
 use super::{
     accumulator::Accumulator, block::BlockParser, block_ifelse::IfElseBlockParser,
@@ -8,11 +10,11 @@ use super::{
     elem::ElemParser, export::ExportParser, exportdesc::ExportDescParser, expr::ExprParser,
     func::FuncParser, func_idxs::FuncIdxParser, global::GlobalParser, global_idxs::GlobalIdxParser,
     globaltype::GlobalTypeParser, importdescs::ImportDescParser, imports::ImportParser,
-    instrarg_refnull::InstrArgRefNullParser, instrarg_table::InstrArgTableParser, leb::LEBParser,
-    limits::LimitsParser, local::LocalParser, mem_idxs::MemIdxParser, memtype::MemTypeParser,
-    module::ModuleParser, names::NameParser, repeated::Repeated, section::SectionParser,
-    table_idxs::TableIdxParser, tabletype::TableTypeParser, type_idxs::TypeIdxParser,
-    types::TypeParser,
+    instrarg_multibyte::InstrArgMultibyteParser, instrarg_refnull::InstrArgRefNullParser,
+    instrarg_table::InstrArgTableParser, leb::LEBParser, limits::LimitsParser, local::LocalParser,
+    mem_idxs::MemIdxParser, memtype::MemTypeParser, module::ModuleParser, names::NameParser,
+    repeated::Repeated, section::SectionParser, table_idxs::TableIdxParser,
+    tabletype::TableTypeParser, type_idxs::TypeIdxParser, types::TypeParser,
 };
 
 pub enum AnyParser<T: IR> {
@@ -22,10 +24,11 @@ pub enum AnyParser<T: IR> {
     LEBU64(LEBParser<u64>),
     RepeatedLEBU32(Repeated<T, LEBParser<u32>>),
     ByteVec(ByteVecParser),
+    ArgMultibyte(InstrArgMultibyteParser),
     ArgTable(InstrArgTableParser),
     ArgRefNull(InstrArgRefNullParser),
     Accumulate(Accumulator),
-    Failed(ParseError<T::Error>),
+    Failed(ParseErrorKind<T::Error>),
 
     IfElseBlock(IfElseBlockParser<T>),
     Block(BlockParser<T>),
@@ -87,25 +90,25 @@ macro_rules! repeated_impls {
             }
 
             impl<T: IR> TryFrom<AnyParser<T>> for Repeated<T, [< $id Parser >]<T>> {
-                type Error = ParseError<T::Error>;
+                type Error = ParseErrorKind<T::Error>;
 
                 fn try_from(value: AnyParser<T>) -> Result<Self, Self::Error> {
                     if let AnyParser::$section(v) = value {
                         Ok(v)
                     } else {
-                        Err(ParseError::InvalidState(concat!("cannot cast into ", stringify!($section))))
+                        Err(ParseErrorKind::InvalidState(concat!("cannot cast into ", stringify!($section))))
                     }
                 }
             }
 
             impl<T: IR> TryFrom<AnyParser<T>> for [< $id Parser >]<T> {
-                type Error = ParseError<T::Error>;
+                type Error = ParseErrorKind<T::Error>;
 
                 fn try_from(value: AnyParser<T>) -> Result<Self, Self::Error> {
                     if let AnyParser::$id(parser) = value {
                         Ok(parser)
                     } else {
-                        Err(ParseError::InvalidState(concat!("expected AnyParser::", stringify!($id))))
+                        Err(ParseErrorKind::InvalidState(concat!("expected AnyParser::", stringify!($id))))
                     }
                 }
             }
@@ -152,13 +155,13 @@ impl<T: IR> From<Repeated<T, LEBParser<u32>>> for AnyParser<T> {
 }
 
 impl<T: IR> TryFrom<AnyParser<T>> for Repeated<T, LEBParser<u32>> {
-    type Error = ParseError<T::Error>;
+    type Error = ParseErrorKind<T::Error>;
 
     fn try_from(value: AnyParser<T>) -> Result<Self, Self::Error> {
         if let AnyParser::RepeatedLEBU32(v) = value {
             Ok(v)
         } else {
-            Err(ParseError::InvalidState(concat!(
+            Err(ParseErrorKind::InvalidState(concat!(
                 "cannot cast into ",
                 stringify!($section)
             )))
@@ -167,13 +170,13 @@ impl<T: IR> TryFrom<AnyParser<T>> for Repeated<T, LEBParser<u32>> {
 }
 
 impl<T: IR> TryFrom<AnyParser<T>> for LEBParser<u32> {
-    type Error = ParseError<T::Error>;
+    type Error = ParseErrorKind<T::Error>;
 
     fn try_from(value: AnyParser<T>) -> Result<Self, Self::Error> {
         if let AnyParser::LEBU32(parser) = value {
             Ok(parser)
         } else {
-            Err(ParseError::InvalidState(concat!(
+            Err(ParseErrorKind::InvalidState(concat!(
                 "expected AnyParser::",
                 stringify!($id)
             )))
@@ -190,6 +193,7 @@ pub enum AnyProduction<T: IR> {
     ByteVec(<ByteVecParser as Parse<T>>::Production),
 
     RepeatedLEBU32(<Repeated<T, LEBParser<u32>> as Parse<T>>::Production),
+    ArgMultibyte(<InstrArgMultibyteParser as Parse<T>>::Production),
     ArgTable(<InstrArgTableParser as Parse<T>>::Production),
     ArgRefNull(<InstrArgRefNullParser as Parse<T>>::Production),
 
@@ -244,7 +248,7 @@ impl<T: IR> Parse<T> for AnyParser<T> {
     type Production = AnyProduction<T>;
 
     #[inline]
-    fn advance(&mut self, irgen: &mut T, window: DecodeWindow<'_>) -> ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow<'_>) -> ParseResult<T> {
         match self {
             AnyParser::Failed(e) => Err(e.clone()),
             AnyParser::LEBI32(p) => p.advance(irgen, window),
@@ -291,6 +295,7 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::IfElseBlock(p) => p.advance(irgen, window),
             AnyParser::Block(p) => p.advance(irgen, window),
             AnyParser::BlockType(p) => p.advance(irgen, window),
+            AnyParser::ArgMultibyte(p) => p.advance(irgen, window),
             AnyParser::ArgTable(p) => p.advance(irgen, window),
             AnyParser::ArgRefNull(p) => p.advance(irgen, window),
             AnyParser::ByteVec(p) => p.advance(irgen, window),
@@ -298,7 +303,7 @@ impl<T: IR> Parse<T> for AnyParser<T> {
         }
     }
 
-    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseError<T::Error>> {
+    fn production(self, irgen: &mut T) -> Result<Self::Production, ParseErrorKind<T::Error>> {
         Ok(match self {
             AnyParser::Failed(e) => return Err(e.clone()),
             AnyParser::LEBI32(p) => AnyProduction::LEBI32(p.production(irgen)?),
@@ -345,6 +350,7 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::IfElseBlock(p) => AnyProduction::IfElseBlock(p.production(irgen)?),
             AnyParser::Block(p) => AnyProduction::Block(p.production(irgen)?),
             AnyParser::BlockType(p) => AnyProduction::BlockType(p.production(irgen)?),
+            AnyParser::ArgMultibyte(p) => AnyProduction::ArgMultibyte(p.production(irgen)?),
             AnyParser::ArgTable(p) => AnyProduction::ArgTable(p.production(irgen)?),
             AnyParser::ArgRefNull(p) => AnyProduction::ArgRefNull(p.production(irgen)?),
             AnyParser::ByteVec(p) => AnyProduction::ByteVec(p.production(irgen)?),
@@ -361,6 +367,7 @@ impl<T: IR> std::fmt::Debug for AnyParser<T> {
             Self::LEBU32(_) => f.debug_tuple("LEBU32").finish(),
             Self::LEBU64(_) => f.debug_tuple("LEBU64").finish(),
             Self::RepeatedLEBU32(_) => f.debug_tuple("RepeatedLEBU32").finish(),
+            Self::ArgMultibyte(_) => f.debug_tuple("ArgMultibyte").finish(),
             Self::ArgTable(_) => f.debug_tuple("ArgTable").finish(),
             Self::ByteVec(_) => f.debug_tuple("ByteVec").finish(),
             Self::ArgRefNull(_) => f.debug_tuple("ArgRefNull").finish(),
