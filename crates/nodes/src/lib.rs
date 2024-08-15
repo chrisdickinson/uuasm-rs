@@ -1612,6 +1612,9 @@ pub enum DefaultIRGeneratorError {
 
     #[error("Invalid memory: multiple memories are not enabled")]
     MultimemoryDisabled,
+
+    #[error("unexpected end of custom section")]
+    IncompleteCustomSectionName,
 }
 
 #[derive(Default, Clone, Debug)]
@@ -1785,6 +1788,27 @@ impl IR for DefaultIRGenerator {
     }
 
     fn make_custom_section(&mut self, data: Box<[u8]>) -> Result<Self::Section, Self::Error> {
+        let mut offset = 0;
+        let mut shift = 0;
+        let mut repr = 0;
+        while {
+            let Some(next) = data.get(offset) else {
+                return Err(Self::Error::IncompleteCustomSectionName);
+            };
+
+            repr |= ((next & 0x7f) as u64) << shift;
+            offset += 1;
+            shift += 7;
+
+            next & 0x80 != 0
+        } {}
+
+        if repr as usize + offset > data.len() {
+            return Err(Self::Error::MultimemoryDisabled);
+        }
+
+        std::str::from_utf8(&data[offset..offset + repr as usize])?;
+
         Ok(SectionType::Custom(data))
     }
 

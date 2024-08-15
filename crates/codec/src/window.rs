@@ -4,7 +4,7 @@ use thiserror::Error;
 
 #[derive(Error, Debug, Clone, Copy)]
 pub enum AdvancementError {
-    #[error("incomplete stream: {0} bytes at position {1}")]
+    #[error("unexpected end of stream: {0} bytes at position {1}")]
     Expected(usize, usize),
     #[error("unexpected end of stream: expected {0} bytes")]
     Incomplete(usize),

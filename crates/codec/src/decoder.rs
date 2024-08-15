@@ -14,7 +14,7 @@ use crate::{
 
 /*
  * A parser has a number of states, held in a stack. The last item in the stack is the current
- * parser. The parser can be written to, or flushed. When new bytes come in, the topmost stack
+ * parser. The parser can be written to or flushed. When new bytes come in, the topmost stack
  * item processes them. If it is complete, it returns control to the next stack state along with
  * the production. The stack state can `take(N)`, `peek(N)`, `skip(N)`.
  */
@@ -195,27 +195,11 @@ mod test {
     use super::*;
 
     #[test]
-    fn parser2_works_basically() -> anyhow::Result<()> {
-        let mut parser = Decoder::default();
-
-        let preamble = b"\x00asm\x01\0\0\0";
-        let custom = b"\x00\x04abcd";
-        let types = b"\x01\x07\x02\x60\x02\x7f\x7f\x01\x7f\x60\0\x01\x7f";
-
-        parser.write(preamble);
-        parser.write(custom);
-        parser.write(types);
-        dbg!(parser.flush());
-
-        Ok(())
-    }
-
-    #[test]
     fn parser2_works_mostly() -> anyhow::Result<()> {
         let mut parser = Decoder::default();
 
-        dbg!(parser.write(include_bytes!("../test.wasm")));
-        dbg!(parser.flush());
+        let _ = dbg!(parser.write(include_bytes!("../test.wasm")));
+        let _ = dbg!(parser.flush());
         Ok(())
     }
 
@@ -225,8 +209,8 @@ mod test {
     fn parser2_works_fr_fr() -> anyhow::Result<()> {
         let mut parser = Decoder::default();
 
-        dbg!(parser.write(include_bytes!("../../rt/src/testsuite/func.0.wasm")));
-        dbg!(parser.flush());
+        let _ = dbg!(parser.write(include_bytes!("../../rt/src/testsuite/func.0.wasm")));
+        let _ = dbg!(parser.flush());
         Ok(())
     }
 }

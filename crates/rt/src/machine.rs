@@ -164,6 +164,7 @@ pub(crate) struct Machine {
     globals: Vec<Box<[GlobalInst]>>,
     memories: Vec<Box<[MemInst]>>,
     tables: Vec<Box<[TableInst]>>,
+    starts: Vec<Option<FuncIdx>>,
 
     resources: Arc<Mutex<Resources>>,
 
@@ -237,6 +238,7 @@ impl Machine {
             code_section,
             data_section,
             export_section,
+            start_section,
             ..
         } = guest.into_inner();
 
@@ -251,6 +253,7 @@ impl Machine {
             element_section,
             code_section,
             data_section,
+            start_section,
         ) = (
             type_section.map(|xs| xs.inner).unwrap_or_default(),
             function_section.map(|xs| xs.inner).unwrap_or_default(),
@@ -262,6 +265,7 @@ impl Machine {
             element_section.map(|xs| xs.inner).unwrap_or_default(),
             code_section.map(|xs| xs.inner).unwrap_or_default(),
             data_section.map(|xs| xs.inner).unwrap_or_default(),
+            start_section.map(|xs| xs.inner),
         );
 
         let (import_func_count, import_mem_count, import_table_count, import_global_count) =
@@ -343,6 +347,7 @@ impl Machine {
                 }),
         );
 
+        self.starts.push(start_section);
         self.imports.push(import_section);
         self.exports.push(export_section);
         self.code.push(code_section);
@@ -383,6 +388,7 @@ impl Machine {
             memories: Vec::with_capacity(guests.len()),
             tables: Vec::with_capacity(guests.len()),
             types: Vec::with_capacity(guests.len()),
+            starts: Vec::with_capacity(guests.len()),
             resources,
             externs: exports,
             modname_to_guest_idx,
@@ -469,11 +475,7 @@ impl Machine {
         self.types.get(guest_idx)?.get(type_idx.0 as usize)
     }
 
-    pub(crate) fn initialize(
-        &mut self,
-        at_idx: usize,
-        resources: &mut Resources,
-    ) -> anyhow::Result<()> {
+    pub(crate) fn initialize(&mut self, at_idx: usize) -> anyhow::Result<()> {
         if self.initialized.contains(&at_idx) {
             return Ok(());
         }
@@ -490,9 +492,14 @@ impl Machine {
             initializers.extend(guest_indices.iter().copied());
         }
         for guest_idx in initializers {
-            self.initialize(guest_idx, resources)?;
+            self.initialize(guest_idx)?;
         }
 
+        let mut resource_lock = self
+            .resources
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("failed to lock resources"))?;
+        let mut resources = resource_lock.deref_mut();
         // loop over the imports of the current idx. call initialize on them, then init ourselves.
 
         for global in self.globals[at_idx].iter() {
@@ -568,7 +575,13 @@ impl Machine {
                 table[idx + offset] = *xs;
             }
         }
+
+        drop(resource_lock);
+
         // TODO: do we have a start section? an initialize export? call them.
+        if let Some(start_idx) = self.starts[at_idx] {
+            self.call_funcidx(&[at_idx], (at_idx, start_idx), &[])?;
+        }
 
         Ok(())
     }
@@ -665,12 +678,6 @@ impl Machine {
     }
 
     pub(crate) fn init(&mut self, modname: &str) -> anyhow::Result<()> {
-        let arc_resources = self.resources.clone();
-        let mut resource_lock = arc_resources
-            .try_lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock resources"))?;
-        let resources = resource_lock.deref_mut();
-
         let modname_idx = self
             .internmap
             .get(modname)
@@ -683,7 +690,7 @@ impl Machine {
             .unwrap_or_default();
 
         for module_idx in mod_indices {
-            self.initialize(module_idx, resources)?;
+            self.initialize(module_idx)?;
         }
 
         Ok(())
@@ -695,11 +702,10 @@ impl Machine {
         funcname: &str,
         args: &[Value],
     ) -> anyhow::Result<Vec<Value>> {
-        let arc_resources = self.resources.clone();
-        let mut resource_lock = arc_resources
-            .try_lock()
-            .map_err(|_| anyhow::anyhow!("failed to lock resources"))?;
-        let mut resources = resource_lock.deref_mut();
+        let funcname_idx = self
+            .internmap
+            .get(funcname)
+            .ok_or_else(|| anyhow::anyhow!("no such export {funcname}"))?;
 
         let modname_idx = self
             .internmap
@@ -712,15 +718,6 @@ impl Machine {
             .map(|xs| xs.iter().copied().collect::<Vec<_>>())
             .unwrap_or_default();
 
-        for module_idx in mod_indices {
-            self.initialize(module_idx, resources)?;
-        }
-
-        let funcname_idx = self
-            .internmap
-            .get(funcname)
-            .ok_or_else(|| anyhow::anyhow!("no such export {funcname}"))?;
-
         let Extern::Func(module_idx, func_idx) = self
             .externs
             .get(&ExternKey(modname_idx, funcname_idx))
@@ -729,8 +726,28 @@ impl Machine {
             anyhow::bail!("export {funcname} is not a function");
         };
 
+        self.call_funcidx(mod_indices.as_slice(), (*module_idx, *func_idx), args)
+    }
+
+    fn call_funcidx(
+        &mut self,
+        module_indices: &[usize],
+        target: (usize, FuncIdx),
+        args: &[Value],
+    ) -> anyhow::Result<Vec<Value>> {
+        let (module_idx, func_idx) = target;
+        for module_idx in module_indices {
+            self.initialize(*module_idx)?;
+        }
+
+        let mut resource_lock = self
+            .resources
+            .try_lock()
+            .map_err(|_| anyhow::anyhow!("failed to lock resources"))?;
+        let mut resources = resource_lock.deref_mut();
+
         let (module_idx, function) = self
-            .function(*module_idx, *func_idx)
+            .function(module_idx, func_idx)
             .ok_or_else(|| anyhow::anyhow!("missing final module"))?;
 
         let typedef = self
@@ -739,19 +756,11 @@ impl Machine {
 
         let param_types = &*typedef.0 .0;
         if args.len() < param_types.len() {
-            anyhow::bail!(
-                "not enough arguments to call {}; expected {} args",
-                funcname,
-                param_types.len()
-            );
+            anyhow::bail!("not enough arguments; expected {} args", param_types.len());
         }
 
         if args.len() > param_types.len() {
-            anyhow::bail!(
-                "too many arguments to call {}; expected {} args",
-                funcname,
-                param_types.len()
-            );
+            anyhow::bail!("too many arguments; expected {} args", param_types.len());
         }
 
         for (idx, (param_type, value)) in param_types.iter().zip(args.iter()).enumerate() {
@@ -3393,7 +3402,8 @@ impl Machine {
                     drop(resource_lock);
                     (external_function.func)(args.as_slice(), &mut value_stack[result_base..])?;
 
-                    resource_lock = arc_resources
+                    resource_lock = self
+                        .resources
                         .try_lock()
                         .map_err(|_| anyhow::anyhow!("failed to lock resources"))?;
                     resources = resource_lock.deref_mut();

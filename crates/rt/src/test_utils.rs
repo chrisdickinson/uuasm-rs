@@ -151,7 +151,7 @@ pub(crate) fn assert_invalid(
     match parse(DefaultIRGenerator::new(), bytes) {
         Ok(result) => {
             anyhow::bail!(
-                r#"expected module validation to fail but got success; {result:?} ({location})"#
+                r#"expected module validation to fail with "{text}" but got success; {result:?} ({location})"#
             )
         }
         Err(e) => {
@@ -174,13 +174,13 @@ pub(crate) fn assert_malformed(
     match parse(DefaultIRGenerator::new(), bytes) {
         Ok(result) => {
             anyhow::bail!(
-                r#"expected module instantiation to fail but got success; {result:?} ({location})"#
+                r#"expected module instantiation to fail with "{text}" but got success; {result:?} ({location})"#
             )
         }
         Err(e) => {
             if !e.to_string().contains(text) {
                 anyhow::bail!(
-                    r#"expected module instantiation to fail with "{text}" but got "{e:?}" ({location})"#
+                    r#"expected module instantiation to fail with "{text}" but got "{e}" ({location})"#
                 )
             }
         }
