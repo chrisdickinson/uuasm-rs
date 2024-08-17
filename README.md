@@ -39,6 +39,15 @@ NaN canonicalization tests (and some of the hairier `ref.func` tests.)
 I work on this project for about half an hour to an hour most nights; progress
 is steady but by no means rapid.
 
+Anyway, since I'm going to try to start working on this in the open, it's time
+to do some spring cleaning:
+
+- I should delete the old `src/` directory. I recently split up the parser, IR,
+  and runtime sections into crates.
+- Rename the `nodes` crate to `ir`, because A) it's short and B) it's more descriptive
+- Move all of the `.wat` and `.wasm` that's committed to the repo into a `corpus` directory.
+- Consider moving the tests into their own crate
+
 ### 2024 June 25
 
 Still working on the items from yesterday (still! omg!)
