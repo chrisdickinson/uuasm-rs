@@ -1,2 +1,3 @@
 src/testsuite
 crates/rt/src/testsuite
+*.wasm

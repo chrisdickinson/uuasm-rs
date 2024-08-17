@@ -34,7 +34,9 @@ setup_tests:
 
 test:
   #!/bin/bash
-  wasm-tools parse example.wat | wasm-tools strip -a -o example.wasm
+  for file in $(find corpus -name '*.wat'); do
+    wasm-tools parse $file -o ${file%.wat}.wasm
+  done
   cargo test
 
 lint:

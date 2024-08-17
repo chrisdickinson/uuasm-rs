@@ -272,7 +272,7 @@ mod test {
 
     #[test]
     fn test_create_store() {
-        let bytes = include_bytes!("../../../example2.wasm");
+        let bytes = include_bytes!("../../../corpus/example2.wasm");
 
         let _wasm = parse(IRGen::new(), bytes).unwrap();
 

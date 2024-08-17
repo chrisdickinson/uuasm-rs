@@ -152,7 +152,7 @@ mod test {
         let mut imports = Imports::new();
         let wasm = parse(
             DefaultIRGenerator::new(),
-            include_bytes!("../../../example.wasm"),
+            include_bytes!("../../../corpus/example.wasm"),
         )?;
 
         imports.link_module("env", wasm);
@@ -172,7 +172,7 @@ mod test {
         let mut imports = Imports::new();
         let wasm = parse(
             DefaultIRGenerator::new(),
-            include_bytes!("../../../example3.wasm"),
+            include_bytes!("../../../corpus/example3.wasm"),
         )?;
 
         imports.link_hostfn(

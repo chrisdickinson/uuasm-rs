@@ -1454,7 +1454,7 @@ mod test {
 
     #[test]
     fn test_read_wasm() {
-        let bytes = include_bytes!("../../../example.wasm");
+        let bytes = include_bytes!("../../../corpus/example.wasm");
 
         let (input, wasm) =
             Module::from_wasm_bytes::<nom::error::VerboseError<Span>>(Span::new(bytes)).unwrap();

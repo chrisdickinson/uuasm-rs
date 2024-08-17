@@ -19,7 +19,7 @@ impl TestState {
             "spectest",
             parse(
                 DefaultIRGenerator::new(),
-                include_bytes!("../../../spectest.wasm"),
+                include_bytes!("../../../corpus/spectest.wasm"),
             )
             .expect("could not parse spectest"),
         );
