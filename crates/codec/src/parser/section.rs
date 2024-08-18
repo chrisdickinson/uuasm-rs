@@ -16,7 +16,7 @@ pub enum SectionParser<T: IR> {
 impl<T: IR> Parse<T> for SectionParser<T> {
     type Production = T::Section;
 
-    fn advance(&mut self, irgen: &mut T, mut window: &mut DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
         loop {
             match self {
                 SectionParser::ParseType => {

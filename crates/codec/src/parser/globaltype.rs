@@ -13,7 +13,7 @@ pub enum GlobalTypeParser<T: IR> {
 impl<T: IR> Parse<T> for GlobalTypeParser<T> {
     type Production = T::GlobalType;
 
-    fn advance(&mut self, irgen: &mut T, mut window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         loop {
             *self = match self {
                 GlobalTypeParser::Init => {

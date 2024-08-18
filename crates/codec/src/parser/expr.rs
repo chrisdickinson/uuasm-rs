@@ -43,7 +43,7 @@ impl<T: IR> Default for ExprParser<T> {
 impl<T: IR> Parse<T> for ExprParser<T> {
     type Production = T::Expr;
 
-    fn advance(&mut self, irgen: &mut T, mut window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         loop {
             let next = window.peek()?;
             #[allow(clippy::manual_range_patterns)]

@@ -499,7 +499,7 @@ impl Machine {
             .resources
             .try_lock()
             .map_err(|_| anyhow::anyhow!("failed to lock resources"))?;
-        let mut resources = resource_lock.deref_mut();
+        let resources = resource_lock.deref_mut();
         // loop over the imports of the current idx. call initialize on them, then init ourselves.
 
         for global in self.globals[at_idx].iter() {

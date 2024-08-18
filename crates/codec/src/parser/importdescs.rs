@@ -18,7 +18,7 @@ pub enum ImportDescParser<T: IR> {
 impl<T: IR> Parse<T> for ImportDescParser<T> {
     type Production = <T as IR>::ImportDesc;
 
-    fn advance(&mut self, _irgen: &mut T, mut window: &mut DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
         match self {
             Self::Init => {
                 let kind = window.take()?;

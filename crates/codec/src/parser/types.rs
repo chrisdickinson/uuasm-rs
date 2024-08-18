@@ -17,7 +17,7 @@ pub enum TypeParser<T: IR> {
 impl<T: IR> Parse<T> for TypeParser<T> {
     type Production = <T as IR>::Type;
 
-    fn advance(&mut self, _irgen: &mut T, mut window: &mut DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
         match self {
             TypeParser::Init => {
                 let tag = window.take()?;

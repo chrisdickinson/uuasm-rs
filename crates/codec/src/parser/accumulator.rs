@@ -13,7 +13,7 @@ impl Accumulator {
 impl<T: IR> Parse<T> for Accumulator {
     type Production = Box<[u8]>;
 
-    fn advance(&mut self, _irgen: &mut T, mut window: &mut DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
         let into = &mut self.1[self.0..];
         if !into.is_empty() {
             self.0 += window.take_n(into)?;

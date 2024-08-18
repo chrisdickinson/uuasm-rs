@@ -17,7 +17,7 @@ pub enum LimitsParser {
 impl<T: IR> Parse<T> for LimitsParser {
     type Production = T::Limits;
 
-    fn advance(&mut self, _irgen: &mut T, mut window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         match self {
             Self::Init => {
                 *self = match window.take()? {

@@ -17,7 +17,7 @@ pub enum LocalParser<T: IR> {
 impl<T: IR> Parse<T> for LocalParser<T> {
     type Production = T::Local;
 
-    fn advance(&mut self, irgen: &mut T, mut window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         match self {
             LocalParser::Init => Ok(Advancement::YieldTo(
                 AnyParser::LEBU32(Default::default()),

@@ -64,7 +64,7 @@ pub enum ElemParser<T: IR> {
 impl<T: IR> Parse<T> for ElemParser<T> {
     type Production = T::Elem;
 
-    fn advance(&mut self, irgen: &mut T, mut window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         'restart: loop {
             return Ok(match self {
                 Self::Init => {

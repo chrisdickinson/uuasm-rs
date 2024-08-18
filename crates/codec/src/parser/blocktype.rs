@@ -15,7 +15,7 @@ pub enum BlockTypeParser<T: IR> {
 impl<T: IR> Parse<T> for BlockTypeParser<T> {
     type Production = T::BlockType;
 
-    fn advance(&mut self, irgen: &mut T, mut window: &mut DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
         if matches!(self, Self::Ready(_)) {
             return Ok(Advancement::Ready);
         }

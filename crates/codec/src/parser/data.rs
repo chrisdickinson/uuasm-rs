@@ -2,7 +2,7 @@ use uuasm_ir::IR;
 
 use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseErrorKind};
 
-use super::{any::AnyParser, expr::ExprParser};
+use super::any::AnyParser;
 
 #[derive(Default)]
 pub enum DataParser<T: IR> {
@@ -17,7 +17,7 @@ pub enum DataParser<T: IR> {
 impl<T: IR> Parse<T> for DataParser<T> {
     type Production = T::Data;
 
-    fn advance(&mut self, _irgen: &mut T, mut window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         match self {
             Self::Init => match window.take()? {
                 0x00 => Ok(Advancement::YieldTo(

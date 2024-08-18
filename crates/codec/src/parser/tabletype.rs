@@ -15,7 +15,7 @@ pub enum TableTypeParser<T: IR> {
 impl<T: IR> Parse<T> for TableTypeParser<T> {
     type Production = T::TableType;
 
-    fn advance(&mut self, _irgen: &mut T, mut window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         loop {
             *self = match self {
                 TableTypeParser::Init => {
