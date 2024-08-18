@@ -1,4 +1,4 @@
-use uuasm_nodes::FuncIdx;
+use uuasm_ir::FuncIdx;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Value {

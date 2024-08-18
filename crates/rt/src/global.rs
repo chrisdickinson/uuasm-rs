@@ -1,4 +1,4 @@
-use uuasm_nodes::{GlobalIdx, GlobalType, Import, Instr, Mutability, ValType};
+use uuasm_ir::{GlobalIdx, GlobalType, Import, Instr, Mutability, ValType};
 
 use super::{
     imports::{Extern, GuestIndex, LookupImport},

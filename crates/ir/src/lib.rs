@@ -1,5 +1,9 @@
 #![allow(dead_code)]
-use std::{collections::HashSet, error::Error, fmt::Debug};
+use std::{
+    collections::HashSet,
+    error::Error,
+    fmt::{Debug, Write},
+};
 
 use thiserror::Error;
 
@@ -34,6 +38,22 @@ pub enum ValType {
     NumType(NumType),
     VecType(VecType),
     RefType(RefType),
+    Never,
+}
+
+impl std::fmt::Display for ValType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ValType::NumType(NumType::I32) => f.write_str("i32"),
+            ValType::NumType(NumType::F32) => f.write_str("f32"),
+            ValType::NumType(NumType::I64) => f.write_str("i64"),
+            ValType::NumType(NumType::F64) => f.write_str("f64"),
+            ValType::VecType(VecType::V128) => f.write_str("v128"),
+            ValType::RefType(RefType::FuncRef) => f.write_str("funcref"),
+            ValType::RefType(RefType::ExternRef) => f.write_str("externref"),
+            ValType::Never => f.write_str("!"),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Clone, Default)]
@@ -1615,11 +1635,255 @@ pub enum DefaultIRGeneratorError {
 
     #[error("unexpected end of custom section")]
     IncompleteCustomSectionName,
+
+    #[error("type mismatch: expected {0}, got {1}")]
+    TypeMismatch(ValType, ValType),
 }
 
 #[derive(Default, Clone, Debug)]
 pub struct Features {
     enable_multiple_memories: bool,
+}
+
+#[derive(Default, Debug, Clone)]
+struct TypeTracer {
+    frames: Vec<Vec<ValType>>,
+}
+
+impl TypeTracer {
+    fn trace(&mut self, instr: Instr, types: &[Type]) -> Result<Instr, DefaultIRGeneratorError> {
+        match instr {
+            Instr::CallIntrinsic(_) => todo!(),
+            Instr::Unreachable => {
+                if let Some(xs) = self.frames.last_mut() {
+                    xs.push(ValType::Never);
+                }
+            }
+            Instr::Nop => {}
+            Instr::Loop(block_type, _) | Instr::Block(block_type, _) => {
+                let (params, results) = match block_type {
+                    BlockType::TypeIndex(type_idx) => (
+                        &types[type_idx.0 as usize].0 .0.iter().rev().copied()
+                            as &dyn Iterator<Item = ValType>,
+                        &types[type_idx.0 as usize].1 .0.iter().rev().copied()
+                            as &dyn Iterator<Item = ValType>,
+                    ),
+                    BlockType::Empty => (
+                        &std::iter::empty() as &dyn Iterator<Item = ValType>,
+                        &std::iter::empty() as &dyn Iterator<Item = ValType>,
+                    ),
+                    BlockType::Val(val_type) => (
+                        &std::iter::empty() as &dyn Iterator<Item = ValType>,
+                        &std::iter::once(val_type) as &dyn Iterator<Item = ValType>,
+                    ),
+                };
+
+                // mmph
+            }
+            Instr::If(_, _) => todo!(),
+            Instr::IfElse(_, _, _) => todo!(),
+            Instr::Br(_) => todo!(),
+            Instr::BrIf(_) => todo!(),
+            Instr::BrTable(_, _) => todo!(),
+            Instr::Return => todo!(),
+            Instr::Call(_) => todo!(),
+            Instr::CallIndirect(_, _) => todo!(),
+            Instr::RefNull(_) => todo!(),
+            Instr::RefIsNull => todo!(),
+            Instr::RefFunc(_) => todo!(),
+            Instr::Drop => todo!(),
+            Instr::SelectEmpty => todo!(),
+            Instr::Select(_) => todo!(),
+            Instr::LocalGet(_) => todo!(),
+            Instr::LocalSet(_) => todo!(),
+            Instr::LocalTee(_) => todo!(),
+            Instr::GlobalGet(_) => todo!(),
+            Instr::GlobalSet(_) => todo!(),
+            Instr::TableGet(_) => todo!(),
+            Instr::TableSet(_) => todo!(),
+            Instr::TableInit(_, _) => todo!(),
+            Instr::ElemDrop(_) => todo!(),
+            Instr::TableCopy(_, _) => todo!(),
+            Instr::TableGrow(_) => todo!(),
+            Instr::TableSize(_) => todo!(),
+            Instr::TableFill(_) => todo!(),
+            Instr::I32Load(_) => todo!(),
+            Instr::I64Load(_) => todo!(),
+            Instr::F32Load(_) => todo!(),
+            Instr::F64Load(_) => todo!(),
+            Instr::I32Load8S(_) => todo!(),
+            Instr::I32Load8U(_) => todo!(),
+            Instr::I32Load16S(_) => todo!(),
+            Instr::I32Load16U(_) => todo!(),
+            Instr::I64Load8S(_) => todo!(),
+            Instr::I64Load8U(_) => todo!(),
+            Instr::I64Load16S(_) => todo!(),
+            Instr::I64Load16U(_) => todo!(),
+            Instr::I64Load32S(_) => todo!(),
+            Instr::I64Load32U(_) => todo!(),
+            Instr::I32Store(_) => todo!(),
+            Instr::I64Store(_) => todo!(),
+            Instr::F32Store(_) => todo!(),
+            Instr::F64Store(_) => todo!(),
+            Instr::I32Store8(_) => todo!(),
+            Instr::I32Store16(_) => todo!(),
+            Instr::I64Store8(_) => todo!(),
+            Instr::I64Store16(_) => todo!(),
+            Instr::I64Store32(_) => todo!(),
+            Instr::MemorySize(_) => todo!(),
+            Instr::MemoryGrow(_) => todo!(),
+            Instr::MemoryInit(_, _) => todo!(),
+            Instr::DataDrop(_) => todo!(),
+            Instr::MemoryCopy(_, _) => todo!(),
+            Instr::MemoryFill(_) => todo!(),
+            Instr::I32Const(_) => todo!(),
+            Instr::I64Const(_) => todo!(),
+            Instr::F32Const(_) => todo!(),
+            Instr::F64Const(_) => todo!(),
+            Instr::I32Eqz => todo!(),
+            Instr::I32Eq => todo!(),
+            Instr::I32Ne => todo!(),
+            Instr::I32LtS => todo!(),
+            Instr::I32LtU => todo!(),
+            Instr::I32GtS => todo!(),
+            Instr::I32GtU => todo!(),
+            Instr::I32LeS => todo!(),
+            Instr::I32LeU => todo!(),
+            Instr::I32GeS => todo!(),
+            Instr::I32GeU => todo!(),
+            Instr::I64Eqz => todo!(),
+            Instr::I64Eq => todo!(),
+            Instr::I64Ne => todo!(),
+            Instr::I64LtS => todo!(),
+            Instr::I64LtU => todo!(),
+            Instr::I64GtS => todo!(),
+            Instr::I64GtU => todo!(),
+            Instr::I64LeS => todo!(),
+            Instr::I64LeU => todo!(),
+            Instr::I64GeS => todo!(),
+            Instr::I64GeU => todo!(),
+            Instr::F32Eq => todo!(),
+            Instr::F32Ne => todo!(),
+            Instr::F32Lt => todo!(),
+            Instr::F32Gt => todo!(),
+            Instr::F32Le => todo!(),
+            Instr::F32Ge => todo!(),
+            Instr::F64Eq => todo!(),
+            Instr::F64Ne => todo!(),
+            Instr::F64Lt => todo!(),
+            Instr::F64Gt => todo!(),
+            Instr::F64Le => todo!(),
+            Instr::F64Ge => todo!(),
+            Instr::I32Clz => todo!(),
+            Instr::I32Ctz => todo!(),
+            Instr::I32Popcnt => todo!(),
+            Instr::I32Add => todo!(),
+            Instr::I32Sub => todo!(),
+            Instr::I32Mul => todo!(),
+            Instr::I32DivS => todo!(),
+            Instr::I32DivU => todo!(),
+            Instr::I32RemS => todo!(),
+            Instr::I32RemU => todo!(),
+            Instr::I32And => todo!(),
+            Instr::I32Ior => todo!(),
+            Instr::I32Xor => todo!(),
+            Instr::I32Shl => todo!(),
+            Instr::I32ShrS => todo!(),
+            Instr::I32ShrU => todo!(),
+            Instr::I32Rol => todo!(),
+            Instr::I32Ror => todo!(),
+            Instr::I64Clz => todo!(),
+            Instr::I64Ctz => todo!(),
+            Instr::I64Popcnt => todo!(),
+            Instr::I64Add => todo!(),
+            Instr::I64Sub => todo!(),
+            Instr::I64Mul => todo!(),
+            Instr::I64DivS => todo!(),
+            Instr::I64DivU => todo!(),
+            Instr::I64RemS => todo!(),
+            Instr::I64RemU => todo!(),
+            Instr::I64And => todo!(),
+            Instr::I64Ior => todo!(),
+            Instr::I64Xor => todo!(),
+            Instr::I64Shl => todo!(),
+            Instr::I64ShrS => todo!(),
+            Instr::I64ShrU => todo!(),
+            Instr::I64Rol => todo!(),
+            Instr::I64Ror => todo!(),
+            Instr::F32Abs => todo!(),
+            Instr::F32Neg => todo!(),
+            Instr::F32Ceil => todo!(),
+            Instr::F32Floor => todo!(),
+            Instr::F32Trunc => todo!(),
+            Instr::F32NearestInt => todo!(),
+            Instr::F32Sqrt => todo!(),
+            Instr::F32Add => todo!(),
+            Instr::F32Sub => todo!(),
+            Instr::F32Mul => todo!(),
+            Instr::F32Div => todo!(),
+            Instr::F32Min => todo!(),
+            Instr::F32Max => todo!(),
+            Instr::F32CopySign => todo!(),
+            Instr::F64Abs => todo!(),
+            Instr::F64Neg => todo!(),
+            Instr::F64Ceil => todo!(),
+            Instr::F64Floor => todo!(),
+            Instr::F64Trunc => todo!(),
+            Instr::F64NearestInt => todo!(),
+            Instr::F64Sqrt => todo!(),
+            Instr::F64Add => todo!(),
+            Instr::F64Sub => todo!(),
+            Instr::F64Mul => todo!(),
+            Instr::F64Div => todo!(),
+            Instr::F64Min => todo!(),
+            Instr::F64Max => todo!(),
+            Instr::F64CopySign => todo!(),
+            Instr::I32ConvertI64 => todo!(),
+            Instr::I32SConvertF32 => todo!(),
+            Instr::I32UConvertF32 => todo!(),
+            Instr::I32SConvertF64 => todo!(),
+            Instr::I32UConvertF64 => todo!(),
+            Instr::I64SConvertI32 => todo!(),
+            Instr::I64UConvertI32 => todo!(),
+            Instr::I64SConvertF32 => todo!(),
+            Instr::I64UConvertF32 => todo!(),
+            Instr::I64SConvertF64 => todo!(),
+            Instr::I64UConvertF64 => todo!(),
+            Instr::F32SConvertI32 => todo!(),
+            Instr::F32UConvertI32 => todo!(),
+            Instr::F32SConvertI64 => todo!(),
+            Instr::F32UConvertI64 => todo!(),
+            Instr::F32ConvertF64 => todo!(),
+            Instr::F64SConvertI32 => todo!(),
+            Instr::F64UConvertI32 => todo!(),
+            Instr::F64SConvertI64 => todo!(),
+            Instr::F64UConvertI64 => todo!(),
+            Instr::F64ConvertF32 => todo!(),
+            Instr::I32SConvertSatF32 => todo!(),
+            Instr::I32UConvertSatF32 => todo!(),
+            Instr::I32SConvertSatF64 => todo!(),
+            Instr::I32UConvertSatF64 => todo!(),
+            Instr::I64SConvertSatF32 => todo!(),
+            Instr::I64UConvertSatF32 => todo!(),
+            Instr::I64SConvertSatF64 => todo!(),
+            Instr::I64UConvertSatF64 => todo!(),
+            Instr::I32ReinterpretF32 => todo!(),
+            Instr::I64ReinterpretF64 => todo!(),
+            Instr::F32ReinterpretI32 => todo!(),
+            Instr::F64ReinterpretI64 => todo!(),
+
+            // unary accept i32 produce i32
+            Instr::I32SExtendI8 => todo!(),
+            Instr::I32SExtendI16 => todo!(),
+
+            // unary accept i64 produce i64
+            Instr::I64SExtendI8 => todo!(),
+            Instr::I64SExtendI16 => todo!(),
+            Instr::I64SExtendI32 => todo!(),
+        }
+
+        Ok(instr)
+    }
 }
 
 #[derive(Default, Clone, Debug)]
@@ -1635,6 +1899,8 @@ pub struct DefaultIRGenerator {
     last_section_discrim: u32,
 
     next_func_idx: u32,
+
+    type_tracer: TypeTracer,
 
     types: Option<Box<[Type]>>,
     func_types: Option<Box<[TypeIdx]>>,

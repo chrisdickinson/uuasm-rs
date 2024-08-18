@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use uuasm_nodes::{
+use uuasm_ir::{
     Code, ExportDesc, Expr, Func, FuncIdx, GlobalIdx, Import, Instr, MemIdx, Module, ModuleBuilder,
     TableIdx, Type, TypeIdx,
 };
@@ -143,7 +143,7 @@ mod test {
 
     use crate::Value;
     use uuasm_codec::parse;
-    use uuasm_nodes::{DefaultIRGenerator, NumType, ResultType, ValType};
+    use uuasm_ir::{DefaultIRGenerator, NumType, ResultType, ValType};
 
     use super::*;
 

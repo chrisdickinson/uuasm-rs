@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::{imports::Imports, machine::Machine, value::Value};
 use uuasm_codec::parse;
-use uuasm_nodes::DefaultIRGenerator;
+use uuasm_ir::DefaultIRGenerator;
 
 pub(crate) struct TestState {
     machine: Machine,

@@ -1,11 +1,11 @@
 [workspace]
-members = ["crates/codec", "crates/nodes", "crates/rt"]
+members = ["crates/codec", "crates/ir", "crates/rt"]
 resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [workspace.dependencies]
-uuasm-nodes = { version = "0.1.0", path = "crates/nodes" }
+uuasm-ir = { version = "0.1.0", path = "crates/ir" }
 uuasm-codec = { version = "0.1.0", path = "crates/codec" }
 anyhow = "1.0.75"
 thiserror = "1.0.61"

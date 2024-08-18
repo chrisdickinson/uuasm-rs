@@ -1,4 +1,4 @@
-use uuasm_nodes::IR;
+use uuasm_ir::IR;
 
 use crate::{
     parser::instrarg_multibyte::InstrArgMultibyteParser, window::DecodeWindow, Advancement,

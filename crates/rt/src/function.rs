@@ -1,4 +1,4 @@
-use uuasm_nodes::{CodeIdx, FuncIdx, Import, TypeIdx};
+use uuasm_ir::{CodeIdx, FuncIdx, Import, TypeIdx};
 
 use super::imports::{Extern, GuestIndex, LookupImport};
 

@@ -1,6 +1,6 @@
 use std::mem;
 
-use uuasm_nodes::IR;
+use uuasm_ir::IR;
 
 use crate::{window::DecodeWindow, Advancement, IRError, Parse};
 

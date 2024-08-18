@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use std::marker::PhantomData;
 
-use uuasm_nodes::IR;
+use uuasm_ir::IR;
 
 use crate::{window::DecodeWindow, Parse, ParseError, ParseResult};
 

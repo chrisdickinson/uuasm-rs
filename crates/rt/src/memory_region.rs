@@ -1,4 +1,4 @@
-use uuasm_nodes::Limits;
+use uuasm_ir::Limits;
 
 const PAGE_SHIFT: usize = 16;
 const PAGE_SIZE: usize = 1 << PAGE_SHIFT;

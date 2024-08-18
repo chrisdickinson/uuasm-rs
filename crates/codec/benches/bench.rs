@@ -1,6 +1,6 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use uuasm_codec::{old_parse, Decoder};
-use uuasm_nodes::EmptyIRGenerator;
+use uuasm_ir::EmptyIRGenerator;
 use wasmparser::FunctionBody;
 
 const WASM: &[u8] = include_bytes!("../../rt/src/testsuite/func.0.wasm");
@@ -14,7 +14,7 @@ pub fn basic(criterion: &mut Criterion) {
             bench.iter(|| {
                 let mut parser = Decoder::<EmptyIRGenerator, ()>::new(
                     uuasm_codec::AnyParser::Module(uuasm_codec::ModuleParser::default()),
-                    uuasm_nodes::EmptyIRGenerator::new(),
+                    uuasm_ir::EmptyIRGenerator::new(),
                 );
                 let _ = parser.write(WASM);
                 parser.flush().unwrap();

@@ -3,7 +3,7 @@ use nom::error::ParseError;
 use nom_locate::LocatedSpan;
 use std::fmt::Debug;
 
-use uuasm_nodes::*;
+use uuasm_ir::*;
 
 type Span<'a> = LocatedSpan<&'a [u8]>;
 

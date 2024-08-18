@@ -1,6 +1,6 @@
 use std::marker::PhantomData;
 
-use uuasm_nodes::{DefaultIRGenerator, IR};
+use uuasm_ir::{DefaultIRGenerator, IR};
 
 use crate::{
     cold,

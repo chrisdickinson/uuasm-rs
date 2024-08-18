@@ -20,7 +20,7 @@ mod test_utils;
 
 pub(crate) use value::Value;
 
-use uuasm_nodes::{NumType, RefType, ValType, VecType};
+use uuasm_ir::{NumType, RefType, ValType, VecType};
 
 pub(crate) mod prelude {
     use crate::Value;
@@ -41,6 +41,7 @@ impl prelude::ValTypeExtras for ValType {
             ValType::VecType(VecType::V128) => Value::V128(Default::default()),
             ValType::RefType(RefType::FuncRef) => Value::RefNull,
             ValType::RefType(RefType::ExternRef) => Value::RefNull,
+            ValType::Never => unreachable!("cannot instantiate <never> value"),
         }
     }
 
@@ -268,7 +269,7 @@ pub(crate) struct TKTK;
 #[cfg(test)]
 mod test {
     use uuasm_codec::parse;
-    use uuasm_nodes::DefaultIRGenerator as IRGen;
+    use uuasm_ir::DefaultIRGenerator as IRGen;
 
     #[test]
     fn test_create_store() {

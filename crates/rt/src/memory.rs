@@ -1,4 +1,4 @@
-use uuasm_nodes::{Import, MemIdx, MemType};
+use uuasm_ir::{Import, MemIdx, MemType};
 
 use super::{
     imports::{Extern, GuestIndex, LookupImport},

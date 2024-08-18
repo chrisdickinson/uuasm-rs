@@ -9,7 +9,7 @@ use anyhow::Context;
 
 use crate::memory_region::MemoryRegion;
 use crate::prelude::*;
-use uuasm_nodes::{
+use uuasm_ir::{
     BlockType, ByteVec, Code, CodeIdx, Data, Elem, ElemMode, Export, ExportDesc, Expr, FuncIdx,
     Global, GlobalIdx, Import, ImportDesc, Instr, MemIdx, Module, ModuleBuilder, ModuleIntoInner,
     Name, TableIdx, TableType, Type, TypeIdx,

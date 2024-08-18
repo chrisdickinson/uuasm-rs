@@ -12,7 +12,7 @@ nom_locate = "4.2.0"
 num = "0.4.3"
 paste = "1.0.15"
 thiserror = { workspace = true }
-uuasm-nodes = { workspace = true }
+uuasm-ir = { workspace = true }
 
 [dev-dependencies]
 criterion = "0.5.1"

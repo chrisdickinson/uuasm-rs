@@ -1,4 +1,4 @@
-use uuasm_nodes::{Import, TableIdx, TableType};
+use uuasm_ir::{Import, TableIdx, TableType};
 
 use super::{
     imports::{Extern, GuestIndex, LookupImport},

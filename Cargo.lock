@@ -636,12 +636,12 @@ dependencies = [
  "num",
  "paste",
  "thiserror",
- "uuasm-nodes",
+ "uuasm-ir",
  "wasmparser",
 ]
 
 [[package]]
-name = "uuasm-nodes"
+name = "uuasm-ir"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -657,7 +657,7 @@ dependencies = [
  "serde_json",
  "thiserror",
  "uuasm-codec",
- "uuasm-nodes",
+ "uuasm-ir",
 ]
 
 [[package]]

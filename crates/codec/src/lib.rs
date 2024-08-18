@@ -15,7 +15,7 @@ pub use crate::parser::module::ModuleParser;
 pub use decoder::Decoder;
 
 use thiserror::Error;
-use uuasm_nodes::IR;
+use uuasm_ir::IR;
 use window::{AdvancementError, DecodeWindow};
 
 #[derive(Error, Debug, Clone)]
