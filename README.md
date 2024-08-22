@@ -9,6 +9,47 @@ If you're looking for a industry-strength Wasm runtime, look at
 
 A semi-regularly updated dev log.
 
+### 2024 Aug 24
+
+We're still knee-deep in module validation. In particular, type-checking
+instructions. In exacting detail: we have to make the type checker work with
+instruction sequences stored _outside_ of functions.
+
+Where might instruction sequences be stored if not in functions? A number of
+places, as it turns out! Wasm uses sequences of instructions to represent
+element values (arrays of function pointers), data and element offsets, and
+global values. To support these constructions, the IR generator needs hooks
+that bookend these expressions --
+`start_element_value_expr`/`end_element_value_expr`, etc.
+
+This is a long, long yak shave: I started this process more than a month ago.
+If I knew then what I know now: I'd try to drive more of the parser and
+validator generation from a table data structure. Something stored in a
+non-executable format (YAML? Ron? CSV? JSON?) Something that could be
+processed by a series of macros.
+
+It'd maybe store:
+
+- An instruction "page" and "subcode" -- where subcode is 0 for all single-byte
+  instructions.
+- Mnemonics for the instruction: `i32.add`, for example. Maybe add a column for
+  acceptable aliases?
+- A sequence of instruction args, to be grouped up into `nullary`, `unary`,
+  `binary`, etc.
+- A little mini-language for pre-condition / post-condition types (`i32 ->
+  i32`, `(i32, i32, i32) -> ()`, etc.)
+- Maybe inlining some implementation? `i32.add` might include something like
+  `%0 = %1 + %2`? Or some way to include an implementation defined elsewhere
+  in code? (I'm [greenspunning] something between yacc and llvm ir, here.)
+
+Anyway, I'm going to stop daydreaming about adding phi values before I talk
+myself into rewriting this into a pile of SSA-generating macros-- as motivating
+as I find that. There's a balance that needs to be struck between looking up at
+where we're going and down at one's feet and --for now, at least-- it's time to
+continue plodding forward.
+
+[greenspunning]: https://en.wikipedia.org/wiki/Greenspun%27s_tenth_rule
+
 ### 2024 Aug 17
 
 I'm backfilling the dev log a bit here: let's talk a bit about this project and
