@@ -17,27 +17,30 @@ pub enum DataParser<T: IR> {
 impl<T: IR> Parse<T> for DataParser<T> {
     type Production = T::Data;
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         match self {
             Self::Init => match window.take()? {
-                0x00 => Ok(Advancement::YieldTo(
-                    AnyParser::Expr(Default::default()),
-                    // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
-                    // expr)
-                    |irgen, last_state, _| {
-                        let AnyParser::Expr(parser) = last_state else {
-                            unsafe {
-                                crate::cold();
-                                std::hint::unreachable_unchecked()
-                            }
-                        };
+                0x00 => {
+                    irgen.start_data_offset();
+                    Ok(Advancement::YieldTo(
+                        AnyParser::Expr(Default::default()),
+                        // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
+                        // expr)
+                        |irgen, last_state, _| {
+                            let AnyParser::Expr(parser) = last_state else {
+                                unsafe {
+                                    crate::cold();
+                                    std::hint::unreachable_unchecked()
+                                }
+                            };
 
-                        let expr = parser.production(irgen)?;
-                        let mem_idx = irgen.make_mem_index(0).map_err(IRError)?;
+                            let expr = parser.production(irgen)?;
+                            let mem_idx = irgen.make_mem_index(0).map_err(IRError)?;
 
-                        Ok(AnyParser::Data(Self::Expr(mem_idx, expr)))
-                    },
-                )),
+                            Ok(AnyParser::Data(Self::Expr(mem_idx, expr)))
+                        },
+                    ))
+                }
 
                 // this parses a bytevec and becomes a data::passive
                 0x01 => Ok(Advancement::YieldTo(
@@ -83,30 +86,34 @@ impl<T: IR> Parse<T> for DataParser<T> {
                 unk => Err(ParseErrorKind::BadDataType(unk)),
             },
 
-            Self::MemIdx(_) => Ok(Advancement::YieldTo(
-                AnyParser::Expr(Default::default()),
-                // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
-                // expr)
-                |irgen, last_state, this_state| {
-                    let AnyParser::Expr(parser) = last_state else {
-                        unsafe {
-                            crate::cold();
-                            std::hint::unreachable_unchecked()
-                        }
-                    };
+            Self::MemIdx(_) => {
+                irgen.start_data_offset();
 
-                    let AnyParser::Data(Self::MemIdx(mem_idx)) = this_state else {
-                        unsafe {
-                            crate::cold();
-                            std::hint::unreachable_unchecked()
-                        }
-                    };
+                Ok(Advancement::YieldTo(
+                    AnyParser::Expr(Default::default()),
+                    // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
+                    // expr)
+                    |irgen, last_state, this_state| {
+                        let AnyParser::Expr(parser) = last_state else {
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            }
+                        };
 
-                    let expr = parser.production(irgen)?;
+                        let AnyParser::Data(Self::MemIdx(mem_idx)) = this_state else {
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            }
+                        };
 
-                    Ok(AnyParser::Data(Self::Expr(mem_idx, expr)))
-                },
-            )),
+                        let expr = parser.production(irgen)?;
+
+                        Ok(AnyParser::Data(Self::Expr(mem_idx, expr)))
+                    },
+                ))
+            }
 
             Self::Expr(_, _) => {
                 Ok(Advancement::YieldTo(

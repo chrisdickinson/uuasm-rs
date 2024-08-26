@@ -15,7 +15,7 @@ impl<T: IR> Default for MemIdxParser<T> {
 impl<T: IR> Parse<T> for MemIdxParser<T> {
     type Production = T::MemIdx;
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, _window: &mut DecodeWindow) -> crate::ParseResult<T> {
         if self.0.is_some() {
             return Ok(Advancement::Ready);
         }

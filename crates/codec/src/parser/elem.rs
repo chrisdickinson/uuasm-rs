@@ -110,27 +110,31 @@ impl<T: IR> Parse<T> for ElemParser<T> {
 
                 Self::Flags(_) => unreachable!(),
 
-                Self::ParseActiveModeTableIdx(_, _) => Advancement::YieldTo(
-                    AnyParser::Expr(Default::default()),
-                    |irgen, last_state, this_state| {
-                        let AnyParser::Expr(parser) = last_state else {
-                            unreachable!();
-                        };
-                        let AnyParser::Elem(Self::ParseActiveModeTableIdx(flags, table_idx)) =
-                            this_state
-                        else {
-                            unreachable!();
-                        };
+                Self::ParseActiveModeTableIdx(_, _) => {
+                    irgen.start_elem_active_table_index();
 
-                        let expr = parser.production(irgen)?;
+                    Advancement::YieldTo(
+                        AnyParser::Expr(Default::default()),
+                        |irgen, last_state, this_state| {
+                            let AnyParser::Expr(parser) = last_state else {
+                                unreachable!();
+                            };
+                            let AnyParser::Elem(Self::ParseActiveModeTableIdx(flags, table_idx)) =
+                                this_state
+                            else {
+                                unreachable!();
+                            };
 
-                        // need to take one from the window lolol
-                        Ok(AnyParser::Elem(Self::ParseMode(
-                            flags,
-                            ElementMode::Active(table_idx, expr),
-                        )))
-                    },
-                ),
+                            let expr = parser.production(irgen)?;
+
+                            // need to take one from the window lolol
+                            Ok(AnyParser::Elem(Self::ParseMode(
+                                flags,
+                                ElementMode::Active(table_idx, expr),
+                            )))
+                        },
+                    )
+                }
 
                 Self::ParseMode(_, _) => {
                     let Self::ParseMode(flags, mode) = mem::take(self) else {
@@ -154,16 +158,13 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                         continue 'restart;
                     }
                     // reftype vec<expr>
-                    *self = Self::ParseRefType(
-                        flags,
-                        mode,
-                        if has_type {
-                            let ref_type = irgen.make_ref_type(window.take()?).map_err(IRError)?;
-                            Some(ref_type)
-                        } else {
-                            None
-                        },
-                    );
+                    let ref_type = if has_type {
+                        let ref_type = irgen.make_ref_type(window.take()?).map_err(IRError)?;
+                        Some(ref_type)
+                    } else {
+                        None
+                    };
+                    *self = Self::ParseRefType(flags, mode, ref_type);
                     continue 'restart;
                 }
 
@@ -187,25 +188,29 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                     },
                 ),
 
-                Self::ParseRefType(_, _, _) => Advancement::YieldTo(
-                    AnyParser::ExprList(Default::default()),
-                    |irgen, last_state, this_state| {
-                        let AnyParser::ExprList(parser) = last_state else {
-                            unreachable!();
-                        };
-                        let AnyParser::Elem(Self::ParseRefType(flags, mode, kind)) = this_state
-                        else {
-                            unreachable!();
-                        };
+                Self::ParseRefType(_, _, ref_type) => {
+                    irgen.start_elem_reftype_list(ref_type.as_ref());
 
-                        let mode = make_elem_mode(irgen, mode)?;
-                        let expr_list = parser.production(irgen)?;
-                        let elem = irgen
-                            .make_elem_from_exprs(kind, mode, expr_list, flags)
-                            .map_err(IRError)?;
-                        Ok(AnyParser::Elem(Self::Ready(elem)))
-                    },
-                ),
+                    Advancement::YieldTo(
+                        AnyParser::ExprList(Default::default()),
+                        |irgen, last_state, this_state| {
+                            let AnyParser::ExprList(parser) = last_state else {
+                                unreachable!();
+                            };
+                            let AnyParser::Elem(Self::ParseRefType(flags, mode, kind)) = this_state
+                            else {
+                                unreachable!();
+                            };
+
+                            let mode = make_elem_mode(irgen, mode)?;
+                            let expr_list = parser.production(irgen)?;
+                            let elem = irgen
+                                .make_elem_from_exprs(kind, mode, expr_list, flags)
+                                .map_err(IRError)?;
+                            Ok(AnyParser::Elem(Self::Ready(elem)))
+                        },
+                    )
+                }
 
                 Self::Ready(_) => Advancement::Ready,
             });

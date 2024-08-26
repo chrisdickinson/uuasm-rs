@@ -19,7 +19,7 @@ pub enum IfElseBlockParser<T: IR> {
 impl<T: IR> Parse<T> for IfElseBlockParser<T> {
     type Production = (T::BlockType, T::Expr, Option<T::Expr>);
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
         Ok(match self {
             Self::Init => Advancement::YieldTo(
                 AnyParser::BlockType(Default::default()),
@@ -36,28 +36,31 @@ impl<T: IR> Parse<T> for IfElseBlockParser<T> {
                 },
             ),
 
-            Self::BlockType(_) => Advancement::YieldTo(
-                AnyParser::Expr(ExprParser::no_shift()),
-                |irgen, last_state, this_state| {
-                    let AnyParser::Expr(parser) = last_state else {
-                        unsafe {
-                            crate::cold();
-                            std::hint::unreachable_unchecked()
+            Self::BlockType(block_type) => {
+                irgen.start_ifelse(block_type);
+                Advancement::YieldTo(
+                    AnyParser::Expr(ExprParser::no_shift()),
+                    |irgen, last_state, this_state| {
+                        let AnyParser::Expr(parser) = last_state else {
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            };
                         };
-                    };
-                    let AnyParser::IfElseBlock(Self::BlockType(block_type)) = this_state else {
-                        unsafe {
-                            crate::cold();
-                            std::hint::unreachable_unchecked()
+                        let AnyParser::IfElseBlock(Self::BlockType(block_type)) = this_state else {
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            };
                         };
-                    };
 
-                    let production = parser.production(irgen)?;
-                    Ok(AnyParser::IfElseBlock(Self::Consequent(
-                        block_type, production,
-                    )))
-                },
-            ),
+                        let production = parser.production(irgen)?;
+                        Ok(AnyParser::IfElseBlock(Self::Consequent(
+                            block_type, production,
+                        )))
+                    },
+                )
+            }
 
             Self::Consequent(_, _) => {
                 let next = window.take()?;

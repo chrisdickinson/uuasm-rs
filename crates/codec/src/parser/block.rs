@@ -17,7 +17,7 @@ pub enum BlockParser<T: IR> {
 impl<T: IR> Parse<T> for BlockParser<T> {
     type Production = (T::BlockType, T::Expr);
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         Ok(match self {
             Self::Init => Advancement::YieldTo(
                 AnyParser::BlockType(Default::default()),
@@ -34,26 +34,31 @@ impl<T: IR> Parse<T> for BlockParser<T> {
                 },
             ),
 
-            Self::BlockType(_) => Advancement::YieldTo(
-                AnyParser::Expr(Default::default()),
-                |irgen, last_state, this_state| {
-                    let AnyParser::Expr(parser) = last_state else {
-                        unsafe {
-                            crate::cold();
-                            std::hint::unreachable_unchecked()
-                        }
-                    };
-                    let AnyParser::Block(Self::BlockType(block_type)) = this_state else {
-                        unsafe {
-                            crate::cold();
-                            std::hint::unreachable_unchecked()
-                        }
-                    };
-                    let expr = parser.production(irgen)?;
+            Self::BlockType(block_type) => {
+                // TODO: thread "loop or block" discriminant info through here so we can call the
+                // right function
+                irgen.start_block(block_type);
+                Advancement::YieldTo(
+                    AnyParser::Expr(Default::default()),
+                    |irgen, last_state, this_state| {
+                        let AnyParser::Expr(parser) = last_state else {
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            }
+                        };
+                        let AnyParser::Block(Self::BlockType(block_type)) = this_state else {
+                            unsafe {
+                                crate::cold();
+                                std::hint::unreachable_unchecked()
+                            }
+                        };
+                        let expr = parser.production(irgen)?;
 
-                    Ok(AnyParser::Block(Self::Ready(block_type, expr)))
-                },
-            ),
+                        Ok(AnyParser::Block(Self::Ready(block_type, expr)))
+                    },
+                )
+            }
 
             // TODO: switch to Expr::no_shift() and check that the last byte was 0x0b
             Self::Ready(_, _) => Advancement::Ready,

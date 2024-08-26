@@ -16,7 +16,7 @@ pub enum GlobalParser<T: IR> {
 impl<T: IR> Parse<T> for GlobalParser<T> {
     type Production = T::Global;
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, _window: &mut DecodeWindow) -> ParseResult<T> {
         match self {
             GlobalParser::Init => Ok(Advancement::YieldTo(
                 AnyParser::GlobalType(Default::default()),
@@ -29,6 +29,7 @@ impl<T: IR> Parse<T> for GlobalParser<T> {
                     };
 
                     let production = parser.production(irgen)?;
+                    irgen.start_global(&production);
                     Ok(AnyParser::Global(Self::GlobalType(production)))
                 },
             )),
