@@ -9,6 +9,66 @@ If you're looking for a industry-strength Wasm runtime, look at
 
 A semi-regularly updated dev log.
 
+### 2024 Aug 30
+
+["They say time is the fire in which we burn."](https://www.youtube.com/watch?v=XtIuC0NAF_E)
+
+... which sums up how I'm feeling about getting the `if` opcode tests
+to 100% passing!
+
+So. If you're keeping score at home, I've been working on implementing type
+checking in the `ir` sub-crate for a week or two now. I could have saved myself
+some time at the outset: the WebAssembly spec has a useful appendix entry [which
+describes][wasm-validate] how to implement the type checker. I spent about a day
+or two at the outset trying to build my own checker from first principles before
+stumbling on this appendix entry. The specification, unlike human anatomy, has
+a pretty useful appendix.
+
+In the process of implemeting type checks, I learned something new about
+constant expressions: I knew that `global.get` was a valid "constant"
+instruction, but I did *not* know that there were additional requirements on
+the referent: in particular the target must be an immutable _import_. Neat.
+(Module validation contains a lot of these little pearls of wisdom baked into
+the specification. I feel like "This is actually my second rodeo" might be a
+fitting motto for the specification.)
+
+So what does the work look like right now? Well, a lot of `wasm-tools dump`,
+`wasm-tools print`, and debug loglines. Since I'm spending a lot of time with
+the parser and IR generator, I am (of course) starting to feel like the
+abstractions aren't _quite_ right. The IR generator's type checker bleeds into
+the default IR generation, the default IR is clunky, and the parser both
+communicates with an IR generator (good!) and constructs final parsed
+productions (bad!) However. Getting the tests to 100% is the first step, and
+everything else is secondary.
+
+In other news: in true crustacean fashion, Rust is getting underfoot. I'm
+feeling the pinch.
+
+As I mentioned, I have a default IR generator, called with a `&mut self`
+reference. It owns definitions of the types, locals, globals, and tables. These
+are built iteratively so several of them are behind `Option<Vec<[T]>>`-style
+references. (Sometimes they're `Box<[T]>`.) Anyway, the type checker needs
+access to this information when handling new instructions. As a result, I had a
+lot of `self.<foo>_types.as_ref().map(|xs| xs as &[_]).unwrap_or_default()`
+chains inlined as parameters to `type_checker.trace(instr)`. I thought I'd add
+a method to get a `&[T]` record for these hairy types -- a little helper.
+
+But you have to pay the crab tax for this. The borrow checker does a bunch of
+work to make mutably borrowing one `self` attribute while immutably borrowing
+adjacent `self` attributes work -- when inside of a single function. However,
+they stop at method call boundaries, so helper functions that return references
+make it impossible to _also_ use `self` mutably. There are [ways][view-types]
+around this but they're pretty heavyweight right now. (See [more
+recently][borrow-checker] on this.)
+
+Kind of a long form update -- apologies -- but we're at 64 passing tests to 29
+failing tests. The tide is turning! Soon we'll break all of the tests again
+by changing the value stack!
+
+[view-types]: https://smallcultfollowing.com/babysteps/blog/2021/11/05/view-types/
+[borrow-checker]: https://smallcultfollowing.com/babysteps/blog/2024/06/02/the-borrow-checker-within/#step-3-view-types-and-interprocedural-borrows
+[wasm-validate]: https://webassembly.github.io/spec/core/appendix/algorithm.html
+
 ### 2024 Aug 24
 
 We're still knee-deep in module validation. In particular, type-checking

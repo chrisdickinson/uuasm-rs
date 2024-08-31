@@ -29,7 +29,7 @@ impl<T: IR> Parse<T> for GlobalParser<T> {
                     };
 
                     let production = parser.production(irgen)?;
-                    irgen.start_global(&production);
+                    irgen.start_global(&production).map_err(IRError)?;
                     Ok(AnyParser::Global(Self::GlobalType(production)))
                 },
             )),

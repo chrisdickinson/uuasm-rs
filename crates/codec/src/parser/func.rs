@@ -19,7 +19,7 @@ impl<T: IR> Parse<T> for FuncParser<T> {
     fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
         match self {
             Self::Init => {
-                irgen.start_func();
+                irgen.start_func().map_err(IRError)?;
                 Ok(Advancement::YieldTo(
                     AnyParser::LocalList(Default::default()),
                     |irgen, last_state, _| {

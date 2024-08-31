@@ -1,4 +1,8 @@
-use crate::{defs::*, typechecker::TypeError, IR};
+use crate::{
+    defs::*,
+    typechecker::{BlockKind, TypeChecker, TypeError},
+    IR,
+};
 use thiserror::Error;
 
 use std::{collections::HashSet, fmt::Debug};
@@ -37,7 +41,7 @@ pub enum DefaultIRGeneratorError {
     )]
     UndeclaredFuncIndex(u32),
 
-    #[error("unknown memory index (got {0}; max is {1})")]
+    #[error("unknown memory {0} (max index is {1})")]
     InvalidMemIndex(u32, u32),
 
     #[error("unknown data index (got {0}; max is {1})")]
@@ -78,845 +82,11 @@ pub enum DefaultIRGeneratorError {
 
     #[error("{0}")]
     TypeError(#[from] TypeError),
-
-    #[error("type mismatch: expected {0}, got {1}")]
-    TypeMismatch(ValType, ValType),
-
-    #[error("type stack empty: expected {0} but stack was empty")]
-    TypeStackEmpty(ValType),
-
-    #[error("type stack not empty: {0} values left on stack")]
-    TypeStackNotEmpty(usize),
-
-    #[error("global is not mutable (global index={0})")]
-    AssignmentToImmutableGlobal(u32),
-
-    #[error("alignment must not be larger than natural (got {0}; must be < {1})")]
-    InvalidLoadAlignment(u32, u32),
 }
 
 #[derive(Default, Clone, Debug)]
 pub struct Features {
     enable_multiple_memories: bool,
-}
-
-#[derive(Default, Debug, Clone)]
-enum BlockKind {
-    Func,
-    #[default]
-    Block,
-    Loop,
-    IfElse,
-}
-
-#[derive(Default, Debug, Clone)]
-struct TypeTracer {
-    frames: Vec<Vec<ValType>>,
-    block_types: Vec<(BlockKind, BlockType)>,
-}
-
-macro_rules! conv_type_to_match {
-    (NUM) => {
-        ValType::NumType(_)
-    };
-    (I32) => {
-        ValType::NumType(NumType::I32)
-    };
-    (I64) => {
-        ValType::NumType(NumType::I64)
-    };
-    (F32) => {
-        ValType::NumType(NumType::F32)
-    };
-    (F64) => {
-        ValType::NumType(NumType::F64)
-    };
-    (REF) => {
-        ValType::RefType(_)
-    };
-}
-
-macro_rules! conv_type_to_return {
-    (I32) => {
-        ValType::NumType(NumType::I32)
-    };
-    (I64) => {
-        ValType::NumType(NumType::I64)
-    };
-    (F32) => {
-        ValType::NumType(NumType::F32)
-    };
-    (F64) => {
-        ValType::NumType(NumType::F64)
-    };
-    (REF_FUNC) => {
-        ValType::RefType(RefType::FuncRef)
-    };
-    (REF) => {
-        ValType::RefType(RefType::FuncRef)
-    };
-}
-
-macro_rules! conv {
-    ($self:ident, () -> $rhs:ident) => {{
-        let last = $self
-            .frames
-            .last_mut()
-            .ok_or(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never))?;
-
-        last.push(conv_type_to_return!($rhs));
-    }};
-
-    ($self:ident, $lhs:ident -> ()) => {{
-        let expected = conv_type_to_return!($lhs);
-        let last = $self
-            .frames
-            .last_mut()
-            .ok_or(DefaultIRGeneratorError::TypeStackEmpty(expected))?;
-
-        let last = last
-            .last_mut()
-            .ok_or(DefaultIRGeneratorError::TypeStackEmpty(expected))?;
-
-        if !matches!(*last, conv_type_to_match!($lhs)) {
-            return Err(DefaultIRGeneratorError::TypeMismatch(expected, *last));
-        }
-    }};
-
-    ($self:ident, $lhs:ident -> $rhs:ident) => {{
-        let expected = conv_type_to_return!($lhs);
-        let last = $self
-            .frames
-            .last_mut()
-            .ok_or(DefaultIRGeneratorError::TypeStackEmpty(expected))?;
-
-        let last = last
-            .last_mut()
-            .ok_or(DefaultIRGeneratorError::TypeStackEmpty(expected))?;
-
-        if !matches!(*last, conv_type_to_match!($lhs)) {
-            return Err(DefaultIRGeneratorError::TypeMismatch(expected, *last));
-        }
-        *last = conv_type_to_return!($rhs);
-    }};
-
-    ($self:ident, ($head:ident, $($tail:ident),*) -> $rhs:ident) => {{
-        let last = $self
-            .frames
-            .last_mut()
-            .ok_or(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never))?;
-
-        unfold_lhs!(last, ($head, $($tail),*));
-
-        last.push(conv_type_to_return!($rhs));
-    }};
-
-    ($self:ident, ($head:ident, $($tail:ident),*) -> ()) => {{
-        let last = $self
-            .frames
-            .last_mut()
-            .ok_or(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never))?;
-
-        unfold_lhs!(last, ($head, $($tail),*));
-    }};
-}
-
-macro_rules! unfold_lhs {
-    ($frame:ident, ($head:ident, $($tail:ident),*)) => {
-        let next = $frame.pop();
-        unfold_lhs!($frame, ($($tail),*));
-        let expected = conv_type_to_return!($head);
-        let next = next.ok_or(DefaultIRGeneratorError::TypeStackEmpty(expected))?;
-        if !matches!(next, conv_type_to_match!($head)) {
-            return Err(DefaultIRGeneratorError::TypeMismatch(expected, next));
-        }
-    };
-    ($frame:ident, ($head:ident)) => {
-        let next = $frame.pop();
-        let expected = conv_type_to_return!($head);
-        let next = next.ok_or(DefaultIRGeneratorError::TypeStackEmpty(expected))?;
-        if !matches!(next, conv_type_to_match!($head)) {
-            return Err(DefaultIRGeneratorError::TypeMismatch(expected, next));
-        }
-    };
-    ($frame:ident, ()) => {};
-}
-
-impl TypeTracer {
-    fn start(&mut self, block_kind: BlockKind, block_type: BlockType, types: &[Type]) {
-        self.block_types.push(dbg!((block_kind, block_type)));
-
-        let params = match block_type {
-            BlockType::TypeIndex(type_idx) => {
-                &mut types[type_idx.0 as usize].0 .0.iter().rev().copied()
-                    as &mut dyn Iterator<Item = ValType>
-            }
-            BlockType::Empty => &mut std::iter::empty() as &mut dyn Iterator<Item = ValType>,
-            BlockType::Val(val_type) => {
-                &mut std::iter::once(val_type) as &mut dyn Iterator<Item = ValType>
-            }
-        };
-
-        self.frames.push(params.collect());
-    }
-
-    fn reset(&mut self) {
-        self.frames.clear();
-        self.block_types.clear();
-    }
-
-    fn trace(
-        &mut self,
-        instr: Instr,
-        func_types: &[TypeIdx],
-        types: &[Type],
-        locals: &[ValType],
-        globals: &[GlobalType],
-    ) -> Result<Instr, DefaultIRGeneratorError> {
-        eprintln!("self.frames.len()={}", self.frames.len());
-        match dbg!(&instr) {
-            Instr::CallIntrinsic(_) => todo!(),
-            Instr::Unreachable => {
-                if let Some(xs) = self.frames.last_mut() {
-                    xs.push(ValType::Never);
-                }
-            }
-            Instr::Nop => {}
-            Instr::Loop(block_type, _) | Instr::Block(block_type, _) => {
-                let Some(mut last_frame) = self.frames.pop() else {
-                    unreachable!()
-                };
-                self.block_types.pop();
-
-                let (params, results) = match block_type {
-                    BlockType::TypeIndex(type_idx) => (
-                        &mut types[type_idx.0 as usize].0 .0.iter().rev().copied()
-                            as &mut dyn Iterator<Item = ValType>,
-                        &mut types[type_idx.0 as usize].1 .0.iter().rev().copied()
-                            as &mut dyn Iterator<Item = ValType>,
-                    ),
-                    BlockType::Empty => (
-                        &mut std::iter::empty() as &mut dyn Iterator<Item = ValType>,
-                        &mut std::iter::empty() as &mut dyn Iterator<Item = ValType>,
-                    ),
-                    BlockType::Val(val_type) => (
-                        &mut std::iter::empty() as &mut dyn Iterator<Item = ValType>,
-                        &mut std::iter::once(*val_type) as &mut dyn Iterator<Item = ValType>,
-                    ),
-                };
-
-                let Some(current_frame) = self.frames.last_mut() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-
-                for check_param in params.into_iter() {
-                    let Some(param) = current_frame.pop() else {
-                        return Err(DefaultIRGeneratorError::TypeStackEmpty(check_param));
-                    };
-
-                    if param != check_param {
-                        return Err(DefaultIRGeneratorError::TypeMismatch(check_param, param));
-                    }
-                }
-
-                for check_param in results.into_iter() {
-                    let Some(param) = last_frame.pop() else {
-                        return Err(DefaultIRGeneratorError::TypeStackEmpty(check_param));
-                    };
-
-                    if param != check_param {
-                        return Err(DefaultIRGeneratorError::TypeMismatch(check_param, param));
-                    }
-
-                    current_frame.push(param);
-                }
-
-                if !last_frame.is_empty() {
-                    dbg!(&last_frame);
-                    return Err(DefaultIRGeneratorError::TypeStackNotEmpty(last_frame.len()));
-                }
-            }
-            // (I32) -> block type
-            Instr::If(_, _) => todo!(),
-            // (I32) -> block type
-            Instr::IfElse(_, _, _) => todo!(),
-
-            //
-            Instr::Br(LabelIdx(label_idx)) => {
-                let len_sans_base_block = self.block_types.len() as u32 - 1;
-                if *label_idx > len_sans_base_block {
-                    return Err(DefaultIRGeneratorError::InvalidLabelIndex(
-                        *label_idx,
-                        len_sans_base_block,
-                    ));
-                }
-
-                let (kind, block_type) =
-                    &self.block_types[(len_sans_base_block - label_idx) as usize];
-
-                let receiver = match block_type {
-                    BlockType::TypeIndex(type_idx) => match kind {
-                        BlockKind::Loop => {
-                            &mut types[type_idx.0 as usize].0 .0.iter().copied().rev()
-                                as &mut dyn Iterator<Item = ValType>
-                        }
-                        _ => &mut types[type_idx.0 as usize].1 .0.iter().rev().copied()
-                            as &mut dyn Iterator<Item = ValType>,
-                    },
-                    BlockType::Empty => {
-                        &mut std::iter::empty() as &mut dyn Iterator<Item = ValType>
-                    }
-                    BlockType::Val(val_type) => match kind {
-                        BlockKind::Loop => {
-                            &mut std::iter::empty() as &mut dyn Iterator<Item = ValType>
-                        }
-                        _ => &mut std::iter::once(*val_type) as &mut dyn Iterator<Item = ValType>,
-                    },
-                };
-                let Some(last_frame) = self.frames.last_mut() else {
-                    unreachable!()
-                };
-
-                let mut iter = last_frame.iter().rev();
-                for check_param in receiver.into_iter() {
-                    let Some(param) = iter.next() else {
-                        return Err(DefaultIRGeneratorError::TypeStackEmpty(check_param));
-                    };
-
-                    if *param != check_param {
-                        return Err(DefaultIRGeneratorError::TypeMismatch(check_param, *param));
-                    }
-                }
-
-                // last_frame.clear();
-                // TODO: push Never
-            }
-
-            // (I32) -> (); plus check stack on way back
-            // basically the same as Br except we don't clear the value stack/push Never after
-            Instr::BrIf(LabelIdx(label_idx)) => {
-                let len_sans_base_block = self.block_types.len() as u32 - 1;
-                if *label_idx >= len_sans_base_block {
-                    return Err(DefaultIRGeneratorError::InvalidLabelIndex(
-                        *label_idx,
-                        len_sans_base_block,
-                    ));
-                }
-
-                let (kind, block_type) =
-                    &self.block_types[(len_sans_base_block - label_idx) as usize];
-
-                let receiver = match block_type {
-                    BlockType::TypeIndex(type_idx) => match kind {
-                        BlockKind::Loop => {
-                            &mut types[type_idx.0 as usize].0 .0.iter().copied().rev()
-                                as &mut dyn Iterator<Item = ValType>
-                        }
-                        _ => &mut types[type_idx.0 as usize].1 .0.iter().rev().copied()
-                            as &mut dyn Iterator<Item = ValType>,
-                    },
-                    BlockType::Empty => {
-                        &mut std::iter::empty() as &mut dyn Iterator<Item = ValType>
-                    }
-                    BlockType::Val(val_type) => match kind {
-                        BlockKind::Loop => {
-                            &mut std::iter::empty() as &mut dyn Iterator<Item = ValType>
-                        }
-                        _ => &mut std::iter::once(*val_type) as &mut dyn Iterator<Item = ValType>,
-                    },
-                };
-                let Some(last_frame) = self.frames.last() else {
-                    unreachable!()
-                };
-
-                let mut iter = last_frame.iter().rev();
-                for check_param in receiver.into_iter() {
-                    let Some(param) = iter.next() else {
-                        return Err(DefaultIRGeneratorError::TypeStackEmpty(check_param));
-                    };
-
-                    if *param != check_param {
-                        return Err(DefaultIRGeneratorError::TypeMismatch(check_param, *param));
-                    }
-                }
-            }
-
-            // (I32) -> (); plus check stack on way back
-            Instr::BrTable(ref labels, alternate) => {
-                let Some(last_frame) = self.frames.last_mut() else {
-                    unreachable!()
-                };
-                for LabelIdx(label_idx) in labels.iter().copied().chain(std::iter::once(*alternate))
-                {
-                    let len_sans_base_block = self.block_types.len() as u32 - 1;
-                    if label_idx >= len_sans_base_block {
-                        return Err(DefaultIRGeneratorError::InvalidLabelIndex(
-                            label_idx,
-                            len_sans_base_block,
-                        ));
-                    }
-
-                    let (kind, block_type) =
-                        &self.block_types[(len_sans_base_block - label_idx) as usize];
-
-                    let receiver = match block_type {
-                        BlockType::TypeIndex(type_idx) => match kind {
-                            BlockKind::Loop => {
-                                &mut types[type_idx.0 as usize].0 .0.iter().copied().rev()
-                                    as &mut dyn Iterator<Item = ValType>
-                            }
-                            _ => &mut types[type_idx.0 as usize].1 .0.iter().rev().copied()
-                                as &mut dyn Iterator<Item = ValType>,
-                        },
-                        BlockType::Empty => {
-                            &mut std::iter::empty() as &mut dyn Iterator<Item = ValType>
-                        }
-                        BlockType::Val(val_type) => match kind {
-                            BlockKind::Loop => {
-                                &mut std::iter::empty() as &mut dyn Iterator<Item = ValType>
-                            }
-                            _ => {
-                                &mut std::iter::once(*val_type) as &mut dyn Iterator<Item = ValType>
-                            }
-                        },
-                    };
-
-                    let mut iter = last_frame.iter().rev();
-                    for check_param in receiver.into_iter() {
-                        let Some(param) = iter.next() else {
-                            return Err(DefaultIRGeneratorError::TypeStackEmpty(check_param));
-                        };
-
-                        if *param != check_param {
-                            return Err(DefaultIRGeneratorError::TypeMismatch(check_param, *param));
-                        }
-                    }
-                }
-
-                //last_frame.clear();
-                // TODO: push Never
-            }
-
-            Instr::Return => {
-                let (_, block_type) = &self.block_types[0];
-
-                let receiver = match block_type {
-                    BlockType::TypeIndex(type_idx) => {
-                        &mut types[type_idx.0 as usize].1 .0.iter().rev().copied()
-                            as &mut dyn Iterator<Item = ValType>
-                    }
-
-                    BlockType::Empty => {
-                        &mut std::iter::empty() as &mut dyn Iterator<Item = ValType>
-                    }
-                    BlockType::Val(val_type) => {
-                        &mut std::iter::once(*val_type) as &mut dyn Iterator<Item = ValType>
-                    }
-                };
-                let Some(last_frame) = self.frames.last_mut() else {
-                    unreachable!()
-                };
-
-                let mut iter = last_frame.iter().rev();
-                for check_param in receiver.into_iter() {
-                    let Some(param) = iter.next() else {
-                        return Err(DefaultIRGeneratorError::TypeStackEmpty(check_param));
-                    };
-
-                    if *param != check_param {
-                        return Err(DefaultIRGeneratorError::TypeMismatch(check_param, *param));
-                    }
-                }
-
-                // last_frame.clear();
-                // TODO: push Never
-            }
-
-            Instr::Call(FuncIdx(func_idx)) => {
-                let type_idx = func_types[*func_idx as usize];
-                let check_type = &types[type_idx.0 as usize];
-                let (params, results) = (
-                    &mut check_type.0 .0.iter().rev().copied() as &mut dyn Iterator<Item = ValType>,
-                    &mut check_type.1 .0.iter().copied() as &mut dyn Iterator<Item = ValType>,
-                );
-
-                let Some(current_frame) = self.frames.last_mut() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-
-                for check_param in params.into_iter() {
-                    let Some(param) = current_frame.pop() else {
-                        return Err(DefaultIRGeneratorError::TypeStackEmpty(check_param));
-                    };
-
-                    if param != check_param {
-                        return Err(DefaultIRGeneratorError::TypeMismatch(check_param, param));
-                    }
-                }
-
-                current_frame.extend(results);
-            }
-            Instr::CallIndirect(TypeIdx(type_idx), TableIdx(_table_idx)) => {
-                let Some(frame) = self.frames.last_mut() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-
-                let Some(value) = frame.pop() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-
-                if value != ValType::NumType(NumType::I32) {
-                    return Err(DefaultIRGeneratorError::TypeMismatch(
-                        ValType::NumType(NumType::I32),
-                        value,
-                    ));
-                }
-
-                // todo: check table_idx
-                let check_type = &types[*type_idx as usize];
-                let (params, results) = (
-                    &mut check_type.0 .0.iter().rev().copied() as &mut dyn Iterator<Item = ValType>,
-                    &mut check_type.1 .0.iter().copied() as &mut dyn Iterator<Item = ValType>,
-                );
-
-                let Some(current_frame) = self.frames.last_mut() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-
-                for check_param in params.into_iter() {
-                    let Some(param) = current_frame.pop() else {
-                        return Err(DefaultIRGeneratorError::TypeStackEmpty(check_param));
-                    };
-
-                    if param != check_param {
-                        return Err(DefaultIRGeneratorError::TypeMismatch(check_param, param));
-                    }
-                }
-
-                current_frame.extend(results);
-            }
-
-            // () -> REF_FUNC | REF_EXTERN
-            Instr::RefNull(ref_type) => {
-                let Some(frame) = self.frames.last_mut() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-                frame.push(ValType::RefType(*ref_type));
-            }
-
-            Instr::RefIsNull => conv!(self, REF -> I32),
-
-            // () -> REF
-            Instr::RefFunc(_) => {
-                let Some(frame) = self.frames.last_mut() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-                frame.push(ValType::RefType(RefType::FuncRef));
-            }
-
-            // (T) -> ()
-            Instr::Drop => {
-                let Some(frame) = self.frames.last_mut() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-                let Some(_) = frame.pop() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-            }
-
-            // (I32, NUM, NUM) -> NUM
-            Instr::SelectEmpty => todo!(),
-            // (I32, T, T) -> T
-            Instr::Select(_) => todo!(),
-
-            // () -> (typeof Local(idx))
-            Instr::LocalGet(LocalIdx(local_idx)) => {
-                let Some(frame) = self.frames.last_mut() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-
-                let local = locals[*local_idx as usize];
-                frame.push(local);
-            }
-
-            // (typeof Local(idx)) -> ()
-            Instr::LocalSet(LocalIdx(local_idx)) => {
-                let Some(frame) = self.frames.last_mut() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-
-                let local = locals[*local_idx as usize];
-                let Some(check_type) = frame.pop() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-
-                if check_type != local {
-                    return Err(DefaultIRGeneratorError::TypeMismatch(local, check_type));
-                }
-            }
-
-            // (typeof Local(idx)) -> (typeof Local(idx))
-            Instr::LocalTee(LocalIdx(local_idx)) => {
-                let Some(frame) = self.frames.last_mut() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-
-                let local = locals[*local_idx as usize];
-                let Some(check_type) = frame.last() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-
-                if *check_type != local {
-                    return Err(DefaultIRGeneratorError::TypeMismatch(local, *check_type));
-                }
-            }
-
-            // () -> (typeof Local(idx))
-            Instr::GlobalGet(GlobalIdx(global_idx)) => {
-                let Some(frame) = self.frames.last_mut() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-
-                let GlobalType(global, _mutability) = globals[*global_idx as usize];
-
-                frame.push(global);
-            }
-            // (typeof Local(idx)) -> ()
-            Instr::GlobalSet(GlobalIdx(global_idx)) => {
-                let Some(frame) = self.frames.last_mut() else {
-                    return Err(DefaultIRGeneratorError::TypeStackEmpty(ValType::Never));
-                };
-
-                let GlobalType(global, mutability) = globals[*global_idx as usize];
-
-                if mutability == Mutability::Const {
-                    return Err(DefaultIRGeneratorError::AssignmentToImmutableGlobal(
-                        *global_idx,
-                    ));
-                }
-
-                frame.push(global);
-            }
-
-            // TODO: check against table type
-            Instr::TableGet(_) => conv!(self, () -> REF_FUNC),
-
-            // TODO: check against table type
-            Instr::TableSet(_) => conv!(self, REF -> ()),
-            Instr::TableInit(_, _) => conv!(self, (I32, I32, I32) -> ()),
-            Instr::ElemDrop(_) => {}
-            Instr::TableCopy(_, _) => conv!(self, (I32, I32, I32) -> ()),
-            Instr::TableGrow(_) => conv!(self, (REF, I32) -> ()),
-            Instr::TableSize(_) => conv!(self, () -> I32),
-            Instr::TableFill(_) => conv!(self, (I32, REF) -> ()),
-
-            Instr::I32Load(MemArg(align, _)) => {
-                if *align > 7 {
-                    return Err(DefaultIRGeneratorError::InvalidLoadAlignment(*align, 8));
-                }
-                conv!(self, I32 -> I32)
-            }
-            Instr::I64Load(MemArg(align, _)) => {
-                if *align > 15 {
-                    return Err(DefaultIRGeneratorError::InvalidLoadAlignment(*align, 16));
-                }
-                conv!(self, I32 -> I64)
-            }
-            Instr::F32Load(MemArg(align, _)) => {
-                if *align > 7 {
-                    return Err(DefaultIRGeneratorError::InvalidLoadAlignment(*align, 8));
-                }
-                conv!(self, I32 -> F32)
-            }
-            Instr::F64Load(MemArg(align, _)) => {
-                if *align > 15 {
-                    return Err(DefaultIRGeneratorError::InvalidLoadAlignment(*align, 16));
-                }
-                conv!(self, I32 -> F64)
-            }
-
-            Instr::I32Load8U(MemArg(align, _)) | Instr::I32Load8S(MemArg(align, _)) => {
-                if *align > 0 {
-                    return Err(DefaultIRGeneratorError::InvalidLoadAlignment(*align, 0));
-                }
-                conv!(self, I32 -> I32)
-            }
-
-            Instr::I32Load16S(MemArg(align, _)) | Instr::I32Load16U(MemArg(align, _)) => {
-                if *align > 3 {
-                    return Err(DefaultIRGeneratorError::InvalidLoadAlignment(*align, 4));
-                }
-                conv!(self, I32 -> I32)
-            }
-
-            Instr::I64Load8S(_)
-            | Instr::I64Load8U(_)
-            | Instr::I64Load16S(_)
-            | Instr::I64Load16U(_)
-            | Instr::I64Load32S(_)
-            | Instr::I64Load32U(_) => conv!(self, I32 -> I64),
-
-            Instr::I32Store(_) => conv!(self, (I32, I32) -> ()),
-            Instr::I64Store(_) => conv!(self, (I64, I32) -> ()),
-            Instr::F32Store(_) => conv!(self, (F32, I32) -> ()),
-            Instr::F64Store(_) => conv!(self, (F64, I32) -> ()),
-            Instr::I32Store8(_) | Instr::I32Store16(_) => conv!(self, (I32, I32) -> ()),
-
-            Instr::I64Store8(_) | Instr::I64Store16(_) | Instr::I64Store32(_) => {
-                conv!(self, (I64, I32) -> ())
-            }
-            Instr::MemorySize(_) => conv!(self, () -> I32),
-            Instr::MemoryGrow(_) => conv!(self, I32 -> I32),
-            Instr::MemoryInit(_, _) => conv!(self, (I32, I32, I32) -> ()),
-            Instr::DataDrop(_) => {}
-            Instr::MemoryCopy(_, _) | Instr::MemoryFill(_) => conv!(self, (I32, I32, I32) -> ()),
-
-            Instr::I32Const(_) => conv!(self, () -> I32),
-            Instr::I64Const(_) => conv!(self, () -> I64),
-            Instr::F32Const(_) => conv!(self, () -> F32),
-            Instr::F64Const(_) => conv!(self, () -> F64),
-
-            Instr::I32Eqz => conv!(self, I32 -> I32),
-            Instr::I32Eq
-            | Instr::I32Ne
-            | Instr::I32LtS
-            | Instr::I32LtU
-            | Instr::I32GtS
-            | Instr::I32GtU
-            | Instr::I32LeS
-            | Instr::I32LeU
-            | Instr::I32GeS
-            | Instr::I32GeU => conv!(self, (I32, I32) -> I32),
-
-            Instr::I64Eqz => conv!(self, I64 -> I32),
-            Instr::I64Eq
-            | Instr::I64Ne
-            | Instr::I64LtS
-            | Instr::I64LtU
-            | Instr::I64GtS
-            | Instr::I64GtU
-            | Instr::I64LeS
-            | Instr::I64LeU
-            | Instr::I64GeS
-            | Instr::I64GeU => conv!(self, (I64, I64) -> I32),
-
-            Instr::F32Eq
-            | Instr::F32Ne
-            | Instr::F32Lt
-            | Instr::F32Gt
-            | Instr::F32Le
-            | Instr::F32Ge => conv!(self, (F32, F32) -> I32),
-
-            Instr::F64Eq
-            | Instr::F64Ne
-            | Instr::F64Lt
-            | Instr::F64Gt
-            | Instr::F64Le
-            | Instr::F64Ge => conv!(self, (F64, F64) -> I32),
-
-            Instr::I32Clz | Instr::I32Ctz | Instr::I32Popcnt => conv!(self, I32 -> I32),
-
-            Instr::I32Add
-            | Instr::I32Sub
-            | Instr::I32Mul
-            | Instr::I32DivS
-            | Instr::I32DivU
-            | Instr::I32RemS
-            | Instr::I32RemU
-            | Instr::I32And
-            | Instr::I32Ior
-            | Instr::I32Xor
-            | Instr::I32Shl
-            | Instr::I32ShrS
-            | Instr::I32ShrU
-            | Instr::I32Rol
-            | Instr::I32Ror => conv!(self, (I32, I32) -> I32),
-
-            Instr::I64Clz | Instr::I64Ctz | Instr::I64Popcnt => conv!(self, I64 -> I64),
-
-            Instr::I64Add
-            | Instr::I64Sub
-            | Instr::I64Mul
-            | Instr::I64DivS
-            | Instr::I64DivU
-            | Instr::I64RemS
-            | Instr::I64RemU
-            | Instr::I64And
-            | Instr::I64Ior
-            | Instr::I64Xor
-            | Instr::I64Shl
-            | Instr::I64ShrS
-            | Instr::I64ShrU
-            | Instr::I64Rol
-            | Instr::I64Ror => conv!(self, (I64, I64) -> I64),
-
-            Instr::F32Abs
-            | Instr::F32Neg
-            | Instr::F32Ceil
-            | Instr::F32Floor
-            | Instr::F32Trunc
-            | Instr::F32NearestInt
-            | Instr::F32Sqrt => conv!(self, F32 -> F32),
-
-            Instr::F32Add
-            | Instr::F32Sub
-            | Instr::F32Mul
-            | Instr::F32Div
-            | Instr::F32Min
-            | Instr::F32Max
-            | Instr::F32CopySign => conv!(self, (F32, F32) -> F32),
-
-            Instr::F64Abs
-            | Instr::F64Neg
-            | Instr::F64Ceil
-            | Instr::F64Floor
-            | Instr::F64Trunc
-            | Instr::F64NearestInt
-            | Instr::F64Sqrt => conv!(self, F64 -> F64),
-
-            Instr::F64Add
-            | Instr::F64Sub
-            | Instr::F64Mul
-            | Instr::F64Div
-            | Instr::F64Min
-            | Instr::F64Max
-            | Instr::F64CopySign => conv!(self, (F64, F64) -> F64),
-
-            Instr::I32ConvertI64 => conv!(self, I64 -> I32),
-            Instr::I32SConvertF32 | Instr::I32UConvertF32 => conv!(self, F32 -> I32),
-            Instr::I32SConvertF64 | Instr::I32UConvertF64 => conv!(self, F64 -> I32),
-            Instr::I64SConvertI32 | Instr::I64UConvertI32 => conv!(self, I32 -> I64),
-            Instr::I64SConvertF32 | Instr::I64UConvertF32 => conv!(self, F32 -> I64),
-            Instr::I64SConvertF64 | Instr::I64UConvertF64 => conv!(self, F64 -> I64),
-
-            Instr::F32SConvertI32 | Instr::F32UConvertI32 => conv!(self, I32 -> F32),
-            Instr::F32SConvertI64 | Instr::F32UConvertI64 => conv!(self, I64 -> F32),
-            Instr::F32ConvertF64 => conv!(self, F64 -> F32),
-            Instr::F64SConvertI32 | Instr::F64UConvertI32 => conv!(self, I32 -> F64),
-            Instr::F64SConvertI64 | Instr::F64UConvertI64 => conv!(self, I64 -> F64),
-            Instr::F64ConvertF32 => conv!(self, F32 -> F64),
-            Instr::I32SConvertSatF32 | Instr::I32UConvertSatF32 => conv!(self, F32 -> I32),
-            Instr::I32SConvertSatF64 | Instr::I32UConvertSatF64 => conv!(self, F64 -> I32),
-            Instr::I64SConvertSatF32 | Instr::I64UConvertSatF32 => conv!(self, F32 -> I64),
-            Instr::I64SConvertSatF64 | Instr::I64UConvertSatF64 => conv!(self, F64 -> I64),
-            Instr::I32ReinterpretF32 => conv!(self, F32 -> I32),
-            Instr::I64ReinterpretF64 => conv!(self, F64 -> I64),
-
-            Instr::F32ReinterpretI32 => conv!(self, I32 -> F32),
-
-            Instr::F64ReinterpretI64 => conv!(self, I64 -> F64),
-
-            // unary accept I32 produce I32
-            Instr::I32SExtendI8 | Instr::I32SExtendI16 => conv!(self, I32 -> I32),
-
-            // unary accept I64 produce I64
-            Instr::I64SExtendI8 | Instr::I64SExtendI16 | Instr::I64SExtendI32 => {
-                conv!(self, I64 -> I64)
-            }
-        }
-
-        Ok(instr)
-    }
 }
 
 #[derive(Default, Clone, Debug)]
@@ -931,12 +101,16 @@ pub struct DefaultIRGenerator {
     max_valid_mem_index: u32,
     last_section_discrim: u32,
 
+    // constant expressions may only use imported globals
+    global_import_boundary_idx: u32,
+
     next_func_idx: u32,
 
-    type_tracer: TypeTracer,
+    type_checker: TypeChecker,
 
     types: Option<Box<[Type]>>,
     func_types: Option<Box<[TypeIdx]>>,
+    table_types: Option<Box<[TableType]>>,
 
     global_types: Vec<GlobalType>,
     current_locals: Vec<ValType>,
@@ -1037,6 +211,7 @@ impl IR for DefaultIRGenerator {
         valtype: Self::ValType,
         is_mutable: bool,
     ) -> Result<Self::GlobalType, Self::Error> {
+        self.type_checker.clear();
         let global_type = GlobalType(
             valtype,
             if is_mutable {
@@ -1167,6 +342,7 @@ impl IR for DefaultIRGenerator {
                 self.last_section_discrim,
             ));
         }
+        self.table_types = Some(data.clone());
         self.max_valid_table_index += data.len() as u32;
         self.last_section_discrim = 4;
         Ok(SectionType::Table(data))
@@ -1433,6 +609,7 @@ impl IR for DefaultIRGenerator {
         global_type: Self::GlobalType,
     ) -> Result<Self::ImportDesc, Self::Error> {
         self.max_valid_global_index += 1;
+        self.global_import_boundary_idx = self.max_valid_global_index;
         Ok(ImportDesc::Global(global_type))
     }
 
@@ -1500,6 +677,8 @@ impl IR for DefaultIRGenerator {
         mem_idx: Self::MemIdx,
         expr: Self::Expr,
     ) -> Result<Self::Data, Self::Error> {
+        self.type_checker.pop_ctrl()?;
+        self.type_checker.clear();
         Ok(Data::Active(ByteVec(bytes), mem_idx, expr))
     }
 
@@ -1527,81 +706,114 @@ impl IR for DefaultIRGenerator {
         Ok(Expr(instrs))
     }
 
-    fn start_block(&mut self, block_type: &BlockType) {
-        eprintln!("start block");
-        self.type_tracer.start(
-            BlockKind::Block,
-            *block_type,
-            self.types.as_ref().map(|xs| xs as &[_]).unwrap_or_default(),
-        );
+    fn start_block(&mut self, block_type: &BlockType) -> Result<(), Self::Error> {
+        let (inputs, outputs) = self.block_type(block_type);
+
+        self.type_checker
+            .pop_vals(&inputs)
+            .map_err(DefaultIRGeneratorError::TypeError)?;
+        self.type_checker
+            .push_ctrl(BlockKind::Block, inputs, outputs);
+        Ok(())
     }
 
-    fn start_loop(&mut self, block_type: &BlockType) {
-        self.type_tracer.start(
-            BlockKind::Loop,
-            *block_type,
-            self.types.as_ref().map(|xs| xs as &[_]).unwrap_or_default(),
-        );
+    fn start_loop(&mut self, block_type: &BlockType) -> Result<(), Self::Error> {
+        let (inputs, outputs) = self.block_type(block_type);
+
+        self.type_checker
+            .pop_vals(&inputs)
+            .map_err(DefaultIRGeneratorError::TypeError)?;
+        self.type_checker
+            .push_ctrl(BlockKind::Loop, inputs, outputs);
+        Ok(())
     }
 
-    fn start_ifelse(&mut self, block_type: &BlockType) {
-        self.type_tracer.start(
-            BlockKind::IfElse,
-            *block_type,
-            self.types.as_ref().map(|xs| xs as &[_]).unwrap_or_default(),
-        );
+    fn start_if(&mut self, block_type: &BlockType) -> Result<(), Self::Error> {
+        let (inputs, outputs) = self.block_type(block_type);
+        #[cfg(any())]
+        eprintln!("start_if inputs={inputs:?} outputs={outputs:?}");
+
+        self.type_checker
+            .pop_val(Some(ValType::NumType(NumType::I32).into()))
+            .map_err(DefaultIRGeneratorError::TypeError)?;
+        self.type_checker
+            .pop_vals(&inputs)
+            .map_err(DefaultIRGeneratorError::TypeError)?;
+        self.type_checker.push_ctrl(BlockKind::If, inputs, outputs);
+        Ok(())
     }
 
-    fn start_section(&mut self, section_id: u8, _section_size: u32) {
+    fn start_else(&mut self, _: &BlockType) -> Result<(), Self::Error> {
+        let frame = self.type_checker.pop_ctrl()?;
+        #[cfg(any())]
+        eprintln!("start_else");
+        self.type_checker
+            .push_ctrl(BlockKind::Else, frame.start_types, frame.end_types);
+
+        Ok(())
+    }
+
+    fn start_section(&mut self, section_id: u8, _section_size: u32) -> Result<(), Self::Error> {
         self.current_section_id = section_id;
+        Ok(())
     }
 
-    fn start_func(&mut self) {
-        if let Some(type_idx) = self
-            .func_types
-            .as_ref()
-            .and_then(|xs| xs.get(self.next_func_idx as usize))
-        {
-            self.type_tracer.reset();
-            if let Some(types) = self.types.as_ref() {
-                self.type_tracer
-                    .start(BlockKind::Func, BlockType::TypeIndex(*type_idx), types);
-                if let Some(typeinfo) = types.get(type_idx.0 as usize) {
-                    self.current_locals.extend(typeinfo.0 .0.iter().cloned())
-                }
-            }
-        }
+    fn start_func(&mut self) -> Result<(), Self::Error> {
+        #[cfg(any())]
+        eprintln!(
+            "= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = "
+        );
+        self.type_checker.clear();
+        let (start, end) = self.func_type(&FuncIdx(self.next_func_idx));
 
+        self.current_locals.extend(start.iter().cloned());
+        self.type_checker
+            .push_ctrl(BlockKind::Func, Box::new([]), end);
         self.next_func_idx += 1;
+
+        Ok(())
     }
 
-    fn start_elem_active_table_index(&mut self) {
-        self.type_tracer.start(
-            BlockKind::Func,
-            BlockType::Val(ValType::NumType(NumType::I32)),
-            &[],
+    fn start_elem_active_table_index(&mut self) -> Result<(), Self::Error> {
+        self.type_checker.push_ctrl(
+            BlockKind::ConstantExpression,
+            Box::new([]),
+            Box::new([ValType::NumType(NumType::I32)]),
         );
+
+        Ok(())
     }
 
-    fn start_elem_reftype_list(&mut self, ref_type: Option<&Self::RefType>) {
-        self.type_tracer.start(
-            BlockKind::Func,
-            BlockType::Val(ValType::RefType(ref_type.copied().unwrap_or_default())),
-            &[],
+    fn start_elem_reftype_list(
+        &mut self,
+        ref_type: Option<&Self::RefType>,
+    ) -> Result<(), Self::Error> {
+        self.type_checker.push_ctrl(
+            BlockKind::ConstantExpression,
+            Box::new([]),
+            Box::new([ValType::RefType(ref_type.copied().unwrap_or_default())]),
         );
+
+        Ok(())
     }
 
-    fn start_data_offset(&mut self) {
-        self.type_tracer.start(
-            BlockKind::Func,
-            BlockType::Val(ValType::NumType(NumType::I32)),
-            &[],
+    fn start_data_offset(&mut self) -> Result<(), Self::Error> {
+        self.type_checker.push_ctrl(
+            BlockKind::ConstantExpression,
+            Box::new([]),
+            Box::new([ValType::NumType(NumType::I32)]),
         );
+
+        Ok(())
     }
 
-    fn start_global(&mut self, global_type: &Self::GlobalType) {
-        self.type_tracer
-            .start(BlockKind::Func, BlockType::Val(global_type.0), &[]);
+    fn start_global(&mut self, global_type: &Self::GlobalType) -> Result<(), Self::Error> {
+        self.type_checker.push_ctrl(
+            BlockKind::ConstantExpression,
+            Box::new([]),
+            Box::new([global_type.0]),
+        );
+        Ok(())
     }
 
     fn make_func(
@@ -1609,17 +821,8 @@ impl IR for DefaultIRGenerator {
         locals: Box<[Self::Local]>,
         expr: Self::Expr,
     ) -> Result<Self::Func, Self::Error> {
-        self.type_tracer.trace(
-            Instr::Return,
-            self.func_types
-                .as_ref()
-                .map(|xs| xs as &[_])
-                .unwrap_or_default(),
-            self.types.as_ref().unwrap(),
-            &self.current_locals,
-            &self.global_types,
-        )?;
-        self.type_tracer.reset();
+        self.type_checker.pop_ctrl()?;
+        self.type_checker.clear();
         // TODO: type tracer: check that the stack validates against the desired type of the
         // function
         self.current_locals.clear();
@@ -1631,17 +834,8 @@ impl IR for DefaultIRGenerator {
         global_type: Self::GlobalType,
         expr: Self::Expr,
     ) -> Result<Self::Global, Self::Error> {
-        self.type_tracer.trace(
-            Instr::Return,
-            self.func_types
-                .as_ref()
-                .map(|xs| xs as &[_])
-                .unwrap_or_default(),
-            self.types.as_ref().unwrap(),
-            &self.current_locals,
-            &self.global_types,
-        )?;
-        self.type_tracer.reset();
+        self.type_checker.pop_ctrl()?;
+        self.type_checker.clear();
         Ok(Global(global_type, expr))
     }
 
@@ -1660,18 +854,7 @@ impl IR for DefaultIRGenerator {
         items: Box<[Self::ValType]>,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        instrs.push(
-            self.type_tracer.trace(
-                Instr::Select(items),
-                self.func_types
-                    .as_ref()
-                    .map(|xs| xs as &[_])
-                    .unwrap_or_default(),
-                self.types.as_ref().unwrap(),
-                &self.current_locals,
-                &self.global_types,
-            )?,
-        );
+        instrs.push(self.trace(Instr::Select(items))?);
         Ok(())
     }
 
@@ -1682,18 +865,7 @@ impl IR for DefaultIRGenerator {
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
         let items = items.iter().map(|xs| LabelIdx(*xs)).collect();
-        instrs.push(
-            self.type_tracer.trace(
-                Instr::BrTable(items, LabelIdx(alternate)),
-                self.func_types
-                    .as_ref()
-                    .map(|xs| xs as &[_])
-                    .unwrap_or_default(),
-                self.types.as_ref().unwrap(),
-                &self.current_locals,
-                &self.global_types,
-            )?,
-        );
+        instrs.push(self.trace(Instr::BrTable(items, LabelIdx(alternate)))?);
         Ok(())
     }
 
@@ -1704,22 +876,11 @@ impl IR for DefaultIRGenerator {
         arg0: u64,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        instrs.push(
-            self.type_tracer.trace(
-                match (code, subcode) {
-                    (0x42, 0) => Instr::I64Const(arg0 as i64),
-                    (0x44, 0) => Instr::F64Const(f64::from_bits(arg0)),
-                    _ => return Err(DefaultIRGeneratorError::InvalidInstruction(code, subcode)),
-                },
-                self.func_types
-                    .as_ref()
-                    .map(|xs| xs as &[_])
-                    .unwrap_or_default(),
-                self.types.as_ref().unwrap(),
-                &self.current_locals,
-                &self.global_types,
-            )?,
-        );
+        instrs.push(self.trace(match (code, subcode) {
+            (0x42, 0) => Instr::I64Const(arg0 as i64),
+            (0x44, 0) => Instr::F64Const(f64::from_bits(arg0)),
+            _ => return Err(DefaultIRGeneratorError::InvalidInstruction(code, subcode)),
+        })?);
         Ok(())
     }
 
@@ -1777,18 +938,7 @@ impl IR for DefaultIRGenerator {
 
             _ => return Err(DefaultIRGeneratorError::InvalidInstruction(code, subcode)),
         };
-        instrs.push(
-            self.type_tracer.trace(
-                instr,
-                self.func_types
-                    .as_ref()
-                    .map(|xs| xs as &[_])
-                    .unwrap_or_default(),
-                self.types.as_ref().unwrap(),
-                &self.current_locals,
-                &self.global_types,
-            )?,
-        );
+        instrs.push(self.trace(instr)?);
         Ok(())
     }
 
@@ -1837,18 +987,7 @@ impl IR for DefaultIRGenerator {
             (0xfc, 0x11) => Instr::TableFill(self.make_table_index(arg0)?),
             _ => return Err(DefaultIRGeneratorError::InvalidInstruction(code, subcode)),
         };
-        instrs.push(
-            self.type_tracer.trace(
-                instr,
-                self.func_types
-                    .as_ref()
-                    .map(|xs| xs as &[_])
-                    .unwrap_or_default(),
-                self.types.as_ref().unwrap(),
-                &self.current_locals,
-                &self.global_types,
-            )?,
-        );
+        instrs.push(self.trace(instr)?);
         Ok(())
     }
 
@@ -1858,162 +997,151 @@ impl IR for DefaultIRGenerator {
         subcode: u32,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        instrs.push(
-            self.type_tracer.trace(
-                match (code, subcode) {
-                    (0x00, 0) => Instr::Unreachable,
-                    (0x01, 0) => Instr::Nop,
-                    (0xd1, 0) => Instr::RefIsNull,
-                    (0x1a, 0) => Instr::Drop,
-                    (0x1b, 0) => Instr::SelectEmpty,
-                    (0x0f, 0) => Instr::Return,
-                    (0x45, 0) => Instr::I32Eqz,
-                    (0x46, 0) => Instr::I32Eq,
-                    (0x47, 0) => Instr::I32Ne,
-                    (0x48, 0) => Instr::I32LtS,
-                    (0x49, 0) => Instr::I32LtU,
-                    (0x4a, 0) => Instr::I32GtS,
-                    (0x4b, 0) => Instr::I32GtU,
-                    (0x4c, 0) => Instr::I32LeS,
-                    (0x4d, 0) => Instr::I32LeU,
-                    (0x4e, 0) => Instr::I32GeS,
-                    (0x4f, 0) => Instr::I32GeU,
-                    (0x50, 0) => Instr::I64Eqz,
-                    (0x51, 0) => Instr::I64Eq,
-                    (0x52, 0) => Instr::I64Ne,
-                    (0x53, 0) => Instr::I64LtS,
-                    (0x54, 0) => Instr::I64LtU,
-                    (0x55, 0) => Instr::I64GtS,
-                    (0x56, 0) => Instr::I64GtU,
-                    (0x57, 0) => Instr::I64LeS,
-                    (0x58, 0) => Instr::I64LeU,
-                    (0x59, 0) => Instr::I64GeS,
-                    (0x5a, 0) => Instr::I64GeU,
-                    (0x5b, 0) => Instr::F32Eq,
-                    (0x5c, 0) => Instr::F32Ne,
-                    (0x5d, 0) => Instr::F32Lt,
-                    (0x5e, 0) => Instr::F32Gt,
-                    (0x5f, 0) => Instr::F32Le,
-                    (0x60, 0) => Instr::F32Ge,
-                    (0x61, 0) => Instr::F64Eq,
-                    (0x62, 0) => Instr::F64Ne,
-                    (0x63, 0) => Instr::F64Lt,
-                    (0x64, 0) => Instr::F64Gt,
-                    (0x65, 0) => Instr::F64Le,
-                    (0x66, 0) => Instr::F64Ge,
-                    (0x67, 0) => Instr::I32Clz,
-                    (0x68, 0) => Instr::I32Ctz,
-                    (0x69, 0) => Instr::I32Popcnt,
-                    (0x6a, 0) => Instr::I32Add,
-                    (0x6b, 0) => Instr::I32Sub,
-                    (0x6c, 0) => Instr::I32Mul,
-                    (0x6d, 0) => Instr::I32DivS,
-                    (0x6e, 0) => Instr::I32DivU,
-                    (0x6f, 0) => Instr::I32RemS,
-                    (0x70, 0) => Instr::I32RemU,
-                    (0x71, 0) => Instr::I32And,
-                    (0x72, 0) => Instr::I32Ior,
-                    (0x73, 0) => Instr::I32Xor,
-                    (0x74, 0) => Instr::I32Shl,
-                    (0x75, 0) => Instr::I32ShrS,
-                    (0x76, 0) => Instr::I32ShrU,
-                    (0x77, 0) => Instr::I32Rol,
-                    (0x78, 0) => Instr::I32Ror,
-                    (0x79, 0) => Instr::I64Clz,
-                    (0x7a, 0) => Instr::I64Ctz,
-                    (0x7b, 0) => Instr::I64Popcnt,
-                    (0x7c, 0) => Instr::I64Add,
-                    (0x7d, 0) => Instr::I64Sub,
-                    (0x7e, 0) => Instr::I64Mul,
-                    (0x7f, 0) => Instr::I64DivS,
-                    (0x80, 0) => Instr::I64DivU,
-                    (0x81, 0) => Instr::I64RemS,
-                    (0x82, 0) => Instr::I64RemU,
-                    (0x83, 0) => Instr::I64And,
-                    (0x84, 0) => Instr::I64Ior,
-                    (0x85, 0) => Instr::I64Xor,
-                    (0x86, 0) => Instr::I64Shl,
-                    (0x87, 0) => Instr::I64ShrS,
-                    (0x88, 0) => Instr::I64ShrU,
-                    (0x89, 0) => Instr::I64Rol,
-                    (0x8a, 0) => Instr::I64Ror,
-                    (0x8b, 0) => Instr::F32Abs,
-                    (0x8c, 0) => Instr::F32Neg,
-                    (0x8d, 0) => Instr::F32Ceil,
-                    (0x8e, 0) => Instr::F32Floor,
-                    (0x8f, 0) => Instr::F32Trunc,
-                    (0x90, 0) => Instr::F32NearestInt,
-                    (0x91, 0) => Instr::F32Sqrt,
-                    (0x92, 0) => Instr::F32Add,
-                    (0x93, 0) => Instr::F32Sub,
-                    (0x94, 0) => Instr::F32Mul,
-                    (0x95, 0) => Instr::F32Div,
-                    (0x96, 0) => Instr::F32Min,
-                    (0x97, 0) => Instr::F32Max,
-                    (0x98, 0) => Instr::F32CopySign,
-                    (0x99, 0) => Instr::F64Abs,
-                    (0x9a, 0) => Instr::F64Neg,
-                    (0x9b, 0) => Instr::F64Ceil,
-                    (0x9c, 0) => Instr::F64Floor,
-                    (0x9d, 0) => Instr::F64Trunc,
-                    (0x9e, 0) => Instr::F64NearestInt,
-                    (0x9f, 0) => Instr::F64Sqrt,
-                    (0xa0, 0) => Instr::F64Add,
-                    (0xa1, 0) => Instr::F64Sub,
-                    (0xa2, 0) => Instr::F64Mul,
-                    (0xa3, 0) => Instr::F64Div,
-                    (0xa4, 0) => Instr::F64Min,
-                    (0xa5, 0) => Instr::F64Max,
-                    (0xa6, 0) => Instr::F64CopySign,
-                    (0xa7, 0) => Instr::I32ConvertI64,
-                    (0xa8, 0) => Instr::I32SConvertF32,
-                    (0xa9, 0) => Instr::I32UConvertF32,
-                    (0xaa, 0) => Instr::I32SConvertF64,
-                    (0xab, 0) => Instr::I32UConvertF64,
-                    (0xac, 0) => Instr::I64SConvertI32,
-                    (0xad, 0) => Instr::I64UConvertI32,
-                    (0xae, 0) => Instr::I64SConvertF32,
-                    (0xaf, 0) => Instr::I64UConvertF32,
-                    (0xb0, 0) => Instr::I64SConvertF64,
-                    (0xb1, 0) => Instr::I64UConvertF64,
-                    (0xb2, 0) => Instr::F32SConvertI32,
-                    (0xb3, 0) => Instr::F32UConvertI32,
-                    (0xb4, 0) => Instr::F32SConvertI64,
-                    (0xb5, 0) => Instr::F32UConvertI64,
-                    (0xb6, 0) => Instr::F32ConvertF64,
-                    (0xb7, 0) => Instr::F64SConvertI32,
-                    (0xb8, 0) => Instr::F64UConvertI32,
-                    (0xb9, 0) => Instr::F64SConvertI64,
-                    (0xba, 0) => Instr::F64UConvertI64,
-                    (0xbb, 0) => Instr::F64ConvertF32,
-                    (0xbc, 0) => Instr::I32ReinterpretF32,
-                    (0xbd, 0) => Instr::I64ReinterpretF64,
-                    (0xbe, 0) => Instr::F32ReinterpretI32,
-                    (0xbf, 0) => Instr::F64ReinterpretI64,
-                    (0xc0, 0) => Instr::I32SExtendI8,
-                    (0xc1, 0) => Instr::I32SExtendI16,
-                    (0xc2, 0) => Instr::I64SExtendI8,
-                    (0xc3, 0) => Instr::I64SExtendI16,
-                    (0xc4, 0) => Instr::I64SExtendI32,
-                    (0xfc, 0x00) => Instr::I32SConvertSatF32,
-                    (0xfc, 0x01) => Instr::I32UConvertSatF32,
-                    (0xfc, 0x02) => Instr::I32SConvertSatF64,
-                    (0xfc, 0x03) => Instr::I32UConvertSatF64,
-                    (0xfc, 0x04) => Instr::I64SConvertSatF32,
-                    (0xfc, 0x05) => Instr::I64UConvertSatF32,
-                    (0xfc, 0x06) => Instr::I64SConvertSatF64,
-                    (0xfc, 0x07) => Instr::I64UConvertSatF64,
-                    _ => return Err(DefaultIRGeneratorError::InvalidInstruction(code, subcode)),
-                },
-                self.func_types
-                    .as_ref()
-                    .map(|xs| xs as &[_])
-                    .unwrap_or_default(),
-                self.types.as_ref().unwrap(),
-                &self.current_locals,
-                &self.global_types,
-            )?,
-        );
+        instrs.push(self.trace(match (code, subcode) {
+            (0x00, 0) => Instr::Unreachable,
+            (0x01, 0) => Instr::Nop,
+            (0xd1, 0) => Instr::RefIsNull,
+            (0x1a, 0) => Instr::Drop,
+            (0x1b, 0) => Instr::SelectEmpty,
+            (0x0f, 0) => Instr::Return,
+            (0x45, 0) => Instr::I32Eqz,
+            (0x46, 0) => Instr::I32Eq,
+            (0x47, 0) => Instr::I32Ne,
+            (0x48, 0) => Instr::I32LtS,
+            (0x49, 0) => Instr::I32LtU,
+            (0x4a, 0) => Instr::I32GtS,
+            (0x4b, 0) => Instr::I32GtU,
+            (0x4c, 0) => Instr::I32LeS,
+            (0x4d, 0) => Instr::I32LeU,
+            (0x4e, 0) => Instr::I32GeS,
+            (0x4f, 0) => Instr::I32GeU,
+            (0x50, 0) => Instr::I64Eqz,
+            (0x51, 0) => Instr::I64Eq,
+            (0x52, 0) => Instr::I64Ne,
+            (0x53, 0) => Instr::I64LtS,
+            (0x54, 0) => Instr::I64LtU,
+            (0x55, 0) => Instr::I64GtS,
+            (0x56, 0) => Instr::I64GtU,
+            (0x57, 0) => Instr::I64LeS,
+            (0x58, 0) => Instr::I64LeU,
+            (0x59, 0) => Instr::I64GeS,
+            (0x5a, 0) => Instr::I64GeU,
+            (0x5b, 0) => Instr::F32Eq,
+            (0x5c, 0) => Instr::F32Ne,
+            (0x5d, 0) => Instr::F32Lt,
+            (0x5e, 0) => Instr::F32Gt,
+            (0x5f, 0) => Instr::F32Le,
+            (0x60, 0) => Instr::F32Ge,
+            (0x61, 0) => Instr::F64Eq,
+            (0x62, 0) => Instr::F64Ne,
+            (0x63, 0) => Instr::F64Lt,
+            (0x64, 0) => Instr::F64Gt,
+            (0x65, 0) => Instr::F64Le,
+            (0x66, 0) => Instr::F64Ge,
+            (0x67, 0) => Instr::I32Clz,
+            (0x68, 0) => Instr::I32Ctz,
+            (0x69, 0) => Instr::I32Popcnt,
+            (0x6a, 0) => Instr::I32Add,
+            (0x6b, 0) => Instr::I32Sub,
+            (0x6c, 0) => Instr::I32Mul,
+            (0x6d, 0) => Instr::I32DivS,
+            (0x6e, 0) => Instr::I32DivU,
+            (0x6f, 0) => Instr::I32RemS,
+            (0x70, 0) => Instr::I32RemU,
+            (0x71, 0) => Instr::I32And,
+            (0x72, 0) => Instr::I32Ior,
+            (0x73, 0) => Instr::I32Xor,
+            (0x74, 0) => Instr::I32Shl,
+            (0x75, 0) => Instr::I32ShrS,
+            (0x76, 0) => Instr::I32ShrU,
+            (0x77, 0) => Instr::I32Rol,
+            (0x78, 0) => Instr::I32Ror,
+            (0x79, 0) => Instr::I64Clz,
+            (0x7a, 0) => Instr::I64Ctz,
+            (0x7b, 0) => Instr::I64Popcnt,
+            (0x7c, 0) => Instr::I64Add,
+            (0x7d, 0) => Instr::I64Sub,
+            (0x7e, 0) => Instr::I64Mul,
+            (0x7f, 0) => Instr::I64DivS,
+            (0x80, 0) => Instr::I64DivU,
+            (0x81, 0) => Instr::I64RemS,
+            (0x82, 0) => Instr::I64RemU,
+            (0x83, 0) => Instr::I64And,
+            (0x84, 0) => Instr::I64Ior,
+            (0x85, 0) => Instr::I64Xor,
+            (0x86, 0) => Instr::I64Shl,
+            (0x87, 0) => Instr::I64ShrS,
+            (0x88, 0) => Instr::I64ShrU,
+            (0x89, 0) => Instr::I64Rol,
+            (0x8a, 0) => Instr::I64Ror,
+            (0x8b, 0) => Instr::F32Abs,
+            (0x8c, 0) => Instr::F32Neg,
+            (0x8d, 0) => Instr::F32Ceil,
+            (0x8e, 0) => Instr::F32Floor,
+            (0x8f, 0) => Instr::F32Trunc,
+            (0x90, 0) => Instr::F32NearestInt,
+            (0x91, 0) => Instr::F32Sqrt,
+            (0x92, 0) => Instr::F32Add,
+            (0x93, 0) => Instr::F32Sub,
+            (0x94, 0) => Instr::F32Mul,
+            (0x95, 0) => Instr::F32Div,
+            (0x96, 0) => Instr::F32Min,
+            (0x97, 0) => Instr::F32Max,
+            (0x98, 0) => Instr::F32CopySign,
+            (0x99, 0) => Instr::F64Abs,
+            (0x9a, 0) => Instr::F64Neg,
+            (0x9b, 0) => Instr::F64Ceil,
+            (0x9c, 0) => Instr::F64Floor,
+            (0x9d, 0) => Instr::F64Trunc,
+            (0x9e, 0) => Instr::F64NearestInt,
+            (0x9f, 0) => Instr::F64Sqrt,
+            (0xa0, 0) => Instr::F64Add,
+            (0xa1, 0) => Instr::F64Sub,
+            (0xa2, 0) => Instr::F64Mul,
+            (0xa3, 0) => Instr::F64Div,
+            (0xa4, 0) => Instr::F64Min,
+            (0xa5, 0) => Instr::F64Max,
+            (0xa6, 0) => Instr::F64CopySign,
+            (0xa7, 0) => Instr::I32ConvertI64,
+            (0xa8, 0) => Instr::I32SConvertF32,
+            (0xa9, 0) => Instr::I32UConvertF32,
+            (0xaa, 0) => Instr::I32SConvertF64,
+            (0xab, 0) => Instr::I32UConvertF64,
+            (0xac, 0) => Instr::I64SConvertI32,
+            (0xad, 0) => Instr::I64UConvertI32,
+            (0xae, 0) => Instr::I64SConvertF32,
+            (0xaf, 0) => Instr::I64UConvertF32,
+            (0xb0, 0) => Instr::I64SConvertF64,
+            (0xb1, 0) => Instr::I64UConvertF64,
+            (0xb2, 0) => Instr::F32SConvertI32,
+            (0xb3, 0) => Instr::F32UConvertI32,
+            (0xb4, 0) => Instr::F32SConvertI64,
+            (0xb5, 0) => Instr::F32UConvertI64,
+            (0xb6, 0) => Instr::F32ConvertF64,
+            (0xb7, 0) => Instr::F64SConvertI32,
+            (0xb8, 0) => Instr::F64UConvertI32,
+            (0xb9, 0) => Instr::F64SConvertI64,
+            (0xba, 0) => Instr::F64UConvertI64,
+            (0xbb, 0) => Instr::F64ConvertF32,
+            (0xbc, 0) => Instr::I32ReinterpretF32,
+            (0xbd, 0) => Instr::I64ReinterpretF64,
+            (0xbe, 0) => Instr::F32ReinterpretI32,
+            (0xbf, 0) => Instr::F64ReinterpretI64,
+            (0xc0, 0) => Instr::I32SExtendI8,
+            (0xc1, 0) => Instr::I32SExtendI16,
+            (0xc2, 0) => Instr::I64SExtendI8,
+            (0xc3, 0) => Instr::I64SExtendI16,
+            (0xc4, 0) => Instr::I64SExtendI32,
+            (0xfc, 0x00) => Instr::I32SConvertSatF32,
+            (0xfc, 0x01) => Instr::I32UConvertSatF32,
+            (0xfc, 0x02) => Instr::I32SConvertSatF64,
+            (0xfc, 0x03) => Instr::I32UConvertSatF64,
+            (0xfc, 0x04) => Instr::I64SConvertSatF32,
+            (0xfc, 0x05) => Instr::I64UConvertSatF32,
+            (0xfc, 0x06) => Instr::I64SConvertSatF64,
+            (0xfc, 0x07) => Instr::I64UConvertSatF64,
+            _ => return Err(DefaultIRGeneratorError::InvalidInstruction(code, subcode)),
+        })?);
         Ok(())
     }
 
@@ -2024,22 +1152,11 @@ impl IR for DefaultIRGenerator {
         expr: Self::Expr,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        instrs.push(
-            self.type_tracer.trace(
-                match block_kind {
-                    0x02 => Instr::Block(block_type, expr.0.into_boxed_slice()),
-                    0x03 => Instr::Loop(block_type, expr.0.into_boxed_slice()),
-                    unk => return Err(DefaultIRGeneratorError::InvalidInstruction(unk, 0)),
-                },
-                self.func_types
-                    .as_ref()
-                    .map(|xs| xs as &[_])
-                    .unwrap_or_default(),
-                self.types.as_ref().unwrap(),
-                &self.current_locals,
-                &self.global_types,
-            )?,
-        );
+        instrs.push(self.trace(match block_kind {
+            0x02 => Instr::Block(block_type, expr.0.into_boxed_slice()),
+            0x03 => Instr::Loop(block_type, expr.0.into_boxed_slice()),
+            unk => return Err(DefaultIRGeneratorError::InvalidInstruction(unk, 0)),
+        })?);
         Ok(())
     }
 
@@ -2050,7 +1167,7 @@ impl IR for DefaultIRGenerator {
         alternate: Option<Self::Expr>,
         instrs: &mut Vec<Self::Instr>,
     ) -> Result<(), Self::Error> {
-        instrs.push(if let Some(alternate) = alternate {
+        instrs.push(self.trace(if let Some(alternate) = alternate {
             Instr::IfElse(
                 block_type,
                 consequent.0.into_boxed_slice(),
@@ -2058,7 +1175,7 @@ impl IR for DefaultIRGenerator {
             )
         } else {
             Instr::If(block_type, consequent.0.into_boxed_slice())
-        });
+        })?);
         Ok(())
     }
 
@@ -2070,7 +1187,7 @@ impl IR for DefaultIRGenerator {
         flags: u8,
     ) -> Result<Self::Elem, Self::Error> {
         // TODO: actually check the types...
-        self.type_tracer.reset();
+        self.type_checker.clear();
         let exprs = idxs
             .iter()
             .map(|xs| Ok(Expr(vec![Instr::RefFunc(self.make_func_index(*xs)?)])))
@@ -2097,7 +1214,7 @@ impl IR for DefaultIRGenerator {
         exprs: Box<[Self::Expr]>,
         flags: u8,
     ) -> Result<Self::Elem, Self::Error> {
-        self.type_tracer.reset();
+        self.type_checker.clear();
         Ok(Elem {
             mode,
             kind: kind.unwrap_or_default(),
@@ -2138,5 +1255,55 @@ impl IR for DefaultIRGenerator {
         };
 
         Ok(ref_type)
+    }
+}
+
+impl DefaultIRGenerator {
+    fn trace(&mut self, instr: Instr) -> Result<Instr, DefaultIRGeneratorError> {
+        self.type_checker
+            .trace(
+                instr,
+                self.func_types
+                    .as_ref()
+                    .map(|xs| xs as &[_])
+                    .unwrap_or_default(),
+                self.types.as_ref().map(|xs| xs as &[_]).unwrap_or_default(),
+                &self.current_locals,
+                &self.global_types,
+                self.table_types
+                    .as_ref()
+                    .map(|xs| xs as &[_])
+                    .unwrap_or_default(),
+                self.global_import_boundary_idx,
+            )
+            .map_err(Into::into)
+    }
+
+    fn types(&self) -> &[Type] {
+        self.types.as_ref().map(|xs| xs as &[_]).unwrap_or_default()
+    }
+
+    fn func_types(&self) -> &[TypeIdx] {
+        self.func_types
+            .as_ref()
+            .map(|xs| xs as &[_])
+            .unwrap_or_default()
+    }
+
+    fn block_type(&self, block_type: &BlockType) -> (Box<[ValType]>, Box<[ValType]>) {
+        match block_type {
+            BlockType::Empty => (Box::new([]), Box::new([])),
+            BlockType::Val(v) => (Box::new([]), Box::new([*v])),
+            BlockType::TypeIndex(TypeIdx(idx)) => {
+                let typedef = &self.types()[*idx as usize];
+                (typedef.0 .0.clone(), typedef.1 .0.clone())
+            }
+        }
+    }
+
+    fn func_type(&self, FuncIdx(func_idx): &FuncIdx) -> (Box<[ValType]>, Box<[ValType]>) {
+        let TypeIdx(idx) = &self.func_types()[*func_idx as usize];
+        let typedef = &self.types()[*idx as usize];
+        (typedef.0 .0.clone(), typedef.1 .0.clone())
     }
 }

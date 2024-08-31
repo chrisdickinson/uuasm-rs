@@ -108,7 +108,7 @@ impl Imports {
                 vec![Code(Func {
                     locals: vec![].into(),
                     expr: Expr(vec![
-                        Instr::CallIntrinsic(self.external_functions.len()),
+                        Instr::CallIntrinsic(TypeIdx(0), self.external_functions.len()),
                         Instr::Return,
                     ]),
                 })]

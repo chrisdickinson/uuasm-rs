@@ -170,7 +170,7 @@ impl MemArg {
 #[derive(Debug, PartialEq, Clone)]
 pub enum Instr {
     // Internal (non-wasm) instructions
-    CallIntrinsic(usize),
+    CallIntrinsic(TypeIdx, usize),
 
     // Control Instructions
     Unreachable,

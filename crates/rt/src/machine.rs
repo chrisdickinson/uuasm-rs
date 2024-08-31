@@ -3385,7 +3385,7 @@ impl Machine {
                     value_stack.push(Value::I64(op as i64));
                 }
 
-                Instr::CallIntrinsic(idx) => {
+                Instr::CallIntrinsic(_type_idx, idx) => {
                     let external_function = resources.external_functions[*idx].clone();
                     let args =
                         locals.split_off(locals.len() - external_function.typedef.input_arity());

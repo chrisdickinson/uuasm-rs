@@ -1,6 +1,6 @@
 use uuasm_ir::IR;
 
-use crate::{window::DecodeWindow, Advancement, Parse, ParseErrorKind, ParseResult};
+use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseErrorKind, ParseResult};
 
 use super::{any::AnyParser, expr::ExprParser};
 
@@ -37,7 +37,7 @@ impl<T: IR> Parse<T> for IfElseBlockParser<T> {
             ),
 
             Self::BlockType(block_type) => {
-                irgen.start_ifelse(block_type);
+                irgen.start_if(block_type).map_err(IRError)?;
                 Advancement::YieldTo(
                     AnyParser::Expr(ExprParser::no_shift()),
                     |irgen, last_state, this_state| {
@@ -62,9 +62,10 @@ impl<T: IR> Parse<T> for IfElseBlockParser<T> {
                 )
             }
 
-            Self::Consequent(_, _) => {
+            Self::Consequent(block_type, _) => {
                 let next = window.take()?;
                 if next == 0x05 {
+                    irgen.start_else(block_type).map_err(IRError)?;
                     Advancement::YieldTo(
                         AnyParser::Expr(Default::default()),
                         |irgen, last_state, this_state| {

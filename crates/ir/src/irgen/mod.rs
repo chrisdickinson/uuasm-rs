@@ -151,15 +151,39 @@ pub trait IR {
 
     fn make_expr(&mut self, instrs: Vec<Self::Instr>) -> Result<Self::Expr, Self::Error>;
 
-    fn start_data_offset(&mut self) {}
-    fn start_global(&mut self, _global_type: &Self::GlobalType) {}
-    fn start_elem_reftype_list(&mut self, _ref_type: Option<&Self::RefType>) {}
-    fn start_elem_active_table_index(&mut self) {}
-    fn start_section(&mut self, _section_id: u8, _section_size: u32) {}
-    fn start_block(&mut self, _block_type: &Self::BlockType) {}
-    fn start_loop(&mut self, _block_type: &Self::BlockType) {}
-    fn start_ifelse(&mut self, _block_type: &Self::BlockType) {}
-    fn start_func(&mut self) {}
+    fn start_data_offset(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn start_global(&mut self, _global_type: &Self::GlobalType) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn start_elem_reftype_list(
+        &mut self,
+        _ref_type: Option<&Self::RefType>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn start_elem_active_table_index(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn start_section(&mut self, _section_id: u8, _section_size: u32) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn start_block(&mut self, _block_type: &Self::BlockType) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn start_loop(&mut self, _block_type: &Self::BlockType) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn start_if(&mut self, _block_type: &Self::BlockType) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn start_else(&mut self, _block_type: &Self::BlockType) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn start_func(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
 
     fn make_func(
         &mut self,

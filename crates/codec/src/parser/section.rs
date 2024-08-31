@@ -49,7 +49,7 @@ impl<T: IR> Parse<T> for SectionParser<T> {
 
                 SectionParser::SectionContent(kind, length) => {
                     let length = *length as usize;
-                    irgen.start_section(*kind, length as u32);
+                    irgen.start_section(*kind, length as u32).map_err(IRError)?;
                     return Ok(match *kind {
                         0x0 => Advancement::YieldTo(
                             AnyParser::Accumulate(Accumulator::new(length)),

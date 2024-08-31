@@ -111,7 +111,7 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                 Self::Flags(_) => unreachable!(),
 
                 Self::ParseActiveModeTableIdx(_, _) => {
-                    irgen.start_elem_active_table_index();
+                    irgen.start_elem_active_table_index().map_err(IRError)?;
 
                     Advancement::YieldTo(
                         AnyParser::Expr(Default::default()),
@@ -189,7 +189,9 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                 ),
 
                 Self::ParseRefType(_, _, ref_type) => {
-                    irgen.start_elem_reftype_list(ref_type.as_ref());
+                    irgen
+                        .start_elem_reftype_list(ref_type.as_ref())
+                        .map_err(IRError)?;
 
                     Advancement::YieldTo(
                         AnyParser::ExprList(Default::default()),

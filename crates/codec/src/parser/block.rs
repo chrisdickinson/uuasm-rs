@@ -1,6 +1,6 @@
 use uuasm_ir::IR;
 
-use crate::{window::DecodeWindow, Advancement, Parse, ParseErrorKind};
+use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseErrorKind};
 
 use super::any::AnyParser;
 
@@ -17,7 +17,7 @@ pub enum BlockParser<T: IR> {
 impl<T: IR> Parse<T> for BlockParser<T> {
     type Production = (T::BlockType, T::Expr);
 
-    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, _window: &mut DecodeWindow) -> crate::ParseResult<T> {
         Ok(match self {
             Self::Init => Advancement::YieldTo(
                 AnyParser::BlockType(Default::default()),
@@ -37,7 +37,7 @@ impl<T: IR> Parse<T> for BlockParser<T> {
             Self::BlockType(block_type) => {
                 // TODO: thread "loop or block" discriminant info through here so we can call the
                 // right function
-                irgen.start_block(block_type);
+                irgen.start_block(block_type).map_err(IRError)?;
                 Advancement::YieldTo(
                     AnyParser::Expr(Default::default()),
                     |irgen, last_state, this_state| {

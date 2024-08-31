@@ -21,7 +21,7 @@ impl<T: IR> Parse<T> for DataParser<T> {
         match self {
             Self::Init => match window.take()? {
                 0x00 => {
-                    irgen.start_data_offset();
+                    irgen.start_data_offset().map_err(IRError)?;
                     Ok(Advancement::YieldTo(
                         AnyParser::Expr(Default::default()),
                         // this parses a constexpr, then a bytevec, becoming a data::active(vec, memidx(0),
@@ -87,7 +87,7 @@ impl<T: IR> Parse<T> for DataParser<T> {
             },
 
             Self::MemIdx(_) => {
-                irgen.start_data_offset();
+                irgen.start_data_offset().map_err(IRError)?;
 
                 Ok(Advancement::YieldTo(
                     AnyParser::Expr(Default::default()),
