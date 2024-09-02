@@ -26,7 +26,7 @@ impl<T: IR> Parse<T> for InstrArgMultibyteParser {
 
     fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         Ok(match self {
-            Self::Init(leader) => Advancement::YieldTo(
+            Self::Init(_leader) => Advancement::YieldTo(
                 AnyParser::LEBU32(Default::default()),
                 |irgen, last_state, this_state| {
                     let AnyParser::LEBU32(parser) = last_state else {

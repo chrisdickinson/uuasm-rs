@@ -4,7 +4,7 @@ use std::collections::LinkedList;
 use thiserror::Error;
 
 use crate::{
-    BlockType, FuncIdx, GlobalIdx, GlobalType, Instr, LabelIdx, LocalIdx, MemArg, Mutability,
+    ElemIdx, FuncIdx, GlobalIdx, GlobalType, Instr, LabelIdx, LocalIdx, MemArg, Mutability,
     NumType, RefType, ResultType, TableIdx, TableType, Type, TypeIdx, ValType,
 };
 
@@ -273,6 +273,7 @@ impl TypeChecker {
         local_types: &[ValType],
         global_types: &[GlobalType],
         table_types: &[TableType],
+        elem_types: &[RefType],
         global_import_boundary: u32,
     ) -> Result<Instr, TypeError> {
         let block_kind = self.ctrls.front().map(|ctrl| ctrl.kind).unwrap();
@@ -302,12 +303,36 @@ impl TypeChecker {
                 self.push_vals(results.iter().copied());
             }
 
-            Instr::TableInit(_, _) => conv!(self, (I32, I32, I32) -> ()),
+            Instr::TableInit(ElemIdx(elem_idx), TableIdx(table_idx)) => {
+                let elem_type = &elem_types[*elem_idx as usize];
+                let TableType(table_type, _) = &table_types[*table_idx as usize];
+
+                if table_type != elem_type {
+                    return Err(TypeError::TypeMismatch {
+                        expected: Val::Typed(ValType::RefType(*table_type)),
+                        received: Val::Typed(ValType::RefType(*elem_type)),
+                    });
+                }
+
+                conv!(self, (I32, I32, I32) -> ())
+            }
             Instr::ElemDrop(_) => {}
-            Instr::TableCopy(_, _) => conv!(self, (I32, I32, I32) -> (I32)),
+            Instr::TableCopy(TableIdx(src), TableIdx(dest)) => {
+                let TableType(src_type, _) = &table_types[*src as usize];
+                let TableType(dest_type, _) = &table_types[*dest as usize];
+                if *src_type != *dest_type {
+                    return Err(TypeError::TypeMismatch {
+                        expected: Val::Typed(ValType::RefType(*src_type)),
+                        received: Val::Typed(ValType::RefType(*dest_type)),
+                    });
+                }
+                conv!(self, (I32, I32, I32) -> ())
+            }
+
             Instr::TableGrow(TableIdx(table_idx)) => {
                 let TableType(table_type, _) = table_types[*table_idx as usize];
-                self.pop_vals(&[I32, Val::Typed(ValType::RefType(table_type))])?;
+                self.pop_vals(&[Val::Typed(ValType::RefType(table_type)), I32])?;
+                self.push_val(I32);
             }
 
             Instr::TableSize(_) => {
@@ -417,7 +442,7 @@ impl TypeChecker {
                 let TypeIdx(type_idx) = &func_types[func_idx];
                 let Type(ResultType(params), ResultType(results)) = &types[*type_idx as usize];
 
-                self.pop_vals(&params)?;
+                self.pop_vals(params)?;
                 self.push_vals(results.iter().copied());
             }
 
@@ -431,7 +456,7 @@ impl TypeChecker {
                 self.pop_val(Some(I32))?;
                 let Type(ResultType(params), ResultType(results)) = &types[*type_idx as usize];
 
-                self.pop_vals(&params)?;
+                self.pop_vals(params)?;
                 self.push_vals(results.iter().copied());
             }
 

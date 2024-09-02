@@ -15,7 +15,7 @@ pub enum InstrArgTableParser {
 impl<T: IR> Parse<T> for InstrArgTableParser {
     type Production = (Box<[u32]>, u32);
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, _window: &mut DecodeWindow) -> crate::ParseResult<T> {
         Ok(match self {
             Self::Init => Advancement::YieldTo(
                 AnyParser::RepeatedLEBU32(Default::default()),

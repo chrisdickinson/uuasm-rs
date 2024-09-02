@@ -193,7 +193,6 @@ impl Machine {
     pub fn link_module(&mut self, modname: &str, module: Module) -> anyhow::Result<()> {
         let idx = self.types.len(); // any of these will do.
 
-        eprintln!("linking module -> {modname}");
         let modname_idx = self.internmap.insert(modname);
         self.modname_to_guest_idx
             .entry(modname_idx)
@@ -322,7 +321,6 @@ impl Machine {
 
         tables.extend(IntoIterator::into_iter(table_section).map(|tabletype| {
             let table_instance_idx = resources.table_instances.len();
-            eprintln!("initializing {table_instance_idx:?}");
             resources.table_instances.push(Table {
                 values: vec![Value::RefNull; tabletype.1.min() as usize],
                 kind: tabletype,
@@ -506,7 +504,6 @@ impl Machine {
             let Some((global_idx, instrs)) = global.initdata() else {
                 continue;
             };
-            eprintln!("{global_idx}");
             resources.global_values[global_idx] =
                 self.compute_constant_expr(at_idx, instrs, &mut *resources)?;
         }
@@ -526,6 +523,11 @@ impl Machine {
                         .ok_or_else(|| anyhow::anyhow!("no such memory"))?;
 
                     memory.grow_to_fit(&data.0, memoffset)?;
+
+                    if memoffset.saturating_add(data.0.len()) > memory.len() {
+                        anyhow::bail!("out of bounds memory access")
+                    }
+
                     memory.copy_data(&data.0, memoffset);
                     resources.dropped_data.insert((at_idx, data_idx));
                 }
@@ -534,7 +536,7 @@ impl Machine {
         }
 
         let mut active_elems = Vec::new();
-        for elem in self.elements[at_idx].iter_mut() {
+        for (elem_idx, elem) in self.elements[at_idx].iter_mut().enumerate() {
             let ElemMode::Active { .. } = &elem.mode else {
                 continue;
             };
@@ -546,6 +548,7 @@ impl Machine {
                 flags: elem.flags,
             };
 
+            resources.dropped_elements.insert((at_idx, elem_idx));
             mem::swap(elem, &mut empty);
             active_elems.push(empty);
         }
@@ -1366,7 +1369,6 @@ impl Machine {
                         anyhow::bail!("global idx out of range");
                     };
 
-                    eprintln!("global.get({global_idx:?}/{global_value_idx:?})={value:?}");
                     value_stack.push(*value);
                 }
 
@@ -1381,8 +1383,6 @@ impl Machine {
                     };
 
                     *value = v;
-                    eprintln!("global.set({global_idx:?}/{global_value_idx:?})={value:?}");
-                    dbg!(resources.global_values[global_value_idx]);
                 }
 
                 Instr::TableGet(table_idx) => {
@@ -1460,11 +1460,6 @@ impl Machine {
                         anyhow::bail!("out of bounds table access");
                     }
 
-                    // TODO: is there any context in which a declarative elem can be used?
-                    if elem.mode == ElemMode::Declarative {
-                        anyhow::bail!("out of bounds table access");
-                    }
-
                     let v: Box<[Value]> = (srcaddr..srcaddr + count)
                         .map(|idx| elem.value(idx, guest_index, self, &mut *resources))
                         .collect::<anyhow::Result<_>>()?;
@@ -1510,6 +1505,7 @@ impl Machine {
                     let Some(destaddr) = items[0].as_usize() else {
                         anyhow::bail!("expected i32 value on the stack")
                     };
+
                     if srcaddr > resources.table_instances[from_table_idx].len() {
                         anyhow::bail!("out of bounds table access");
                     }

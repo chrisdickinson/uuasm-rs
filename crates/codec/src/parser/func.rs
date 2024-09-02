@@ -16,7 +16,7 @@ pub enum FuncParser<T: IR> {
 impl<T: IR> Parse<T> for FuncParser<T> {
     type Production = T::Func;
 
-    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, _window: &mut DecodeWindow) -> ParseResult<T> {
         match self {
             Self::Init => {
                 irgen.start_func().map_err(IRError)?;

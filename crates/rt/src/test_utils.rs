@@ -71,7 +71,7 @@ pub(crate) fn declare_module(
 pub(crate) fn register(
     state: &mut TestState,
     name: &'static str,
-    location: &'static str,
+    _location: &'static str,
 ) -> anyhow::Result<()> {
     state.machine.alias(state.last_name(), name)?;
     state.names.push(name.into());

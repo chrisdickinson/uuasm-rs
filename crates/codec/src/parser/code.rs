@@ -15,7 +15,7 @@ pub enum CodeParser<T: IR> {
 impl<T: IR> Parse<T> for CodeParser<T> {
     type Production = T::Code;
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, _window: &mut DecodeWindow) -> crate::ParseResult<T> {
         match self {
             Self::Init => Ok(Advancement::YieldTo(
                 AnyParser::LEBU32(Default::default()),

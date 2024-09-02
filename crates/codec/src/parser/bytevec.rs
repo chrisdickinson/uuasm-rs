@@ -15,7 +15,7 @@ pub enum ByteVecParser {
 impl<T: IR> Parse<T> for ByteVecParser {
     type Production = Box<[u8]>;
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, _window: &mut DecodeWindow) -> crate::ParseResult<T> {
         Ok(match self {
             Self::Init => Advancement::YieldTo(
                 AnyParser::LEBU32(Default::default()),

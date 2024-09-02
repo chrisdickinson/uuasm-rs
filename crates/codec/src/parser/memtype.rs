@@ -14,7 +14,7 @@ pub enum MemTypeParser<T: IR> {
 impl<T: IR> Parse<T> for MemTypeParser<T> {
     type Production = T::MemType;
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, _window: &mut DecodeWindow) -> ParseResult<T> {
         match self {
             Self::Init => Ok(Advancement::YieldTo(
                 AnyParser::Limits(Default::default()),

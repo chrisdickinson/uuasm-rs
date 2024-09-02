@@ -16,7 +16,7 @@ pub enum ExportParser<T: IR> {
 impl<T: IR> Parse<T> for ExportParser<T> {
     type Production = T::Export;
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, _window: &mut DecodeWindow) -> crate::ParseResult<T> {
         match self {
             Self::Init => Ok(Advancement::YieldTo(
                 AnyParser::Name(Default::default()),

@@ -9,3 +9,6 @@ uuasm-ir = { version = "0.1.0", path = "crates/ir" }
 uuasm-codec = { version = "0.1.0", path = "crates/codec" }
 anyhow = "1.0.75"
 thiserror = "1.0.61"
+
+[profile.bench]
+debug = true

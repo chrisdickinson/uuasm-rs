@@ -15,7 +15,7 @@ impl<T: IR> Default for GlobalIdxParser<T> {
 impl<T: IR> Parse<T> for GlobalIdxParser<T> {
     type Production = T::GlobalIdx;
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, _window: &mut DecodeWindow) -> crate::ParseResult<T> {
         if self.0.is_some() {
             return Ok(Advancement::Ready);
         }

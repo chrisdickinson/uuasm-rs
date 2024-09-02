@@ -5,7 +5,7 @@ use crate::{
     IRError, Parse, ParseErrorKind,
 };
 
-use super::{accumulator::Accumulator, any::AnyParser, repeated::Repeated};
+use super::{accumulator::Accumulator, any::AnyParser, block::BlockParser, repeated::Repeated};
 
 #[derive(Default)]
 enum State {
@@ -89,7 +89,7 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                 0x03 => {
                     let _ = window.take();
                     self.state = State::LastInstr(next);
-                    return Ok(Advancement::YieldTo( AnyParser::Block(Default::default()), |irgen, last_state, this_state| {
+                    return Ok(Advancement::YieldTo( AnyParser::Block(BlockParser::Init(next)), |irgen, last_state, this_state| {
                         let AnyParser::Block(parser) = last_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
@@ -317,8 +317,8 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                             InstrArgMultibyteParser::Ident(leader, ident) => irgen.make_instr_arity0(leader, ident, &mut instrs),
                             InstrArgMultibyteParser::IdentArity1(leader, ident, arg0) => irgen.make_instr_arity1(leader, ident, arg0, &mut instrs),
                             InstrArgMultibyteParser::IdentArity2(leader, ident, arg0, arg1) => irgen.make_instr_arity2(leader, ident, arg0, arg1, &mut instrs),
-                            InstrArgMultibyteParser::IdentArity3(leader, ident, arg0, arg1, arg2) => todo!(),
-                            InstrArgMultibyteParser::IdentArity4(leader, ident, arg0, arg1, arg2, arg3) => todo!(),
+                            InstrArgMultibyteParser::IdentArity3(_leader, _ident, _arg0, _arg1, _arg2) => todo!(),
+                            InstrArgMultibyteParser::IdentArity4(_leader, _ident, _arg0, _arg1, _arg2, _arg3) => todo!(),
                             _ => return Err(ParseErrorKind::BadInstruction(code))
                         }.map_err(IRError)?;
 

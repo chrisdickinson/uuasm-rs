@@ -19,7 +19,7 @@ pub enum NameParser {
 impl<T: IR> Parse<T> for NameParser {
     type Production = <T as IR>::Name;
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, _window: &mut DecodeWindow) -> crate::ParseResult<T> {
         match self {
             NameParser::Init => Ok(Advancement::YieldTo(
                 AnyParser::LEBU32(LEBParser::default()),

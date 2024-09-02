@@ -18,13 +18,16 @@ pub enum DefaultIRGeneratorError {
     #[error("Invalid type (got {0:X}H)")]
     InvalidType(u8),
 
-    #[error("unknown type index (got {0}; max is {1})")]
+    #[error("Invalid start function type")]
+    InvalidStartFunction,
+
+    #[error("unknown type {0} (max is {1})")]
     InvalidTypeIndex(u32, u32),
 
-    #[error("unknown global index (got {0}; max is {1})")]
+    #[error("unknown global {0} (max is {1})")]
     InvalidGlobalIndex(u32, u32),
 
-    #[error("unknown table index (got {0}; max is {1})")]
+    #[error("unknown table {0} (max is {1})")]
     InvalidTableIndex(u32, u32),
 
     #[error("unknown local index (got {0}; max is {1})")]
@@ -36,6 +39,9 @@ pub enum DefaultIRGeneratorError {
     #[error("label out of range (got {0}; max is {1})")]
     InvalidLabelIndex(u32, u32),
 
+    #[error("size minimum must not be greater than maximum (got [{0}, {1}])")]
+    InvalidLimits(u32, u32),
+
     #[error(
         "undeclared function reference (id {0} is not declared in an element, export, or import)"
     )]
@@ -44,11 +50,14 @@ pub enum DefaultIRGeneratorError {
     #[error("unknown memory {0} (max index is {1})")]
     InvalidMemIndex(u32, u32),
 
-    #[error("unknown data index (got {0}; max is {1})")]
+    #[error("unknown data segment {0} (max is {1})")]
     InvalidDataIndex(u32, u32),
 
-    #[error("unknown element index (got {0}; max is {1})")]
+    #[error("unknown elem segment {0} (max is {1})")]
     InvalidElementIndex(u32, u32),
+
+    #[error("duplicate export name")]
+    DuplicateExport,
 
     #[error(
         "Invalid memory lower bound: size minimum must not be greater than maximum, got {0} {1}"
@@ -109,11 +118,14 @@ pub struct DefaultIRGenerator {
     type_checker: TypeChecker,
 
     types: Option<Box<[Type]>>,
-    func_types: Option<Box<[TypeIdx]>>,
-    table_types: Option<Box<[TableType]>>,
+    func_types: Vec<TypeIdx>,
+    table_types: Vec<TableType>,
+    elem_types: Vec<RefType>,
 
     global_types: Vec<GlobalType>,
     current_locals: Vec<ValType>,
+
+    export_names: HashSet<String>,
 
     current_section_id: u8,
     valid_function_indices: HashSet<u32>,
@@ -325,7 +337,7 @@ impl IR for DefaultIRGenerator {
                 self.last_section_discrim,
             ));
         }
-        self.func_types = Some(data.clone());
+        self.func_types.extend(data.iter().copied());
         self.local_function_count = data.len() as u32;
         self.max_valid_func_index += self.local_function_count;
         self.last_section_discrim = 3;
@@ -342,7 +354,7 @@ impl IR for DefaultIRGenerator {
                 self.last_section_discrim,
             ));
         }
-        self.table_types = Some(data.clone());
+        self.table_types.extend(data.iter().copied());
         self.max_valid_table_index += data.len() as u32;
         self.last_section_discrim = 4;
         Ok(SectionType::Table(data))
@@ -402,6 +414,11 @@ impl IR for DefaultIRGenerator {
                 8,
                 self.last_section_discrim,
             ));
+        }
+        let TypeIdx(idx) = &self.func_types()[data.0 as usize];
+        let Type(ResultType(params), ResultType(results)) = &self.types()[*idx as usize];
+        if !params.is_empty() || !results.is_empty() {
+            return Err(Self::Error::InvalidStartFunction);
         }
         self.last_section_discrim = 8;
         Ok(SectionType::Start(data))
@@ -541,14 +558,14 @@ impl IR for DefaultIRGenerator {
 
     fn make_data_index(&mut self, candidate: u32) -> Result<Self::DataIdx, Self::Error> {
         let data_count = self.max_valid_data_index.unwrap_or_default();
-        if candidate > data_count {
+        if candidate >= data_count {
             return Err(Self::Error::InvalidDataIndex(candidate, data_count));
         }
         Ok(DataIdx(candidate))
     }
 
     fn make_elem_index(&mut self, candidate: u32) -> Result<Self::ElemIdx, Self::Error> {
-        if candidate > self.max_valid_element_index {
+        if candidate >= self.max_valid_element_index {
             return Err(Self::Error::InvalidElementIndex(
                 candidate,
                 self.max_valid_element_index,
@@ -600,7 +617,9 @@ impl IR for DefaultIRGenerator {
         &mut self,
         type_idx: Self::TypeIdx,
     ) -> Result<Self::ImportDesc, Self::Error> {
+        self.func_types.push(type_idx);
         self.max_valid_func_index += 1;
+        self.next_func_idx += 1;
         Ok(ImportDesc::Func(type_idx))
     }
 
@@ -609,6 +628,7 @@ impl IR for DefaultIRGenerator {
         global_type: Self::GlobalType,
     ) -> Result<Self::ImportDesc, Self::Error> {
         self.max_valid_global_index += 1;
+        self.global_types.push(global_type);
         self.global_import_boundary_idx = self.max_valid_global_index;
         Ok(ImportDesc::Global(global_type))
     }
@@ -629,6 +649,7 @@ impl IR for DefaultIRGenerator {
         table_type: Self::TableType,
     ) -> Result<Self::ImportDesc, Self::Error> {
         self.max_valid_table_index += 1;
+        self.table_types.push(table_type);
         Ok(ImportDesc::Table(table_type))
     }
 
@@ -688,6 +709,9 @@ impl IR for DefaultIRGenerator {
 
     fn make_limits(&mut self, lower: u32, upper: Option<u32>) -> Result<Self::Limits, Self::Error> {
         Ok(if let Some(upper) = upper {
+            if upper < lower {
+                return Err(DefaultIRGeneratorError::InvalidLimits(lower, upper));
+            }
             Limits::Range(lower, upper)
         } else {
             Limits::Min(lower)
@@ -699,6 +723,10 @@ impl IR for DefaultIRGenerator {
         name: Self::Name,
         desc: Self::ExportDesc,
     ) -> Result<Self::Export, Self::Error> {
+        if self.export_names.contains(&name.0) {
+            return Err(Self::Error::DuplicateExport);
+        }
+        self.export_names.insert(name.0.clone());
         Ok(Export { nm: name, desc })
     }
 
@@ -930,7 +958,11 @@ impl IR for DefaultIRGenerator {
                 Instr::MemoryCopy(self.make_mem_index(arg0)?, self.make_mem_index(arg1)?)
             }
             (0xfc, 0x0c) => {
-                Instr::TableInit(self.make_elem_index(arg0)?, self.make_table_index(arg1)?)
+                // This order is important: we want to generate table errors ahead of
+                // element errors.
+                let table_idx = self.make_table_index(arg1)?;
+                let elem_idx = self.make_elem_index(arg0)?;
+                Instr::TableInit(elem_idx, table_idx)
             }
             (0xfc, 0x0e) => {
                 Instr::TableCopy(self.make_table_index(arg0)?, self.make_table_index(arg1)?)
@@ -1199,6 +1231,7 @@ impl IR for DefaultIRGenerator {
             return Err(DefaultIRGeneratorError::InvalidRefType(kind as u8));
         }
 
+        self.elem_types.push(RefType::FuncRef);
         Ok(Elem {
             mode,
             kind: RefType::FuncRef,
@@ -1215,6 +1248,7 @@ impl IR for DefaultIRGenerator {
         flags: u8,
     ) -> Result<Self::Elem, Self::Error> {
         self.type_checker.clear();
+        self.elem_types.push(kind.unwrap_or(RefType::FuncRef));
         Ok(Elem {
             mode,
             kind: kind.unwrap_or_default(),
@@ -1263,17 +1297,12 @@ impl DefaultIRGenerator {
         self.type_checker
             .trace(
                 instr,
-                self.func_types
-                    .as_ref()
-                    .map(|xs| xs as &[_])
-                    .unwrap_or_default(),
+                &self.func_types,
                 self.types.as_ref().map(|xs| xs as &[_]).unwrap_or_default(),
                 &self.current_locals,
                 &self.global_types,
-                self.table_types
-                    .as_ref()
-                    .map(|xs| xs as &[_])
-                    .unwrap_or_default(),
+                &self.table_types,
+                &self.elem_types,
                 self.global_import_boundary_idx,
             )
             .map_err(Into::into)
@@ -1284,10 +1313,7 @@ impl DefaultIRGenerator {
     }
 
     fn func_types(&self) -> &[TypeIdx] {
-        self.func_types
-            .as_ref()
-            .map(|xs| xs as &[_])
-            .unwrap_or_default()
+        &self.func_types
     }
 
     fn block_type(&self, block_type: &BlockType) -> (Box<[ValType]>, Box<[ValType]>) {

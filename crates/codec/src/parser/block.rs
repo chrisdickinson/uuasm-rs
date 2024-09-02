@@ -4,12 +4,10 @@ use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseErrorKind};
 
 use super::any::AnyParser;
 
-#[derive(Default)]
 pub enum BlockParser<T: IR> {
-    #[default]
-    Init,
+    Init(u8),
 
-    BlockType(T::BlockType),
+    BlockType(u8, T::BlockType),
 
     Ready(T::BlockType, T::Expr),
 }
@@ -19,9 +17,9 @@ impl<T: IR> Parse<T> for BlockParser<T> {
 
     fn advance(&mut self, irgen: &mut T, _window: &mut DecodeWindow) -> crate::ParseResult<T> {
         Ok(match self {
-            Self::Init => Advancement::YieldTo(
+            Self::Init(_) => Advancement::YieldTo(
                 AnyParser::BlockType(Default::default()),
-                |irgen, last_state, _| {
+                |irgen, last_state, this_state| {
                     let AnyParser::BlockType(parser) = last_state else {
                         unsafe {
                             crate::cold();
@@ -30,14 +28,25 @@ impl<T: IR> Parse<T> for BlockParser<T> {
                     };
                     let block_type = parser.production(irgen)?;
 
-                    Ok(AnyParser::Block(Self::BlockType(block_type)))
+                    let AnyParser::Block(BlockParser::Init(opcode)) = this_state else {
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        }
+                    };
+
+                    Ok(AnyParser::Block(Self::BlockType(opcode, block_type)))
                 },
             ),
 
-            Self::BlockType(block_type) => {
+            Self::BlockType(opcode, block_type) => {
                 // TODO: thread "loop or block" discriminant info through here so we can call the
                 // right function
-                irgen.start_block(block_type).map_err(IRError)?;
+                if *opcode == 0x02 {
+                    irgen.start_block(block_type).map_err(IRError)?;
+                } else {
+                    irgen.start_loop(block_type).map_err(IRError)?;
+                }
                 Advancement::YieldTo(
                     AnyParser::Expr(Default::default()),
                     |irgen, last_state, this_state| {
@@ -47,7 +56,7 @@ impl<T: IR> Parse<T> for BlockParser<T> {
                                 std::hint::unreachable_unchecked()
                             }
                         };
-                        let AnyParser::Block(Self::BlockType(block_type)) = this_state else {
+                        let AnyParser::Block(Self::BlockType(_, block_type)) = this_state else {
                             unsafe {
                                 crate::cold();
                                 std::hint::unreachable_unchecked()

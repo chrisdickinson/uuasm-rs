@@ -9,6 +9,16 @@ If you're looking for a industry-strength Wasm runtime, look at
 
 A semi-regularly updated dev log.
 
+### 2024 Sep 01
+
+Labor day weekend!
+
+Loose focus:
+
+- Finish fixing table tests.
+- Make a separate "typechecker" IR generator that passes through to an internal IR generator
+- Maybe fix the parser? I'm so tempted.
+
 ### 2024 Aug 30
 
 ["They say time is the fire in which we burn."](https://www.youtube.com/watch?v=XtIuC0NAF_E)

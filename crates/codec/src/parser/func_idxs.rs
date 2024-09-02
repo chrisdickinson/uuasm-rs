@@ -15,7 +15,7 @@ impl<T: IR> Default for FuncIdxParser<T> {
 impl<T: IR> Parse<T> for FuncIdxParser<T> {
     type Production = T::FuncIdx;
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, _window: &mut DecodeWindow) -> crate::ParseResult<T> {
         if self.0.is_some() {
             return Ok(Advancement::Ready);
         }

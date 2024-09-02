@@ -47,7 +47,7 @@ where
 {
     type Production = Box<[P::Production]>;
 
-    fn advance(&mut self, _irgen: &mut T, window: &mut DecodeWindow) -> ParseResult<T> {
+    fn advance(&mut self, _irgen: &mut T, _window: &mut DecodeWindow) -> ParseResult<T> {
         if let Self::Init = self {
             return Ok(Advancement::YieldTo(
                 AnyParser::LEBU32(LEBParser::default()),
