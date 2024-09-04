@@ -202,7 +202,11 @@ impl IR for EmptyIRGenerator {
     fn make_name(&mut self, _data: Box<[u8]>) -> Result<Self::Name, Self::Error> {
         Ok(())
     }
-    fn make_custom_section(&mut self, _data: Box<[u8]>) -> Result<Self::Section, Self::Error> {
+    fn make_custom_section(
+        &mut self,
+        _name: String,
+        _data: Box<[u8]>,
+    ) -> Result<Self::Section, Self::Error> {
         Ok(())
     }
     fn make_type_section(

@@ -6,10 +6,11 @@ use crate::{
 
 use super::{
     accumulator::Accumulator, block::BlockParser, block_ifelse::IfElseBlockParser,
-    blocktype::BlockTypeParser, bytevec::ByteVecParser, code::CodeParser, data::DataParser,
-    elem::ElemParser, export::ExportParser, exportdesc::ExportDescParser, expr::ExprParser,
-    func::FuncParser, func_idxs::FuncIdxParser, global::GlobalParser, global_idxs::GlobalIdxParser,
-    globaltype::GlobalTypeParser, importdescs::ImportDescParser, imports::ImportParser,
+    blocktype::BlockTypeParser, bytevec::ByteVecParser, code::CodeParser,
+    custom_section::CustomSectionParser, data::DataParser, elem::ElemParser, export::ExportParser,
+    exportdesc::ExportDescParser, expr::ExprParser, func::FuncParser, func_idxs::FuncIdxParser,
+    global::GlobalParser, global_idxs::GlobalIdxParser, globaltype::GlobalTypeParser,
+    importdescs::ImportDescParser, imports::ImportParser,
     instrarg_multibyte::InstrArgMultibyteParser, instrarg_refnull::InstrArgRefNullParser,
     instrarg_table::InstrArgTableParser, leb::LEBParser, limits::LimitsParser, local::LocalParser,
     mem_idxs::MemIdxParser, memtype::MemTypeParser, module::ModuleParser, names::NameParser,
@@ -22,6 +23,7 @@ pub enum AnyParser<T: IR> {
     LEBI64(LEBParser<i64>),
     LEBU32(LEBParser<u32>),
     LEBU64(LEBParser<u64>),
+    CustomSection(CustomSectionParser),
     RepeatedLEBU32(Repeated<T, LEBParser<u32>>),
     ByteVec(ByteVecParser),
     ArgMultibyte(InstrArgMultibyteParser),
@@ -212,6 +214,7 @@ pub enum AnyProduction<T: IR> {
     Export(<ExportParser<T> as Parse<T>>::Production),
     ExportDesc(<ExportDescParser<T> as Parse<T>>::Production),
     ExportSection(<Repeated<T, ExportParser<T>> as Parse<T>>::Production),
+    CustomSection(<CustomSectionParser as Parse<T>>::Production),
     Expr(<ExprParser<T> as Parse<T>>::Production),
     Func(<FuncParser<T> as Parse<T>>::Production),
     Global(<GlobalParser<T> as Parse<T>>::Production),
@@ -300,6 +303,7 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::ArgRefNull(p) => p.advance(irgen, window),
             AnyParser::ByteVec(p) => p.advance(irgen, window),
             AnyParser::ExprList(p) => p.advance(irgen, window),
+            AnyParser::CustomSection(p) => p.advance(irgen, window),
         }
     }
 
@@ -355,6 +359,7 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::ArgRefNull(p) => AnyProduction::ArgRefNull(p.production(irgen)?),
             AnyParser::ByteVec(p) => AnyProduction::ByteVec(p.production(irgen)?),
             AnyParser::ExprList(p) => AnyProduction::ExprList(p.production(irgen)?),
+            AnyParser::CustomSection(p) => AnyProduction::CustomSection(p.production(irgen)?),
         })
     }
 }
@@ -408,6 +413,7 @@ impl<T: IR> std::fmt::Debug for AnyParser<T> {
             Self::CodeSection(_) => f.debug_tuple("CodeSection").finish(),
             Self::DataSection(_) => f.debug_tuple("DataSection").finish(),
             Self::ElementSection(_) => f.debug_tuple("ElementSection").finish(),
+            Self::CustomSection(_) => f.debug_tuple("CustomSection").finish(),
             Self::Type(_) => f.debug_tuple("Type").finish(),
             Self::TypeSection(_) => f.debug_tuple("TypeSection").finish(),
             Self::Section(_) => f.debug_tuple("Section").finish(),

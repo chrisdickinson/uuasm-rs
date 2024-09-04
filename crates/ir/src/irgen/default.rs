@@ -283,29 +283,12 @@ impl IR for DefaultIRGenerator {
         Ok(ResultType(types.into()))
     }
 
-    fn make_custom_section(&mut self, data: Box<[u8]>) -> Result<Self::Section, Self::Error> {
-        let mut offset = 0;
-        let mut shift = 0;
-        let mut repr = 0;
-        while {
-            let Some(next) = data.get(offset) else {
-                return Err(Self::Error::IncompleteCustomSectionName);
-            };
-
-            repr |= ((next & 0x7f) as u64) << shift;
-            offset += 1;
-            shift += 7;
-
-            next & 0x80 != 0
-        } {}
-
-        if repr as usize + offset > data.len() {
-            return Err(Self::Error::MultimemoryDisabled);
-        }
-
-        std::str::from_utf8(&data[offset..offset + repr as usize])?;
-
-        Ok(SectionType::Custom(data))
+    fn make_custom_section(
+        &mut self,
+        name: String,
+        data: Box<[u8]>,
+    ) -> Result<Self::Section, Self::Error> {
+        Ok(SectionType::Custom(name, data))
     }
 
     fn make_type_section(&mut self, data: Box<[Type]>) -> Result<Self::Section, Self::Error> {
@@ -682,7 +665,7 @@ impl IR for DefaultIRGenerator {
         let mut builder = ModuleBuilder::new();
         for section in sections {
             builder = match section {
-                SectionType::Custom(xs) => builder.custom_section(xs),
+                SectionType::Custom(name, xs) => builder.custom_section(name, xs),
                 SectionType::Type(xs) => builder.type_section(xs),
                 SectionType::Import(xs) => builder.import_section(xs),
                 SectionType::Function(xs) => builder.function_section(xs),

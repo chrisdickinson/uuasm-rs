@@ -5,6 +5,7 @@ pub(crate) mod block_ifelse;
 pub(crate) mod blocktype;
 pub(crate) mod bytevec;
 pub(crate) mod code;
+pub(crate) mod custom_section;
 pub(crate) mod data;
 pub(crate) mod elem;
 pub(crate) mod export;

@@ -548,7 +548,7 @@ pub enum Data {
 #[derive(Debug, PartialEq, Clone)]
 #[non_exhaustive]
 pub enum SectionType {
-    Custom(Box<[u8]>),
+    Custom(String, Box<[u8]>),
     Type(Box<[Type]>),
     Import(Box<[Import]>),
     Function(Box<[TypeIdx]>),
@@ -571,7 +571,7 @@ pub struct Section<T: Debug + PartialEq + Clone> {
 
 #[derive(Debug, PartialEq, Clone, Default)]
 pub struct Module {
-    pub(crate) custom_sections: Vec<Section<Box<[u8]>>>,
+    pub(crate) custom_sections: Vec<Section<(String, Box<[u8]>)>>,
     pub(crate) type_section: Option<Section<Box<[Type]>>>,
     pub(crate) import_section: Option<Section<Box<[Import]>>>,
     pub(crate) function_section: Option<Section<Box<[TypeIdx]>>>,
@@ -589,7 +589,7 @@ pub struct Module {
 /// A struct used by [`Module::into_inner`] to expose all module contents
 /// to consumers.
 pub struct ModuleIntoInner {
-    pub custom_sections: Vec<Section<Box<[u8]>>>,
+    pub custom_sections: Vec<Section<(String, Box<[u8]>)>>,
     pub type_section: Option<Section<Box<[Type]>>>,
     pub import_section: Option<Section<Box<[Import]>>>,
     pub function_section: Option<Section<Box<[TypeIdx]>>>,
@@ -616,9 +616,9 @@ impl ModuleBuilder {
         Default::default()
     }
 
-    pub fn custom_section(mut self, v: Box<[u8]>) -> Self {
+    pub fn custom_section(mut self, name: String, v: Box<[u8]>) -> Self {
         self.inner.custom_sections.push(Section {
-            inner: v,
+            inner: (name, v),
             index: self.index,
         });
         self.index += 1;
@@ -760,8 +760,10 @@ impl Module {
         }
     }
 
-    pub fn custom_sections(&self) -> impl Iterator<Item = &[u8]> {
-        self.custom_sections.iter().map(|xs| &*xs.inner)
+    pub fn custom_sections(&self) -> impl Iterator<Item = (&str, &[u8])> {
+        self.custom_sections
+            .iter()
+            .map(|xs| (xs.inner.0.as_str(), &*xs.inner.1))
     }
 
     pub fn type_section(&self) -> Option<&[Type]> {

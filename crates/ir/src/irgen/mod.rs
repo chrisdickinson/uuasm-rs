@@ -206,7 +206,13 @@ pub trait IR {
     ) -> Result<Self::Local, Self::Error>;
 
     fn make_name(&mut self, data: Box<[u8]>) -> Result<Self::Name, Self::Error>;
-    fn make_custom_section(&mut self, data: Box<[u8]>) -> Result<Self::Section, Self::Error>;
+
+    fn make_custom_section(
+        &mut self,
+        name: String,
+        payload: Box<[u8]>,
+    ) -> Result<Self::Section, Self::Error>;
+
     fn make_type_section(&mut self, data: Box<[Self::Type]>) -> Result<Self::Section, Self::Error>;
     fn make_import_section(
         &mut self,

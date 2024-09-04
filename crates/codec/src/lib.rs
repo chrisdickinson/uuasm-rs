@@ -7,6 +7,8 @@ pub(crate) mod window;
 #[cold]
 pub(crate) fn cold() {}
 
+use std::str::Utf8Error;
+
 pub use crate::original::parse as old_parse;
 
 pub use crate::parser::any::AnyParser;
@@ -48,7 +50,7 @@ pub enum ParseErrorKind<T: Clone + std::fmt::Debug + std::error::Error> {
     BadExportDesc(u8),
 
     #[error("Bad data segment type (got {0:X}H; expected 0, 1, or 2)")]
-    BadDataType(u8),
+    BadDataType(u32),
 
     #[error("Bad limit type (got {0:X}H; expected 0, or 1)")]
     BadLimitType(u8),
@@ -73,11 +75,17 @@ pub enum ParseErrorKind<T: Clone + std::fmt::Debug + std::error::Error> {
     #[error("invalid section type {kind} at position {position}")]
     SectionInvalid { kind: u8, position: usize },
 
+    #[error("unexpected end of custom section")]
+    IncompleteCustomSectionName,
+
     #[error("invalid parser state: {0}")]
     InvalidState(&'static str),
 
     #[error("Invalid import descriptor: {0}")]
     InvalidImportDescriptor(u8),
+
+    #[error(transparent)]
+    InvalidUTF8(#[from] Utf8Error),
 
     #[error(transparent)]
     InvalidProduction(#[from] ExtractError),
@@ -87,6 +95,9 @@ pub enum ParseErrorKind<T: Clone + std::fmt::Debug + std::error::Error> {
 
     #[error("LEB value too large")]
     LEBTooBig,
+
+    #[error("LEB integer representation too long")]
+    LEBTooLong,
 
     #[error("IR error: {0}")]
     IRError(#[from] IRError<T>),

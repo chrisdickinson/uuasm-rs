@@ -8,6 +8,9 @@ use super::any::AnyParser;
 pub enum DataParser<T: IR> {
     #[default]
     Init,
+
+    Discriminant(u32),
+
     MemIdx(T::MemIdx),
     Expr(T::MemIdx, T::Expr),
 
@@ -17,9 +20,24 @@ pub enum DataParser<T: IR> {
 impl<T: IR> Parse<T> for DataParser<T> {
     type Production = T::Data;
 
-    fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
+    fn advance(&mut self, irgen: &mut T, _window: &mut DecodeWindow) -> crate::ParseResult<T> {
         match self {
-            Self::Init => match window.take()? {
+            Self::Init => Ok(Advancement::YieldTo(
+                AnyParser::LEBU32(Default::default()),
+                |irgen, last_state, _| {
+                    let AnyParser::LEBU32(parser) = last_state else {
+                        unsafe {
+                            crate::cold();
+                            std::hint::unreachable_unchecked()
+                        }
+                    };
+
+                    let discrim = parser.production(irgen)?;
+                    Ok(AnyParser::Data(Self::Discriminant(discrim)))
+                },
+            )),
+
+            Self::Discriminant(value) => match value {
                 0x00 => {
                     irgen.start_data_offset().map_err(IRError)?;
                     Ok(Advancement::YieldTo(
@@ -83,7 +101,7 @@ impl<T: IR> Parse<T> for DataParser<T> {
                     },
                 )),
 
-                unk => Err(ParseErrorKind::BadDataType(unk)),
+                unk => Err(ParseErrorKind::BadDataType(*unk)),
             },
 
             Self::MemIdx(_) => {

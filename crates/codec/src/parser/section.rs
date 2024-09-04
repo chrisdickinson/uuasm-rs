@@ -2,7 +2,9 @@ use uuasm_ir::IR;
 
 use crate::{window::DecodeWindow, Advancement, IRError, Parse, ParseErrorKind, ParseResult};
 
-use super::{accumulator::Accumulator, any::AnyParser, leb::LEBParser, repeated::Repeated};
+use super::{
+    any::AnyParser, custom_section::CustomSectionParser, leb::LEBParser, repeated::Repeated,
+};
 
 #[derive(Default)]
 pub enum SectionParser<T: IR> {
@@ -52,19 +54,17 @@ impl<T: IR> Parse<T> for SectionParser<T> {
                     irgen.start_section(*kind, length as u32).map_err(IRError)?;
                     return Ok(match *kind {
                         0x0 => Advancement::YieldTo(
-                            AnyParser::Accumulate(Accumulator::new(length)),
+                            AnyParser::CustomSection(CustomSectionParser::Init(length)),
                             |irgen, last_state, _| {
-                                let AnyParser::Accumulate(acc) = last_state else {
+                                let AnyParser::CustomSection(parser) = last_state else {
                                     unsafe {
                                         crate::cold();
                                         std::hint::unreachable_unchecked()
                                     };
                                 };
 
-                                let bytes = acc.production(irgen)?;
-                                Ok(AnyParser::Section(SectionParser::Done(
-                                    irgen.make_custom_section(bytes).map_err(IRError)?,
-                                )))
+                                let section = parser.production(irgen)?;
+                                Ok(AnyParser::Section(SectionParser::Done(section)))
                             },
                         ),
 

@@ -1252,7 +1252,7 @@ impl<'a> ParseWasmBinary<'a> for SectionType {
         let (input, section) = take(size as usize)(input)?;
 
         let section = match section_id[0] {
-            0x0 => SectionType::Custom(section[..].into()),
+            0x0 => SectionType::Custom("".to_string(), section[..].into()),
             0x1 => SectionType::Type(Vec::<Type>::from_wasm_bytes(section)?.1.into()),
             0x2 => SectionType::Import(Vec::<Import>::from_wasm_bytes(section)?.1.into()),
             0x3 => SectionType::Function(Vec::<TypeIdx>::from_wasm_bytes(section)?.1.into()),
@@ -1286,7 +1286,9 @@ impl<'a> ParseWasmBinary<'a> for Module {
             (input, section) = SectionType::from_wasm_bytes(input)?;
 
             match section {
-                SectionType::Custom(xs) => module_builder = module_builder.custom_section(xs),
+                SectionType::Custom(name, xs) => {
+                    module_builder = module_builder.custom_section(name, xs)
+                }
 
                 SectionType::Type(xs) => {
                     module_builder = module_builder.type_section(xs);
