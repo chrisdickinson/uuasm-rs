@@ -56,6 +56,9 @@ pub enum ParseErrorKind<T: Clone + std::fmt::Debug + std::error::Error> {
     #[error("Bad instruction (got {0:X}H)")]
     BadInstruction(u8),
 
+    #[error("Bad memory.grow: zero byte expected (got {0:X}H)")]
+    BadMemoryGrow(u8),
+
     #[error(
         "malformed mutability value for global type definition (got {0:X}H; expected const=0 or mut=1)"
     )]
@@ -81,6 +84,9 @@ pub enum ParseErrorKind<T: Clone + std::fmt::Debug + std::error::Error> {
 
     #[error(transparent)]
     Advancement(#[from] AdvancementError),
+
+    #[error("LEB value too large")]
+    LEBTooBig,
 
     #[error("IR error: {0}")]
     IRError(#[from] IRError<T>),

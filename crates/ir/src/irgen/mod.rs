@@ -47,6 +47,8 @@ pub trait IR {
     type ValType;
     type VecType;
 
+    const IS_MULTIMEMORY_ENABLED: bool = false;
+
     fn make_instr_select(
         &mut self,
         types: Box<[Self::ValType]>,

@@ -257,6 +257,17 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                     }))
                 }
 
+                // ## memory size/grow if multimemory is disabled
+                0x3f | 0x40 if !T::IS_MULTIMEMORY_ENABLED => {
+                    let mut bits = [0u8; 2];
+                    window.take_n(&mut bits)?;
+                    if bits[1] != 0 {
+                        return Err(ParseErrorKind::BadMemoryGrow(bits[1]))
+                    }
+                    dbg!(bits);
+                    irgen.make_instr_arity1(next, 0, 0, &mut self.instrs).map_err(IRError)?;
+                }
+
                 // ## single leb 32-bit args
                 // - func.call
                 0x10 |
@@ -279,6 +290,7 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                         let AnyParser::Expr(Self { state: State::LastInstr(code), mut instrs, shift_last, }) = this_state else {
                              unsafe { crate::cold(); std::hint::unreachable_unchecked() };
                         };
+
                         let arg0 = parser.production(irgen)?;
                         irgen.make_instr_arity1(code, 0, arg0, &mut instrs).map_err(IRError)?;
                         Ok(AnyParser::Expr(Self { state: State::Empty, instrs, shift_last, }))

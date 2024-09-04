@@ -42,6 +42,15 @@ pub enum DefaultIRGeneratorError {
     #[error("size minimum must not be greater than maximum (got [{0}, {1}])")]
     InvalidLimits(u32, u32),
 
+    #[error("function and code section have inconsistent lengths")]
+    FuncAndCodeLenMismatch,
+
+    #[error("memory.grow: zero byte expected")]
+    MemGrowExpectedZero,
+
+    #[error("too many locals")]
+    TooManyLocals,
+
     #[error(
         "undeclared function reference (id {0} is not declared in an element, export, or import)"
     )]
@@ -123,7 +132,8 @@ pub struct DefaultIRGenerator {
     elem_types: Vec<RefType>,
 
     global_types: Vec<GlobalType>,
-    current_locals: Vec<ValType>,
+    current_locals: Vec<Local>,
+    current_max_local_index: u32,
 
     export_names: HashSet<String>,
 
@@ -232,7 +242,6 @@ impl IR for DefaultIRGenerator {
                 Mutability::Const
             },
         );
-        self.global_types.push(global_type);
         Ok(global_type)
     }
 
@@ -521,36 +530,36 @@ impl IR for DefaultIRGenerator {
     }
 
     fn make_mem_index(&mut self, candidate: u32) -> Result<Self::MemIdx, Self::Error> {
-        if candidate < self.max_valid_mem_index {
-            Ok(MemIdx(candidate))
-        } else {
+        if candidate >= self.max_valid_mem_index {
             Err(DefaultIRGeneratorError::InvalidMemIndex(
                 candidate,
                 self.max_valid_mem_index,
             ))
+        } else {
+            Ok(MemIdx(candidate))
         }
     }
 
     fn make_func_index(&mut self, candidate: u32) -> Result<Self::FuncIdx, Self::Error> {
-        if candidate < self.max_valid_func_index {
+        if candidate >= self.max_valid_func_index {
+            Err(DefaultIRGeneratorError::InvalidFuncIndex(
+                candidate,
+                self.max_valid_func_index,
+            ))
+        } else {
             if self.current_section_id != 0x08 {
                 self.valid_function_indices.insert(candidate);
             }
 
             Ok(FuncIdx(candidate))
-        } else {
-            Err(DefaultIRGeneratorError::InvalidFuncIndex(
-                candidate,
-                self.max_valid_func_index,
-            ))
         }
     }
 
     fn make_local_index(&mut self, candidate: u32) -> Result<Self::LocalIdx, Self::Error> {
-        if candidate as usize >= self.current_locals.len() {
+        if candidate >= self.current_max_local_index {
             return Err(Self::Error::InvalidLocalIndex(
                 candidate,
-                self.current_locals.len() as u32,
+                self.current_max_local_index,
             ));
         }
         Ok(LocalIdx(candidate))
@@ -667,6 +676,9 @@ impl IR for DefaultIRGenerator {
     }
 
     fn make_module(&mut self, sections: Vec<Self::Section>) -> Result<Self::Module, Self::Error> {
+        if self.next_func_idx as usize != self.func_types.len() {
+            return Err(Self::Error::FuncAndCodeLenMismatch);
+        }
         let mut builder = ModuleBuilder::new();
         for section in sections {
             builder = match section {
@@ -792,9 +804,14 @@ impl IR for DefaultIRGenerator {
             "= = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = "
         );
         self.type_checker.clear();
+        if self.next_func_idx as usize >= self.func_types.len() {
+            return Err(Self::Error::FuncAndCodeLenMismatch);
+        }
         let (start, end) = self.func_type(&FuncIdx(self.next_func_idx));
 
-        self.current_locals.extend(start.iter().cloned());
+        self.current_locals
+            .extend(start.iter().map(|xs| Local(1, *xs)));
+        self.current_max_local_index = self.current_locals.len() as u32;
         self.type_checker
             .push_ctrl(BlockKind::Func, Box::new([]), end);
         self.next_func_idx += 1;
@@ -851,9 +868,8 @@ impl IR for DefaultIRGenerator {
     ) -> Result<Self::Func, Self::Error> {
         self.type_checker.pop_ctrl()?;
         self.type_checker.clear();
-        // TODO: type tracer: check that the stack validates against the desired type of the
-        // function
         self.current_locals.clear();
+        self.current_max_local_index = 0;
         Ok(Func { locals, expr })
     }
 
@@ -862,6 +878,7 @@ impl IR for DefaultIRGenerator {
         global_type: Self::GlobalType,
         expr: Self::Expr,
     ) -> Result<Self::Global, Self::Error> {
+        self.global_types.push(global_type);
         self.type_checker.pop_ctrl()?;
         self.type_checker.clear();
         Ok(Global(global_type, expr))
@@ -873,7 +890,11 @@ impl IR for DefaultIRGenerator {
         val_type: Self::ValType,
     ) -> Result<Self::Local, Self::Error> {
         let local = Local(count, val_type);
-        self.current_locals.extend((0..local.0).map(|_| local.1));
+        if count.saturating_add(self.current_max_local_index) == 0xffff_ffff {
+            return Err(Self::Error::TooManyLocals);
+        }
+        self.current_max_local_index += count;
+        self.current_locals.push(local);
         Ok(local)
     }
 
@@ -952,7 +973,9 @@ impl IR for DefaultIRGenerator {
             (0x3e, 0) => Instr::I64Store32(MemArg(arg0, arg1)),
 
             (0xfc, 0x08) => {
-                Instr::MemoryInit(self.make_data_index(arg0)?, self.make_mem_index(arg1)?)
+                let mem_idx = self.make_mem_index(arg1)?;
+                let data_idx = self.make_data_index(arg0)?;
+                Instr::MemoryInit(data_idx, mem_idx)
             }
             (0xfc, 0x0a) => {
                 Instr::MemoryCopy(self.make_mem_index(arg0)?, self.make_mem_index(arg1)?)
@@ -996,7 +1019,12 @@ impl IR for DefaultIRGenerator {
                 return Err(Self::Error::InvalidMemIndex(0, 0))
             }
             (0x3f, 0) => Instr::MemorySize(MemIdx(arg0)),
-            (0x40, 0) => Instr::MemoryGrow(MemIdx(arg0)),
+            (0x40, 0) => {
+                if arg0 != 0 {
+                    return Err(Self::Error::MemGrowExpectedZero);
+                }
+                Instr::MemoryGrow(MemIdx(arg0))
+            }
             (0xd0, 0) => Instr::RefNull(self.make_ref_type(arg0 as u8)?),
             (0xd2, 0) => {
                 // If we're in the code section, validate the function index
@@ -1248,10 +1276,27 @@ impl IR for DefaultIRGenerator {
         flags: u8,
     ) -> Result<Self::Elem, Self::Error> {
         self.type_checker.clear();
-        self.elem_types.push(kind.unwrap_or(RefType::FuncRef));
+        let kind = kind.unwrap_or(RefType::FuncRef);
+
+        self.elem_types.push(kind);
+
+        eprintln!("got {kind:?}");
+        // TODO: evaluate the constexpr. Arguably the internal representation of elements
+        // should be a list of function indices instead of exprs.
+        if let RefType::FuncRef = kind {
+            eprintln!("checking the element values");
+            for expr in exprs.iter() {
+                for instr in expr.0.iter() {
+                    match instr {
+                        Instr::I32Const(val) => self.make_func_index(*val as u32)?,
+                        _ => continue,
+                    };
+                }
+            }
+        }
         Ok(Elem {
             mode,
-            kind: kind.unwrap_or_default(),
+            kind,
             exprs,
             flags,
         })
@@ -1270,6 +1315,7 @@ impl IR for DefaultIRGenerator {
         table_idx: Self::TableIdx,
         expr: Self::Expr,
     ) -> Result<Self::ElemMode, Self::Error> {
+        self.type_checker.pop_ctrl()?;
         if table_idx.0 >= self.max_valid_table_index {
             return Err(DefaultIRGeneratorError::InvalidTableIndex(
                 table_idx.0,

@@ -114,7 +114,7 @@ pub enum BlockType {
 
 /// # MemArg
 ///
-/// A memarg comprises two elements: an offset and an alignment.
+/// A memarg comprises two elements: an alignment and an offset.
 ///
 /// The multiple memory proposal extends this with a memory index.
 #[derive(Debug, PartialEq, Clone, Copy)]

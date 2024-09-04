@@ -4,7 +4,7 @@ use std::collections::LinkedList;
 use thiserror::Error;
 
 use crate::{
-    ElemIdx, FuncIdx, GlobalIdx, GlobalType, Instr, LabelIdx, LocalIdx, MemArg, Mutability,
+    ElemIdx, FuncIdx, GlobalIdx, GlobalType, Instr, LabelIdx, Local, LocalIdx, MemArg, Mutability,
     NumType, RefType, ResultType, TableIdx, TableType, Type, TypeIdx, ValType,
 };
 
@@ -79,6 +79,9 @@ pub enum TypeError {
     #[error("table type mismatch; table refers to externref values")]
     TableTypeMismatch,
 
+    #[error("select: type mismatch: invalid result arity")]
+    SelectInvalidArity,
+
     #[error("type mismatch: br.table arity not uniform (expected {0}; got {1})")]
     BrTableArityMismatch(usize, usize),
 
@@ -91,7 +94,7 @@ pub enum TypeError {
     #[error("unknown label: out of range (got {0}; max is {1})")]
     InvalidLabelIndex(u32, u32),
 
-    #[error("unexpected type (got {received})")]
+    #[error("type mismatch: unexpected type (got {received})")]
     TypeclassMismatch { received: Val },
 
     #[error("type mismatch: select requires two numbers or two vectors")]
@@ -270,7 +273,7 @@ impl TypeChecker {
         instr: Instr,
         func_types: &[TypeIdx],
         types: &[Type],
-        local_types: &[ValType],
+        locals: &[Local],
         global_types: &[GlobalType],
         table_types: &[TableType],
         elem_types: &[RefType],
@@ -378,9 +381,12 @@ impl TypeChecker {
                     return Err(TypeError::InvalidLabelIndex(*idx, self.ctrls.len() as u32));
                 };
 
-                let vals = self.label_types(frame);
-                let vals = self.pop_vals(&vals)?;
-                self.push_vals(vals.iter().copied());
+                // XXX: be careful here: we specifically want to replace the values on the stack
+                // with the **label_types values**. (iow: br_if can launder Val::Unknown values
+                // into Val::Typed values.)
+                let label_vals = self.label_types(frame);
+                self.pop_vals(&label_vals)?;
+                self.push_vals(label_vals.iter().copied());
             }
 
             Instr::BrTable(labels, LabelIdx(idx)) => {
@@ -474,10 +480,29 @@ impl TypeChecker {
 
             Instr::RefFunc(FuncIdx(_)) => self.push_val(FUNCREF),
 
+            Instr::Select(results) => {
+                if results.len() != 1 {
+                    return Err(TypeError::SelectInvalidArity);
+                }
+                self.pop_val(Some(I32))?;
+                self.pop_vals(results)?;
+                self.pop_vals(results)?;
+                self.push_vals(results.iter().copied());
+            }
             Instr::SelectEmpty => {
                 self.pop_val(Some(I32))?;
-                let t1 = self.pop_val(None)?;
-                let t2 = self.pop_val(None)?;
+                let t1 = self.pop_val(None).map_err(|e| {
+                    if matches!(e, TypeError::StackUnderflow) {
+                        return TypeError::SelectInvalidArity;
+                    }
+                    e
+                })?;
+                let t2 = self.pop_val(None).map_err(|e| {
+                    if matches!(e, TypeError::StackUnderflow) {
+                        return TypeError::SelectInvalidArity;
+                    }
+                    e
+                })?;
 
                 if !((t1.is_num() && t2.is_num()) || (t1.is_vec() && t1.is_vec())) {
                     return Err(TypeError::InvalidSelection);
@@ -490,19 +515,43 @@ impl TypeChecker {
                 self.push_val(if t1 == Val::Unknown { t2 } else { t1 });
             }
 
-            Instr::Select(_) => todo!(),
             Instr::LocalGet(LocalIdx(local_idx)) => {
-                let local_type = local_types[*local_idx as usize];
-                self.push_val(Val::Typed(local_type));
+                let mut base = 0;
+                let Local(_, local_type) = locals
+                    .iter()
+                    .find(|Local(count, _)| {
+                        let found = base <= *local_idx && (base + count) > *local_idx;
+                        base += count;
+                        found
+                    })
+                    .unwrap();
+
+                self.push_val(Val::Typed(*local_type));
             }
 
             Instr::LocalSet(LocalIdx(local_idx)) => {
-                let local_type = local_types[*local_idx as usize];
-                self.pop_val(Some(Val::Typed(local_type)))?;
+                let mut base = 0;
+                let Local(_, local_type) = locals
+                    .iter()
+                    .find(|Local(count, _)| {
+                        let found = base <= *local_idx && (base + count) > *local_idx;
+                        base += count;
+                        found
+                    })
+                    .unwrap();
+                self.pop_val(Some(Val::Typed(*local_type)))?;
             }
             Instr::LocalTee(LocalIdx(local_idx)) => {
-                let local_type = local_types[*local_idx as usize];
-                let val = self.pop_val(Some(Val::Typed(local_type)))?;
+                let mut base = 0;
+                let Local(_, local_type) = locals
+                    .iter()
+                    .find(|Local(count, _)| {
+                        let found = base <= *local_idx && (base + count) > *local_idx;
+                        base += count;
+                        found
+                    })
+                    .unwrap();
+                let val = self.pop_val(Some(Val::Typed(*local_type)))?;
                 self.push_val(val);
             }
 
@@ -544,58 +593,125 @@ impl TypeChecker {
             }
 
             Instr::I32Load(MemArg(align, _)) => {
-                if *align > 7 {
-                    return Err(TypeError::InvalidLoadAlignment(*align, 8));
+                if (1 << *align) > 4 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 4));
                 }
                 conv!(self, (I32) -> (I32))
             }
             Instr::I64Load(MemArg(align, _)) => {
-                if *align > 15 {
-                    return Err(TypeError::InvalidLoadAlignment(*align, 16));
+                if (1 << *align) > 8 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 8));
                 }
                 conv!(self, (I32) -> (I64))
             }
             Instr::F32Load(MemArg(align, _)) => {
-                if *align > 7 {
-                    return Err(TypeError::InvalidLoadAlignment(*align, 8));
+                if (1 << *align) > 4 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 4));
                 }
                 conv!(self, (I32) -> (F32))
             }
             Instr::F64Load(MemArg(align, _)) => {
-                if *align > 15 {
-                    return Err(TypeError::InvalidLoadAlignment(*align, 16));
+                if (1 << *align) > 8 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 8));
                 }
                 conv!(self, (I32) -> (F64))
             }
 
             Instr::I32Load8U(MemArg(align, _)) | Instr::I32Load8S(MemArg(align, _)) => {
-                if *align > 0 {
-                    return Err(TypeError::InvalidLoadAlignment(*align, 0));
+                if (1 << *align) > 1 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 1));
                 }
                 conv!(self, (I32) -> (I32))
             }
 
             Instr::I32Load16S(MemArg(align, _)) | Instr::I32Load16U(MemArg(align, _)) => {
-                if *align > 3 {
-                    return Err(TypeError::InvalidLoadAlignment(*align, 4));
+                if (1 << *align) > 2 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 2));
                 }
                 conv!(self, (I32) -> (I32))
             }
 
-            Instr::I64Load8S(_)
-            | Instr::I64Load8U(_)
-            | Instr::I64Load16S(_)
-            | Instr::I64Load16U(_)
-            | Instr::I64Load32S(_)
-            | Instr::I64Load32U(_) => conv!(self, (I32) -> (I64)),
+            Instr::I64Load8S(MemArg(align, _)) | Instr::I64Load8U(MemArg(align, _)) => {
+                if (1 << *align) > 1 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 1));
+                }
+                conv!(self, (I32) -> (I64))
+            }
 
-            Instr::I32Store(_) => conv!(self, (I32, I32) -> ()),
-            Instr::I64Store(_) => conv!(self, (I32, I64) -> ()),
-            Instr::F32Store(_) => conv!(self, (I32, F32) -> ()),
-            Instr::F64Store(_) => conv!(self, (I32, F64) -> ()),
-            Instr::I32Store8(_) | Instr::I32Store16(_) => conv!(self, (I32, I32) -> ()),
+            Instr::I64Load16S(MemArg(align, _)) | Instr::I64Load16U(MemArg(align, _)) => {
+                if (1 << *align) > 2 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 2));
+                }
+                conv!(self, (I32) -> (I64))
+            }
 
-            Instr::I64Store8(_) | Instr::I64Store16(_) | Instr::I64Store32(_) => {
+            Instr::I64Load32S(MemArg(align, _)) | Instr::I64Load32U(MemArg(align, _)) => {
+                if (1 << *align) > 4 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 4));
+                }
+                conv!(self, (I32) -> (I64))
+            }
+
+            Instr::I32Store(MemArg(align, _)) => {
+                if (1 << *align) > 4 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 4));
+                }
+
+                conv!(self, (I32, I32) -> ())
+            }
+            Instr::I64Store(MemArg(align, _)) => {
+                if (1 << *align) > 8 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 8));
+                }
+
+                conv!(self, (I32, I64) -> ())
+            }
+            Instr::F32Store(MemArg(align, _)) => {
+                if (1 << *align) > 4 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 4));
+                }
+
+                conv!(self, (I32, F32) -> ())
+            }
+            Instr::F64Store(MemArg(align, _)) => {
+                if (1 << *align) > 8 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 8));
+                }
+
+                conv!(self, (I32, F64) -> ())
+            }
+            Instr::I32Store8(MemArg(align, _)) => {
+                if (1 << *align) > 1 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 1));
+                }
+                conv!(self, (I32, I32) -> ())
+            }
+
+            Instr::I32Store16(MemArg(align, _)) => {
+                if (1 << *align) > 2 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 2));
+                }
+                conv!(self, (I32, I32) -> ())
+            }
+
+            Instr::I64Store8(MemArg(align, _)) => {
+                if (1 << *align) > 1 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 1));
+                }
+                conv!(self, (I32, I64) -> ())
+            }
+
+            Instr::I64Store16(MemArg(align, _)) => {
+                if (1 << *align) > 2 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 2));
+                }
+                conv!(self, (I32, I64) -> ())
+            }
+
+            Instr::I64Store32(MemArg(align, _)) => {
+                if (1 << *align) > 4 {
+                    return Err(TypeError::InvalidLoadAlignment(*align, 4));
+                }
                 conv!(self, (I32, I64) -> ())
             }
             Instr::MemorySize(_) => conv!(self, () -> (I32)),

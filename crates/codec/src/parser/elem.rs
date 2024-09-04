@@ -55,8 +55,8 @@ pub enum ElemParser<T: IR> {
     ParseActiveModeTableIdx(u8, T::TableIdx),
 
     ParseMode(u8, ElementMode<T>),
-    ParseElemKind(u8, ElementMode<T>, Option<u32>),
-    ParseRefType(u8, ElementMode<T>, Option<T::RefType>),
+    ParseElemKind(u8, T::ElemMode, Option<u32>),
+    ParseRefType(u8, T::ElemMode, Option<T::RefType>),
 
     Ready(T::Elem),
 }
@@ -148,7 +148,7 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                         // elemkind vec<funcidx>
                         *self = Self::ParseElemKind(
                             flags,
-                            mode,
+                            make_elem_mode(irgen, mode)?,
                             if has_type {
                                 Some(window.take()? as u32)
                             } else {
@@ -164,6 +164,7 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                     } else {
                         None
                     };
+                    let mode = make_elem_mode(irgen, mode)?;
                     *self = Self::ParseRefType(flags, mode, ref_type);
                     continue 'restart;
                 }
@@ -179,7 +180,6 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                             unreachable!();
                         };
 
-                        let mode = make_elem_mode(irgen, mode)?;
                         let func_indices = parser.production(irgen)?;
                         let elem = irgen
                             .make_elem_from_indices(kind, mode, func_indices, flags)
@@ -204,7 +204,6 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                                 unreachable!();
                             };
 
-                            let mode = make_elem_mode(irgen, mode)?;
                             let expr_list = parser.production(irgen)?;
                             let elem = irgen
                                 .make_elem_from_exprs(kind, mode, expr_list, flags)
