@@ -1,47 +1,184 @@
-#[derive(Default)]
-pub(crate) struct Stack {
-    storage: Vec<u32>,
+use std::{collections::LinkedList, marker::Sized};
+
+#[inline]
+#[cold]
+fn cold() {}
+
+pub(crate) struct Stack<const N: usize> {
+    stack: LinkedList<StackSegment<N>>,
 }
 
-impl Stack {
+impl<const N: usize> Stack<N> {
     pub(crate) fn new() -> Self {
-        Default::default()
+        Self {
+            stack: LinkedList::new(),
+        }
     }
 
-    pub(crate) fn take(&mut self) -> u32 {
-        let idx = self.storage.len().saturating_sub(1);
-        let v = self.storage[idx];
-        self.storage.truncate(idx);
-        v
+    pub(crate) fn push<T: Sized + Copy>(&mut self, val: T) {
+        let Some(head) = self.stack.front_mut() else {
+            cold();
+            self.stack.push_front(StackSegment::new());
+            return self.push(val);
+        };
+
+        if !head.fits::<T>() {
+            cold();
+            self.stack.push_front(StackSegment::new());
+            return self.push(val);
+        }
+
+        head.push(val)
     }
 
-    pub(crate) fn take2(&mut self) -> u64 {
-        let idx = self.storage.len().saturating_sub(2);
-        let v: [u32; 2] = (&self.storage[idx..]).try_into().expect("heck");
-        let v = u64::from_ne_bytes(unsafe { std::mem::transmute::<[u32; 2], [u8; 8]>(v) });
-        self.storage.truncate(idx);
-        v
+    pub(crate) fn pop<T: Sized + Copy>(&mut self) -> T {
+        if let Some(head) = self.stack.front_mut() {
+            if !head.is_empty() {
+                return head.pop();
+            } else {
+                cold();
+            }
+        } else {
+            cold();
+            panic!("empty head");
+        }
+
+        self.stack.pop_front();
+        self.pop()
+    }
+}
+
+pub(crate) struct StackSegment<const N: usize> {
+    storage: [u8; N],
+    alignments: Vec<u8>,
+    ptr: usize,
+}
+
+impl<const N: usize> StackSegment<N> {
+    pub(crate) fn new() -> Self {
+        Self {
+            storage: [0; N],
+            alignments: vec![],
+            ptr: 0,
+        }
     }
 
-    pub(crate) fn take4(&mut self) -> u128 {
-        let idx = self.storage.len().saturating_sub(4);
-        let v: [u32; 4] = (&self.storage[idx..]).try_into().expect("heck");
-        let v = u128::from_ne_bytes(unsafe { std::mem::transmute::<[u32; 4], [u8; 16]>(v) });
-        self.storage.truncate(idx);
-        v
+    pub(crate) fn is_empty(&self) -> bool {
+        self.ptr == 0
     }
 
-    pub(crate) fn push(&mut self, val: u32) {
-        self.storage.push(val);
+    pub(crate) fn fits<T: Sized + Copy>(&self) -> bool {
+        let size = size_of::<T>();
+        let align = align_of::<T>();
+
+        let misalignment = unsafe { self.storage.as_ptr().add(self.ptr) as usize } % align;
+        let adjustment = align - misalignment;
+
+        (self.ptr + adjustment + size) < N
     }
 
-    pub(crate) fn push2(&mut self, val: u64) {
-        self.storage
-            .extend(unsafe { std::mem::transmute::<[u8; 8], [u32; 2]>(val.to_ne_bytes()) });
+    pub(crate) fn push<T: Sized>(&mut self, val: T) {
+        let size = size_of::<T>();
+        let align = align_of::<T>();
+
+        let misalignment = unsafe { self.storage.as_ptr().add(self.ptr) as usize } % align;
+        let adjustment = align - misalignment;
+
+        self.alignments.push(adjustment as u8);
+        self.ptr += adjustment;
+
+        let valptr = std::ptr::from_ref(&val);
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                valptr,
+                self.storage[self.ptr..self.ptr + size].as_mut_ptr() as *mut T,
+                1,
+            );
+        }
+        self.ptr += size;
     }
 
-    pub(crate) fn push4(&mut self, val: u128) {
-        self.storage
-            .extend(unsafe { std::mem::transmute::<[u8; 16], [u32; 4]>(val.to_ne_bytes()) });
+    pub(crate) fn pop<T: Sized + Copy>(&mut self) -> T {
+        let size = size_of::<T>();
+        let Some(padding) = self.alignments.pop() else {
+            unreachable!();
+        };
+
+        let ptr = self.ptr;
+        self.ptr -= size + padding as usize;
+        let buf_ref = &self.storage[ptr - size..ptr];
+
+        let value = buf_ref.as_ptr() as *const T;
+        unsafe { *value }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_stack_segment() -> Result<(), ()> {
+        let mut stack = StackSegment::<0xffff>::new();
+
+        #[derive(Debug, Clone, Copy)]
+        struct PointerInfo {
+            module_idx: u32,
+            func_idx: u32,
+        }
+
+        stack.push(13i32);
+        stack.push(-1000000i32);
+        stack.push(PointerInfo {
+            module_idx: 0xffff_0000,
+            func_idx: 0xff00_ff00,
+        });
+        stack.push(213i32);
+        stack.push(line!());
+        stack.push(1i64);
+        stack.push(2i128);
+
+        dbg!(stack.pop::<i128>());
+        dbg!(stack.pop::<i64>());
+        dbg!(stack.pop::<u32>());
+        dbg!(stack.pop::<i32>());
+        dbg!(stack.pop::<PointerInfo>());
+        dbg!(stack.pop::<i32>());
+        dbg!(stack.pop::<i32>());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_stack() -> Result<(), ()> {
+        let mut stack = Stack::<0x20>::new();
+
+        #[derive(Debug, Clone, Copy)]
+        struct PointerInfo {
+            module_idx: u32,
+            func_idx: u32,
+        }
+
+        stack.push(13i32);
+        stack.push(-1000000i32);
+        stack.push(PointerInfo {
+            module_idx: 0xffff_0000,
+            func_idx: 0xff00_ff00,
+        });
+        stack.push(213i32);
+        stack.push(line!());
+        stack.push(1i64);
+        stack.push(2i128);
+
+        dbg!(stack.pop::<i128>());
+        dbg!(stack.pop::<i64>());
+        dbg!(stack.pop::<u32>());
+        dbg!(stack.pop::<i32>());
+        dbg!(stack.pop::<PointerInfo>());
+        dbg!(stack.pop::<i32>());
+        dbg!(stack.pop::<i32>());
+
+        Ok(())
     }
 }
