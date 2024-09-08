@@ -9,6 +9,72 @@ If you're looking for a industry-strength Wasm runtime, look at
 
 A semi-regularly updated dev log.
 
+### 2024 Sep 08
+
+Ok. The time has come to fix our representation of values, and that means
+changing how we represent our stack. For reference: today we represent values
+as `enum Value`, with variants for `F32`, `I32`, `V128`, et al, each of which
+hold the corresponding "native" type: `f32`, `i32`, `u128`, etc. Our "stack"
+today is a vector of these values. This was a conscious decision on my part. I
+wanted something "usefully wrong": an abstraction that could take `uuasm` some
+distance but perhaps not quite _all_ the way to a complete Wasm implementation.
+So why change this now?
+
+Two of the five remaining failing test suites involve floating point values.
+One of them involves function references. Both of these have one thing in
+common: the representation inside of `Value` is _wrong_.
+
+In the case of floats, we have to do something called "NaN canonicalization"
+when floating point operations interact with the stack. This is _much easier to
+do_ if we're storing floating point values as unsigned integers of
+corresponding size on the stack. It's a lot easier to trap on invalid
+operations before native machinery takes over, too. So that's one point.
+
+For function references, not only do we have to store the function index that's
+referenced, but the originating module index of that function. The `elem` suite
+includes a particular test. The test checks that a child module can be linked
+to a parent module, and that the child module's _active_ `elem` can store
+values into a table imported from the parent. When the test invokes exports on
+the parent, it expects those functions to dispatch into the child module. A
+reasonable test! I'm handwaving a bit about the solution, but suffice it to
+say, we're not storing a `Value::RefFunc(FuncIdx(u32))` on the stack. (It might
+be something more like a `u64` pointer into a global function table _or_ a pair
+of pointers against module and function tables, but I digress.)
+
+Finally, for completeness' sake, it bears mentioning that the current stack
+representation is about as inefficient as you can get. Since values are a typed
+enum, we're paying the cost of the largest enum variant for every value on the
+stack _plus_ the discriminant. Rust reports that each value costs 32 bytes (!!)
+which is not very cache-friendly.
+
+So, what do we do? Pack 'em up, pack 'em in.
+
+Let me begin: instead of a vector of enums, we represent the stack as a byte
+buffer aligned to the size of the largest type (v128). From validation, we know
+the maximum stack size and stack height of a given block, so we can expand our
+byte buffer as we enter blocks. Pushing values becomes a matter of bringing the
+stack pointer into alignment with the new type, then writing the value into the
+byte buffer at that location. However, when popping, we have to have enough
+information about the last items on the stack that we can shift the pointer
+back past any padding we added for alignment.
+
+There are 7 alignment changes possible:
+
+- `u32` → `u64`
+- `u32` → `u128`
+- `u64` → `u128`
+- `u128` → `u64`
+- `u128` → `u32`
+- `u64` → `u32`
+- (no change)
+
+We can encode this in 3 bits. We have two bits for alignment transitions
+stepping from a smaller type to a larger type, plus one bit to indicate
+"reversal." The zero value indicates "no padding adjustment." Whenever we push
+a value, we also push this alignment change type to a separate stack. When we
+pop a value, we reverse the alignment change; based on the alignment change and
+the pointer value, we reclaim a number of alignment bytes.
+
 ### 2024 Sep 01
 
 Labor day weekend!
