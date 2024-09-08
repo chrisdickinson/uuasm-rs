@@ -86,7 +86,7 @@ impl<T: IR> Parse<T> for CustomSectionParser {
                     };
 
                     let name = parser.production(irgen)?;
-                    let name = dbg!(std::str::from_utf8(&name))?;
+                    let name = std::str::from_utf8(&name)?;
 
                     Ok(AnyParser::CustomSection(CustomSectionParser::Name(
                         len,

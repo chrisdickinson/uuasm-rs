@@ -264,7 +264,6 @@ impl<T: IR> Parse<T> for ExprParser<T> {
                     if bits[1] != 0 {
                         return Err(ParseErrorKind::BadMemoryGrow(bits[1]))
                     }
-                    dbg!(bits);
                     irgen.make_instr_arity1(next, 0, 0, &mut self.instrs).map_err(IRError)?;
                 }
 

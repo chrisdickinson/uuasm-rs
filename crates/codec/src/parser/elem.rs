@@ -67,10 +67,21 @@ impl<T: IR> Parse<T> for ElemParser<T> {
     fn advance(&mut self, irgen: &mut T, window: &mut DecodeWindow) -> crate::ParseResult<T> {
         'restart: loop {
             return Ok(match self {
-                Self::Init => {
-                    let flags = window.take()?;
+                Self::Init => Advancement::YieldTo(
+                    AnyParser::LEBU32(Default::default()),
+                    |irgen, last_state, _| {
+                        let AnyParser::LEBU32(parser) = last_state else {
+                            unreachable!();
+                        };
 
-                    *self = Self::Flags(flags);
+                        let flags = parser.production(irgen)?;
+
+                        Ok(AnyParser::Elem(Self::Flags(flags as u8)))
+                    },
+                ),
+
+                Self::Flags(flags) => {
+                    let flags = *flags;
                     if flags & 0b11 == 0b10 {
                         Advancement::YieldTo(
                             AnyParser::LEBU32(Default::default()),
@@ -107,8 +118,6 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                         continue 'restart;
                     }
                 }
-
-                Self::Flags(_) => unreachable!(),
 
                 Self::ParseActiveModeTableIdx(_, _) => {
                     irgen.start_elem_active_table_index().map_err(IRError)?;
