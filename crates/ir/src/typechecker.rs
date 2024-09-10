@@ -513,6 +513,16 @@ impl TypeChecker {
                 }
 
                 self.push_val(if t1 == Val::Unknown { t2 } else { t1 });
+
+                let val_type = if let Val::Typed(v) = t1 {
+                    v
+                } else {
+                    // assumption: if we have an unknown value, this instr can never
+                    // be reached. So we fake an i32.
+                    ValType::NumType(NumType::I32)
+                };
+                // rewrite the instruction to annotate the type
+                return Ok(Instr::Select(Box::new([val_type])));
             }
 
             Instr::LocalGet(LocalIdx(local_idx)) => {

@@ -1,4 +1,8 @@
+use std::num::{NonZero, NonZeroU64};
+
 use uuasm_ir::FuncIdx;
+
+pub(crate) type RefValue = Option<NonZeroU64>;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Value {
@@ -99,19 +103,6 @@ impl Value {
             Value::I32(xs) => *xs as usize,
             Value::I64(xs) => *xs as usize,
             _ => return None,
-        })
-    }
-
-    // This is distinct from "as_usize": i64's are not valid candidates
-    // for memory offsets until mem64 lands in wasm.
-    pub(crate) fn as_mem_offset(&self) -> anyhow::Result<usize> {
-        self.as_i32().map(|xs| xs as usize)
-    }
-
-    pub(crate) fn as_i32(&self) -> anyhow::Result<i32> {
-        Ok(match self {
-            Value::I32(xs) => *xs,
-            _ => anyhow::bail!("expected i32 value"),
         })
     }
 

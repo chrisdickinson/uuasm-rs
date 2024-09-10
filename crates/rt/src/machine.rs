@@ -7,12 +7,12 @@ use std::{
 
 use anyhow::Context;
 
-use crate::memory_region::MemoryRegion;
-use crate::prelude::*;
+use crate::{memory_region::MemoryRegion, stack::DefaultStack, value::RefValue};
+use crate::{prelude::*, stack::Fence};
 use uuasm_ir::{
     BlockType, ByteVec, Code, CodeIdx, Data, Elem, ElemMode, Export, ExportDesc, Expr, FuncIdx,
     Global, GlobalIdx, Import, ImportDesc, Instr, MemIdx, Module, ModuleBuilder, ModuleIntoInner,
-    Name, TableIdx, TableType, Type, TypeIdx,
+    Name, ResultType, TableIdx, TableType, Type, TypeIdx,
 };
 
 use super::{
@@ -58,12 +58,12 @@ struct Frame<'a> {
     #[cfg(test)]
     name: &'static str,
     pc: usize,
+    fence: Fence,
     return_unwind_count: usize,
     instrs: &'a [Instr],
     jump_to: Option<usize>,
     block_type: BlockType,
     locals_base_offset: usize,
-    value_stack_offset: usize,
     guest_index: GuestIndex,
 }
 
@@ -286,12 +286,15 @@ impl Machine {
                 ImportDesc::Func(desc) => {
                     functions.push(FuncInst::resolve(*desc, imp, self)?);
                 }
+
                 ImportDesc::Mem(desc) => {
                     memories.push(MemInst::resolve(*desc, imp, self)?);
                 }
+
                 ImportDesc::Table(desc) => {
                     tables.push(TableInst::resolve(*desc, imp, self)?);
                 }
+
                 ImportDesc::Global(desc) => {
                     globals.push(GlobalInst::resolve(*desc, imp, self)?);
                 }
@@ -785,7 +788,8 @@ impl Machine {
             )
             .collect();
 
-        let mut value_stack = Vec::<Value>::new();
+        let mut value_stack = DefaultStack::new();
+
         let mut frames = Vec::<Frame<'_>>::new();
         let mut frame = Frame {
             #[cfg(test)]
@@ -796,8 +800,8 @@ impl Machine {
             jump_to: Some(code.0.expr.0.len()),
             locals_base_offset: 0,
             block_type: BlockType::TypeIndex(*function.typeidx()),
-            value_stack_offset: 0,
             guest_index: module_idx,
+            fence: value_stack.begin(),
         };
 
         #[cfg(any())]
@@ -807,32 +811,17 @@ impl Machine {
                 match frame.block_type {
                     BlockType::Empty => {}
                     BlockType::Val(val_type) => {
-                        let Some(last_value) = value_stack.last() else {
-                            anyhow::bail!("block expected at least one value on stack");
-                        };
-
-                        val_type.validate(last_value)?;
+                        value_stack.pop_valtype(val_type);
                     }
                     BlockType::TypeIndex(type_idx) => {
-                        let Some(ty) = self.typedef(frame.guest_index, type_idx) else {
+                        let Some(Type(_, ResultType(val_types))) =
+                            self.typedef(frame.guest_index, type_idx)
+                        else {
                             anyhow::bail!("could not resolve blocktype");
                         };
-                        if value_stack.len() < ty.1 .0.len() {
-                            anyhow::bail!(
-                                "block expected at least {} value{} on stack",
-                                ty.1 .0.len(),
-                                if ty.1 .0.len() == 1 { "" } else { "s" }
-                            );
-                        }
 
-                        for (v, vt) in value_stack
-                            .iter()
-                            .rev()
-                            .take(ty.1 .0.len())
-                            .rev()
-                            .zip(ty.1 .0.iter())
-                        {
-                            vt.validate(v)?;
+                        for val_type in val_types.iter().rev() {
+                            value_stack.pop_valtype(*val_type);
                         }
                     }
                 };
@@ -848,18 +837,19 @@ impl Machine {
             match &frame.instrs[frame.pc] {
                 Instr::Unreachable => anyhow::bail!("unreachable"),
                 Instr::Nop => {}
+
                 Instr::Block(block_type, blockinstrs) => {
                     let locals_base_offset = frame.locals_base_offset;
                     let new_frame = Frame {
                         #[cfg(test)]
                         name: "block",
                         pc: 0,
+                        fence: value_stack.begin(),
                         return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
                         jump_to: Some(blockinstrs.len()),
                         block_type: *block_type,
                         locals_base_offset,
-                        value_stack_offset: value_stack.len(),
                         guest_index: frame.guest_index,
                     };
                     frame.pc += 1;
@@ -877,9 +867,9 @@ impl Machine {
                         return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
                         jump_to: Some(0),
+                        fence: value_stack.begin(),
                         block_type: *block_type,
                         locals_base_offset: frame.locals_base_offset,
-                        value_stack_offset: value_stack.len(),
                         guest_index: frame.guest_index,
                     };
                     frame.pc += 1;
@@ -890,16 +880,8 @@ impl Machine {
                 }
 
                 Instr::If(block_type, consequent) => {
-                    if value_stack.is_empty() {
-                        anyhow::bail!("expected 1 value on stack");
-                    }
-
-                    let blockinstrs = if let Some(Value::I32(0) | Value::I64(0)) = value_stack.pop()
-                    {
-                        &[]
-                    } else {
-                        consequent.deref()
-                    };
+                    let test = value_stack.pop::<i32>();
+                    let blockinstrs = if test == 0 { &[] } else { consequent.deref() };
 
                     let new_frame = Frame {
                         #[cfg(test)]
@@ -908,9 +890,9 @@ impl Machine {
                         return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
                         jump_to: Some(blockinstrs.len()),
+                        fence: value_stack.begin(),
                         block_type: *block_type,
                         locals_base_offset: frame.locals_base_offset,
-                        value_stack_offset: value_stack.len(),
                         guest_index: frame.guest_index,
                     };
                     frame.pc += 1;
@@ -921,12 +903,8 @@ impl Machine {
                 }
 
                 Instr::IfElse(block_type, consequent, alternate) => {
-                    if value_stack.is_empty() {
-                        anyhow::bail!("expected 1 value on stack");
-                    }
-
-                    let blockinstrs = if let Some(Value::I32(0) | Value::I64(0)) = value_stack.pop()
-                    {
+                    let test = value_stack.pop::<i32>();
+                    let blockinstrs = if test == 0 {
                         alternate.deref()
                     } else {
                         consequent.deref()
@@ -939,9 +917,9 @@ impl Machine {
                         return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
                         jump_to: Some(blockinstrs.len()),
+                        fence: value_stack.begin(),
                         block_type: *block_type,
                         locals_base_offset: frame.locals_base_offset,
-                        value_stack_offset: value_stack.len(),
                         guest_index: frame.guest_index,
                     };
                     frame.pc += 1;
@@ -991,18 +969,15 @@ impl Machine {
                     }
 
                     let vs = value_stack.split_off(value_stack.len() - to_preserve);
-                    value_stack.truncate(frame.value_stack_offset);
+                    value_stack.unwind(frame.fence);
                     value_stack.extend_from_slice(vs.as_slice());
 
                     continue;
                 }
 
                 Instr::BrIf(idx) => {
-                    let Some(v) = value_stack.pop() else {
-                        anyhow::bail!("br.if: expected a value on the stack");
-                    };
-
-                    if !v.is_zero()? {
+                    let test = value_stack.pop::<i32>();
+                    if test != 0 {
                         if idx.0 > 0 {
                             frames.truncate(frames.len() - (idx.0 - 1) as usize);
                             frame = frames
@@ -1040,7 +1015,7 @@ impl Machine {
                         }
 
                         let vs = value_stack.split_off(value_stack.len() - to_preserve);
-                        value_stack.truncate(frame.value_stack_offset);
+                        value_stack.unwind(frame.fence);
                         value_stack.extend_from_slice(vs.as_slice());
 
                         continue;
@@ -1048,11 +1023,9 @@ impl Machine {
                 }
 
                 Instr::BrTable(labels, alternate) => {
-                    let Some(Value::I32(v)) = value_stack.pop() else {
-                        anyhow::bail!("expected an i32 value on the stack");
-                    };
+                    let test = value_stack.pop::<i32>();
 
-                    let v = v as usize;
+                    let v = test as usize;
                     let idx = if v >= labels.len() {
                         alternate.0
                     } else {
@@ -1096,7 +1069,7 @@ impl Machine {
                     }
 
                     let vs = value_stack.split_off(value_stack.len() - to_preserve);
-                    value_stack.truncate(frame.value_stack_offset);
+                    value_stack.unwind(frame.fence);
                     value_stack.extend_from_slice(vs.as_slice());
 
                     continue;
@@ -1133,7 +1106,7 @@ impl Machine {
                     }
 
                     let vs = value_stack.split_off(value_stack.len() - to_preserve);
-                    value_stack.truncate(frame.value_stack_offset);
+                    value_stack.unwind(frame.fence);
                     value_stack.extend_from_slice(vs.as_slice());
                     continue;
                 }
@@ -1189,7 +1162,7 @@ impl Machine {
                         jump_to: None,
                         locals_base_offset,
                         block_type: BlockType::TypeIndex(*function.typeidx()),
-                        value_stack_offset: value_stack.len(),
+                        fence: value_stack.begin(),
                         guest_index: module_idx,
                     };
                     frame.pc += 1;
@@ -1205,9 +1178,7 @@ impl Machine {
 
                     let table = &resources.table_instances[table_instance_idx];
 
-                    let Some(Value::I32(idx)) = value_stack.pop() else {
-                        anyhow::bail!("expected an i32 value on the stack");
-                    };
+                    let idx = value_stack.pop::<i32>();
 
                     // let TableType(_reftype, _limits) = &table.r#type;
 
@@ -1286,7 +1257,7 @@ impl Machine {
                         jump_to: None,
                         locals_base_offset,
                         block_type: BlockType::TypeIndex(*function.typeidx()),
-                        value_stack_offset: value_stack.len(),
+                        fence: value_stack.begin(),
                         guest_index: module_idx,
                     };
                     frame.pc += 1;
@@ -1298,42 +1269,39 @@ impl Machine {
 
                 Instr::RefNull(_ref_type) => value_stack.push(Value::RefNull),
                 Instr::RefIsNull => {
-                    let Some(v) = value_stack.pop() else {
-                        anyhow::bail!("ref.null: expected one value on stack")
-                    };
+                    let v = value_stack.pop::<RefValue>();
 
-                    value_stack.push(Value::I32(if matches!(v, Value::RefNull) { 1 } else { 0 }));
+                    value_stack.push::<i32>(if v.is_none() { 1 } else { 0 });
                 }
 
-                Instr::RefFunc(func_idx) => {
-                    if func_idx.0 as usize >= self.functions[frame.guest_index].len() {
-                        anyhow::bail!("ref.func: referencing out of bounds function")
-                    }
-
-                    value_stack.push(Value::RefFunc(*func_idx))
-                }
+                Instr::RefFunc(func_idx) => value_stack.push(Value::RefFunc(*func_idx)),
 
                 Instr::Drop => {
                     let Some(_) = value_stack.pop() else {
                         anyhow::bail!("drop out of range")
                     };
                 }
+
+                // need to annotate with type!!
                 Instr::SelectEmpty => {
-                    let items = value_stack.split_off(value_stack.len() - 3);
-                    value_stack.push(if items[2].is_zero()? {
-                        items[1]
-                    } else {
-                        items[0]
-                    });
+                    // XXX(chrisdickinson): we don't know FOR SURE that these are 4-byte values
+                    // being selected. The spec says "numeric type" which includes i64/f64 as well!
+                    //
+                    // That said, the validator rewrites all incoming SelectEmpty instructions to
+                    // Select(operands) so the chances of hitting this path are pretty low.
+                    let test = value_stack.pop::<i32>();
+                    let val2 = value_stack.pop::<i32>();
+                    let val1 = value_stack.pop::<i32>();
+
+                    value_stack.push(if test != 0 { val2 } else { val1 })
                 }
 
-                Instr::Select(_operands) => {
-                    let items = value_stack.split_off(value_stack.len() - 3);
-                    value_stack.push(if items[2].is_zero()? {
-                        items[1]
-                    } else {
-                        items[0]
-                    });
+                Instr::Select(operands) => {
+                    let test = value_stack.pop::<i32>();
+                    let val2 = value_stack.pop_valtype(operands[0]);
+                    let val1 = value_stack.pop_valtype(operands[0]);
+
+                    value_stack.push_value(if test != 0 { val2 } else { val1 })
                 }
 
                 Instr::LocalGet(idx) => {
@@ -1387,9 +1355,7 @@ impl Machine {
 
                 Instr::TableGet(table_idx) => {
                     let table_idx = self.table(frame.guest_index, *table_idx);
-                    let Some(offset) = value_stack.pop().and_then(|xs| xs.as_usize()) else {
-                        anyhow::bail!("table.get: expected offset value at top of stack");
-                    };
+                    let offset = value_stack.pop::<i32>() as usize;
 
                     let table = &resources.table_instances[table_idx];
                     if offset >= table.len() {
@@ -1400,17 +1366,8 @@ impl Machine {
 
                 Instr::TableSet(table_idx) => {
                     let table_idx = self.table(frame.guest_index, *table_idx);
-                    let Some(
-                        value @ Value::RefFunc(_)
-                        | value @ Value::RefNull
-                        | value @ Value::RefExtern(_),
-                    ) = value_stack.pop()
-                    else {
-                        anyhow::bail!("table.set: expected reference value at top of stack");
-                    };
-                    let Some(offset) = value_stack.pop().and_then(|xs| xs.as_usize()) else {
-                        anyhow::bail!("table.set: expected offset value on stack");
-                    };
+                    let value = value_stack.pop::<RefValue>();
+                    let offset = value_stack.pop::<i32>() as usize;
 
                     let table = &mut resources.table_instances[table_idx];
                     if offset >= table.len() {
@@ -1433,16 +1390,9 @@ impl Machine {
 
                     let table_idx = self.table(frame.guest_index, *table_idx);
 
-                    let items = value_stack.split_off(value_stack.len() - 3);
-                    let Some(count) = items[2].as_usize() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
-                    let Some(srcaddr) = items[1].as_usize() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
-                    let Some(destaddr) = items[0].as_usize() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let count = value_stack.pop::<i32>() as usize;
+                    let srcaddr = value_stack.pop::<i32>() as usize;
+                    let destaddr = value_stack.pop::<i32>() as usize;
 
                     let elem_len = if resources
                         .dropped_elements
@@ -1495,16 +1445,9 @@ impl Machine {
 
                     let to_table_idx = self.table(frame.guest_index, *to_table_idx);
 
-                    let items = value_stack.split_off(value_stack.len() - 3);
-                    let Some(count) = items[2].as_usize() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
-                    let Some(srcaddr) = items[1].as_usize() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
-                    let Some(destaddr) = items[0].as_usize() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let count = value_stack.pop::<i32>() as usize;
+                    let srcaddr = value_stack.pop::<i32>() as usize;
+                    let destaddr = value_stack.pop::<i32>() as usize;
 
                     if srcaddr > resources.table_instances[from_table_idx].len() {
                         anyhow::bail!("out of bounds table access");
@@ -1534,26 +1477,14 @@ impl Machine {
 
                 Instr::TableGrow(table_idx) => {
                     let table_idx = self.table(frame.guest_index, *table_idx);
-                    let Some(Value::I32(size)) = value_stack.pop() else {
-                        anyhow::bail!("table.grow: expected size value on stack");
-                    };
-
-                    let Some(fill) = value_stack.pop() else {
-                        anyhow::bail!("table.grow: expected a ref value on stack");
-                    };
-
-                    if !matches!(
-                        fill,
-                        Value::RefFunc(_) | Value::RefNull | Value::RefExtern(_)
-                    ) {
-                        anyhow::bail!("table.grow: fill value was not a ref");
-                    }
+                    let size = value_stack.pop::<i32>();
+                    let fill = value_stack.pop::<RefValue>();
 
                     // TODO: respect upper bound size of table if present?
                     let tbl = &mut resources.table_instances[table_idx];
                     let old_len = tbl.grow(size, fill);
 
-                    value_stack.push(Value::I32(old_len));
+                    value_stack.push::<i32>(old_len);
                 }
 
                 Instr::TableSize(table_idx) => {
@@ -1563,24 +1494,9 @@ impl Machine {
 
                 Instr::TableFill(table_idx) => {
                     let table_idx = self.table(frame.guest_index, *table_idx);
-                    let Some(Value::I32(size)) = value_stack.pop() else {
-                        anyhow::bail!("table.grow: expected size value on stack");
-                    };
-
-                    let Some(fill) = value_stack.pop() else {
-                        anyhow::bail!("table.grow: expected a ref value on stack");
-                    };
-
-                    if !matches!(
-                        fill,
-                        Value::RefFunc(_) | Value::RefNull | Value::RefExtern(_)
-                    ) {
-                        anyhow::bail!("table.grow: fill value was not a ref");
-                    }
-
-                    let Some(Value::I32(offset)) = value_stack.pop() else {
-                        anyhow::bail!("table.grow: expected an offset value on stack");
-                    };
+                    let size = value_stack.pop::<i32>();
+                    let fill = value_stack.pop::<RefValue>();
+                    let offset = value_stack.pop::<i32>();
 
                     // TODO: respect upper bound size of table if present?
                     let tbl = &mut resources.table_instances[table_idx];
@@ -1598,58 +1514,48 @@ impl Machine {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load(offset)?;
-                    value_stack.push(Value::I32(i32::from_le_bytes(arr)));
+                    value_stack.push::<i32>(i32::from_le_bytes(arr));
                 }
 
                 Instr::I64Load(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load(offset)?;
-                    value_stack.push(Value::I64(i64::from_le_bytes(arr)));
+                    value_stack.push::<i64>(i64::from_le_bytes(arr));
                 }
 
                 Instr::F32Load(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load(offset)?;
-                    value_stack.push(Value::F32(f32::from_le_bytes(arr)));
+                    value_stack.push::<f32>(f32::from_le_bytes(arr));
                 }
 
                 Instr::F64Load(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load(offset)?;
-                    value_stack.push(Value::F64(f64::from_le_bytes(arr)));
+                    value_stack.push::<f64>(f64::from_le_bytes(arr));
                 }
 
                 Instr::I32Load8S(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load::<1>(offset)?;
                     value_stack.push(Value::I32((arr[0] as i8) as i32));
                 }
@@ -1658,10 +1564,8 @@ impl Machine {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load::<1>(offset)?;
                     value_stack.push(Value::I32(arr[0] as u32 as i32));
                 }
@@ -1670,34 +1574,28 @@ impl Machine {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load(offset)?;
-                    value_stack.push(Value::I32(i16::from_le_bytes(arr) as i32));
+                    value_stack.push::<i32>(i16::from_le_bytes(arr) as i32);
                 }
 
                 Instr::I32Load16U(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load(offset)?;
-                    value_stack.push(Value::I32(u16::from_le_bytes(arr) as i32));
+                    value_stack.push::<i32>(u16::from_le_bytes(arr) as i32);
                 }
 
                 Instr::I64Load8S(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load::<1>(offset)?;
                     value_stack.push(Value::I64((arr[0] as i8) as i64));
                 }
@@ -1706,10 +1604,8 @@ impl Machine {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load::<1>(offset)?;
                     value_stack.push(Value::I64(arr[0] as u64 as i64));
                 }
@@ -1718,61 +1614,48 @@ impl Machine {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load(offset)?;
-                    value_stack.push(Value::I64(i16::from_le_bytes(arr) as i64));
+                    value_stack.push::<i64>(i16::from_le_bytes(arr) as i64);
                 }
 
                 Instr::I64Load16U(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load(offset)?;
-                    value_stack.push(Value::I64(u16::from_le_bytes(arr) as i64));
+                    value_stack.push::<i64>(u16::from_le_bytes(arr) as i64);
                 }
 
                 Instr::I64Load32S(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load(offset)?;
-                    value_stack.push(Value::I64(i32::from_le_bytes(arr) as i64));
+                    value_stack.push::<i64>(i32::from_le_bytes(arr) as i64);
                 }
 
                 Instr::I64Load32U(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &resources.memory_regions[memory_idx];
 
-                    let v = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("expected a value on the stack"))?;
-                    let offset = mem.offset().saturating_add(v.as_mem_offset()?);
+                    let v = value_stack.pop::<u32>();
+                    let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load(offset)?;
-                    value_stack.push(Value::I64(u32::from_le_bytes(arr) as i64));
+                    value_stack.push::<i64>(u32::from_le_bytes(arr) as i64);
                 }
 
                 Instr::I32Store(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
-                    let Some(Value::I32(v)) = value_stack.pop() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
-
-                    let Some(Value::I32(t)) = value_stack.pop() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let v = value_stack.pop::<i32>();
+                    let t = value_stack.pop::<i32>();
 
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &v.to_le_bytes())?;
@@ -1782,13 +1665,8 @@ impl Machine {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
-                    let Some(Value::I64(v)) = value_stack.pop() else {
-                        anyhow::bail!("expected i64 value on the stack")
-                    };
-
-                    let Some(Value::I32(t)) = value_stack.pop() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let v = value_stack.pop::<i64>();
+                    let t = value_stack.pop::<i32>();
 
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &v.to_le_bytes())?;
@@ -1798,13 +1676,8 @@ impl Machine {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
-                    let Some(Value::F32(v)) = value_stack.pop() else {
-                        anyhow::bail!("expected f32 value on the stack")
-                    };
-
-                    let Some(Value::I32(t)) = value_stack.pop() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let v = value_stack.pop::<f32>();
+                    let t = value_stack.pop::<i32>();
 
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &v.to_le_bytes())?;
@@ -1814,44 +1687,31 @@ impl Machine {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
-                    let Some(Value::F64(v)) = value_stack.pop() else {
-                        anyhow::bail!("expected f64 value on the stack")
-                    };
-
-                    let Some(Value::I32(t)) = value_stack.pop() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let v = value_stack.pop::<f64>();
+                    let t = value_stack.pop::<i32>();
 
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &v.to_le_bytes())?;
                 }
+
                 Instr::I32Store8(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
-                    let Some(Value::I32(v)) = value_stack.pop() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
-
-                    let Some(Value::I32(t)) = value_stack.pop() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let v = value_stack.pop::<i32>();
+                    let t = value_stack.pop::<i32>();
 
                     let v = v as i8;
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &[v as u8])?;
                 }
+
                 Instr::I32Store16(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
-                    let Some(Value::I32(v)) = value_stack.pop() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
-
-                    let Some(Value::I32(t)) = value_stack.pop() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let v = value_stack.pop::<i32>();
+                    let t = value_stack.pop::<i32>();
 
                     let v = v as i16;
                     let offset = mem.offset().saturating_add(t as usize);
@@ -1862,45 +1722,32 @@ impl Machine {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
-                    let Some(Value::I64(v)) = value_stack.pop() else {
-                        anyhow::bail!("expected i64 value on the stack")
-                    };
-
-                    let Some(Value::I32(t)) = value_stack.pop() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let v = value_stack.pop::<i64>();
+                    let t = value_stack.pop::<i32>();
 
                     let v = v as i8;
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &[v as u8])?;
                 }
+
                 Instr::I64Store16(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
-                    let Some(Value::I64(v)) = value_stack.pop() else {
-                        anyhow::bail!("expected i64 value on the stack")
-                    };
-
-                    let Some(Value::I32(t)) = value_stack.pop() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let v = value_stack.pop::<i64>();
+                    let t = value_stack.pop::<i32>();
 
                     let v = v as i16;
                     let offset = mem.offset().saturating_add(t as usize);
                     memory_region.store(offset, &v.to_le_bytes())?;
                 }
+
                 Instr::I64Store32(mem) => {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
-                    let Some(Value::I64(v)) = value_stack.pop() else {
-                        anyhow::bail!("expected i64 value on the stack")
-                    };
-
-                    let Some(Value::I32(t)) = value_stack.pop() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let v = value_stack.pop::<i64>();
+                    let t = value_stack.pop::<i32>();
 
                     let v = v as i32;
                     let offset = mem.offset().saturating_add(t as usize);
@@ -1910,23 +1757,22 @@ impl Machine {
                 Instr::MemorySize(mem_idx) => {
                     let memory_idx = self.memory(frame.guest_index, *mem_idx);
                     let memory_region = &mut resources.memory_regions[memory_idx];
-                    value_stack.push(Value::I32(memory_region.page_count() as i32));
+                    value_stack.push::<i32>(memory_region.page_count() as i32);
                 }
 
                 Instr::MemoryGrow(mem_idx) => {
                     let memory_idx = self.memory(frame.guest_index, *mem_idx);
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
-                    let Some(Value::I32(v)) = value_stack.pop() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let v = value_stack.pop::<i32>();
 
-                    if let Ok(page_count) = memory_region.grow(v as usize) {
-                        value_stack.push(Value::I32(page_count as i32));
+                    value_stack.push(if let Ok(page_count) = memory_region.grow(v as usize) {
+                        page_count as i32
                     } else {
-                        value_stack.push(Value::I32(-1));
-                    }
+                        -1i32
+                    });
                 }
+
                 Instr::MemoryInit(data_idx, mem_idx) => {
                     let Some(data) = self.data[frame.guest_index].get(data_idx.0 as usize) else {
                         anyhow::bail!("could not fetch data by that id")
@@ -1946,16 +1792,9 @@ impl Machine {
                     let memory_idx = self.memory(frame.guest_index, *mem_idx);
 
                     let memory_region = &mut resources.memory_regions[memory_idx];
-                    let items = value_stack.split_off(value_stack.len() - 3);
-                    let Some(count) = items[2].as_usize() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
-                    let Some(srcaddr) = items[1].as_usize() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
-                    let Some(destaddr) = items[0].as_usize() else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let count = value_stack.pop::<i32>() as usize;
+                    let srcaddr = value_stack.pop::<i32>() as usize;
+                    let destaddr = value_stack.pop::<i32>() as usize;
 
                     if srcaddr > data.len() {
                         anyhow::bail!("out of bounds memory access");
@@ -1997,16 +1836,10 @@ impl Machine {
                     // if these are the same memory, we're going to borrow it once mutably.
                     if from_memory_idx == to_memory_idx {
                         let memory_region = &mut resources.memory_regions[from_memory_idx];
-                        let items = value_stack.split_off(value_stack.len() - 3);
-                        let Some(count) = items[2].as_usize() else {
-                            anyhow::bail!("expected i32 value on the stack")
-                        };
-                        let Some(srcaddr) = items[1].as_usize() else {
-                            anyhow::bail!("expected i32 value on the stack")
-                        };
-                        let Some(destaddr) = items[0].as_usize() else {
-                            anyhow::bail!("expected i32 value on the stack")
-                        };
+                        let count = value_stack.pop::<i32>() as usize;
+                        let srcaddr = value_stack.pop::<i32>() as usize;
+                        let destaddr = value_stack.pop::<i32>() as usize;
+
                         if srcaddr > memory_region.len() {
                             anyhow::bail!("out of bounds memory access");
                         }
@@ -2033,352 +1866,267 @@ impl Machine {
 
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
-                    let items = value_stack.split_off(value_stack.len() - 3);
-                    let Value::I32(count) = items[2] else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
-                    let Value::I32(val) = items[1] else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
-                    let Value::I32(offset) = items[0] else {
-                        anyhow::bail!("expected i32 value on the stack")
-                    };
+                    let count = value_stack.pop::<i32>() as usize;
+                    let val = value_stack.pop::<i32>() as usize;
+                    let offset = value_stack.pop::<i32>() as usize;
 
                     memory_region.fill_data(val as u8, offset as usize, count as usize)?;
                 }
 
                 Instr::I32Const(v) => {
-                    value_stack.push(Value::I32(*v));
+                    value_stack.push(*v);
                 }
+
                 Instr::I64Const(v) => {
-                    value_stack.push(Value::I64(*v));
+                    value_stack.push(*v);
                 }
+
                 Instr::F32Const(v) => {
-                    value_stack.push(Value::F32(*v));
+                    value_stack.push(*v);
                 }
+
                 Instr::F64Const(v) => {
-                    value_stack.push(Value::F64(*v));
+                    value_stack.push(*v);
                 }
+
                 Instr::I32Eqz => {
-                    let Some(v) = value_stack.pop() else {
-                        anyhow::bail!("i32.eqz: expected 1 value on stack");
-                    };
-                    value_stack.push(Value::I32(if v.is_zero()? { 1 } else { 0 }));
+                    let value = value_stack.pop::<i32>() as usize;
+                    value_stack.push::<i32>(if value == 0 { 1 } else { 0 });
                 }
+
                 Instr::I32Eq => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.Eq: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs == rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(if lhs == rhs { 1 } else { 0 });
                 }
+
                 Instr::I32Ne => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.Ne: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
                     value_stack.push(Value::I32(if lhs != rhs { 1 } else { 0 }));
                 }
+
                 Instr::I32LtS => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.LtS: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs < rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(if lhs < rhs { 1 } else { 0 });
                 }
+
                 Instr::I32LtU => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.LtU: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if (lhs as u32) < (rhs as u32) { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(if (lhs as u32) < (rhs as u32) { 1 } else { 0 });
                 }
 
                 Instr::I32GtS => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.GtS: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs > rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(if lhs > rhs { 1 } else { 0 });
                 }
 
                 Instr::I32GtU => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.GtU: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if (lhs as u32) > (rhs as u32) { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(if (lhs as u32) > (rhs as u32) { 1 } else { 0 });
                 }
+
                 Instr::I32LeS => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.LeS: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs <= rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(if lhs <= rhs { 1 } else { 0 });
                 }
+
                 Instr::I32LeU => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.LeU: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if (lhs as u32) <= (rhs as u32) { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(if (lhs as u32) <= (rhs as u32) { 1 } else { 0 });
                 }
+
                 Instr::I32GeS => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.GeS: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs >= rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(if lhs >= rhs { 1 } else { 0 });
                 }
+
                 Instr::I32GeU => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.GeU: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if (lhs as u32) >= (rhs as u32) { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(if (lhs as u32) >= (rhs as u32) { 1 } else { 0 });
                 }
+
                 Instr::I64Eqz => {
-                    let Some(v) = value_stack.pop() else {
-                        anyhow::bail!("i64.eqz: expected 1 value on stack");
-                    };
-                    value_stack.push(Value::I32(if v.is_zero()? { 1 } else { 0 }));
+                    let v = value_stack.pop::<i64>();
+                    value_stack.push::<i32>(if v == 0 { 1 } else { 0 });
                 }
+
                 Instr::I64Eq => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.Eq: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs == rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i32>(if lhs == rhs { 1 } else { 0 });
                 }
+
                 Instr::I64Ne => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.Ne: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
                     value_stack.push(Value::I32(if lhs != rhs { 1 } else { 0 }));
                 }
+
                 Instr::I64LtS => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.LtS: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs < rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i32>(if lhs < rhs { 1 } else { 0 });
                 }
+
                 Instr::I64LtU => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.LtU: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if (lhs as u64) < (rhs as u64) { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i32>(if (lhs as u64) < (rhs as u64) { 1 } else { 0 });
                 }
 
                 Instr::I64GtS => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.GtS: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs > rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i32>(if lhs > rhs { 1 } else { 0 });
                 }
 
                 Instr::I64GtU => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.GtU: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if (lhs as u64) > (rhs as u64) { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i32>(if (lhs as u64) > (rhs as u64) { 1 } else { 0 });
                 }
+
                 Instr::I64LeS => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.LeS: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs <= rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i32>(if lhs <= rhs { 1 } else { 0 });
                 }
+
                 Instr::I64LeU => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.LeU: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if (lhs as u64) <= (rhs as u64) { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i32>(if (lhs as u64) <= (rhs as u64) { 1 } else { 0 });
                 }
+
                 Instr::I64GeS => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.GeS: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs >= rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i32>(if lhs >= rhs { 1 } else { 0 });
                 }
+
                 Instr::I64GeU => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.GeU: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if (lhs as u64) >= (rhs as u64) { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i32>(if (lhs as u64) >= (rhs as u64) { 1 } else { 0 });
                 }
+
                 Instr::F32Eq => {
-                    let (Some(Value::F32(rhs)), Some(Value::F32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f32.eq: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs == rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<f32>();
+                    let lhs = value_stack.pop::<f32>();
+                    value_stack.push::<i32>(if lhs == rhs { 1 } else { 0 });
                 }
+
                 Instr::F32Ne => {
-                    let (Some(Value::F32(rhs)), Some(Value::F32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f32.ne: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<f32>();
+                    let lhs = value_stack.pop::<f32>();
                     value_stack.push(Value::I32(if lhs != rhs { 1 } else { 0 }));
                 }
+
                 Instr::F32Lt => {
-                    let (Some(Value::F32(rhs)), Some(Value::F32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f32.lt: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs < rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<f32>();
+                    let lhs = value_stack.pop::<f32>();
+                    value_stack.push::<i32>(if lhs < rhs { 1 } else { 0 });
                 }
+
                 Instr::F32Gt => {
-                    let (Some(Value::F32(rhs)), Some(Value::F32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f32.gt: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs > rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<f32>();
+                    let lhs = value_stack.pop::<f32>();
+                    value_stack.push::<i32>(if lhs > rhs { 1 } else { 0 });
                 }
+
                 Instr::F32Le => {
-                    let (Some(Value::F32(rhs)), Some(Value::F32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f32.le: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs <= rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<f32>();
+                    let lhs = value_stack.pop::<f32>();
+                    value_stack.push::<i32>(if lhs <= rhs { 1 } else { 0 });
                 }
+
                 Instr::F32Ge => {
-                    let (Some(Value::F32(rhs)), Some(Value::F32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f32.ge: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs >= rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<f32>();
+                    let lhs = value_stack.pop::<f32>();
+                    value_stack.push::<i32>(if lhs >= rhs { 1 } else { 0 });
                 }
+
                 Instr::F64Eq => {
-                    let (Some(Value::F64(rhs)), Some(Value::F64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f64.eq: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs == rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<f64>();
+                    let lhs = value_stack.pop::<f64>();
+                    value_stack.push::<i32>(if lhs == rhs { 1 } else { 0 });
                 }
+
                 Instr::F64Ne => {
-                    let (Some(Value::F64(rhs)), Some(Value::F64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f64.ne: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<f64>();
+                    let lhs = value_stack.pop::<f64>();
                     value_stack.push(Value::I32(if lhs != rhs { 1 } else { 0 }));
                 }
+
                 Instr::F64Lt => {
-                    let (Some(Value::F64(rhs)), Some(Value::F64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f64.lt: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs < rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<f64>();
+                    let lhs = value_stack.pop::<f64>();
+                    value_stack.push::<i32>(if lhs < rhs { 1 } else { 0 });
                 }
+
                 Instr::F64Gt => {
-                    let (Some(Value::F64(rhs)), Some(Value::F64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f64.gt: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs > rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<f64>();
+                    let lhs = value_stack.pop::<f64>();
+                    value_stack.push::<i32>(if lhs > rhs { 1 } else { 0 });
                 }
+
                 Instr::F64Le => {
-                    let (Some(Value::F64(rhs)), Some(Value::F64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f64.le: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs <= rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<f64>();
+                    let lhs = value_stack.pop::<f64>();
+                    value_stack.push::<i32>(if lhs <= rhs { 1 } else { 0 });
                 }
+
                 Instr::F64Ge => {
-                    let (Some(Value::F64(rhs)), Some(Value::F64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f64.ge: not enough operands");
-                    };
-                    value_stack.push(Value::I32(if lhs >= rhs { 1 } else { 0 }));
+                    let rhs = value_stack.pop::<f64>();
+                    let lhs = value_stack.pop::<f64>();
+                    value_stack.push::<i32>(if lhs >= rhs { 1 } else { 0 });
                 }
+
                 Instr::I32Clz => {
-                    let Some(Value::I32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.clz: not enough operands");
-                    };
-                    value_stack.push(Value::I32(op.leading_zeros() as i32));
+                    let op = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(op.leading_zeros() as i32);
                 }
+
                 Instr::I32Ctz => {
-                    let Some(Value::I32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.ctz: not enough operands");
-                    };
-                    value_stack.push(Value::I32(op.trailing_zeros() as i32));
+                    let op = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(op.trailing_zeros() as i32);
                 }
+
                 Instr::I32Popcnt => {
-                    let Some(Value::I32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.ctz: not enough operands");
-                    };
-                    value_stack.push(Value::I32(op.count_ones() as i32));
+                    let op = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(op.count_ones() as i32);
                 }
+
                 Instr::I32Add => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.add: not enough operands");
-                    };
-                    value_stack.push(Value::I32(lhs.wrapping_add(rhs)));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(lhs.wrapping_add(rhs));
                 }
+
                 Instr::I32Sub => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.sub: not enough operands");
-                    };
-                    value_stack.push(Value::I32(lhs.wrapping_sub(rhs)));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(lhs.wrapping_sub(rhs));
                 }
+
                 Instr::I32Mul => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.mul: not enough operands");
-                    };
-                    value_stack.push(Value::I32(lhs.wrapping_mul(rhs)));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(lhs.wrapping_mul(rhs));
                 }
+
                 Instr::I32DivS => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.divS: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
 
                     if rhs == 0 {
                         anyhow::bail!("i32.divS: integer divide by zero");
@@ -2388,14 +2136,12 @@ impl Machine {
                         anyhow::bail!("i32.divS: integer overflow");
                     };
 
-                    value_stack.push(Value::I32(result));
+                    value_stack.push::<i32>(result);
                 }
+
                 Instr::I32DivU => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.divU: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
 
                     let lhs = lhs as u32;
                     let rhs = rhs as u32;
@@ -2408,14 +2154,12 @@ impl Machine {
                         anyhow::bail!("i32.divU: integer overflow");
                     };
 
-                    value_stack.push(Value::I32(result as i32));
+                    value_stack.push::<i32>(result as i32);
                 }
+
                 Instr::I32RemS => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.remS: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
 
                     if rhs == 0 {
                         anyhow::bail!("i32.remS: integer divide by zero");
@@ -2423,14 +2167,12 @@ impl Machine {
 
                     let result = lhs.wrapping_rem(rhs);
 
-                    value_stack.push(Value::I32(result));
+                    value_stack.push::<i32>(result);
                 }
+
                 Instr::I32RemU => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.rem_u: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
 
                     let lhs = lhs as u32;
                     let rhs = rhs as u32;
@@ -2441,128 +2183,94 @@ impl Machine {
 
                     let result = lhs.wrapping_rem(rhs);
 
-                    value_stack.push(Value::I32(result as i32));
+                    value_stack.push::<i32>(result as i32);
                 }
 
                 Instr::I32And => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.and: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
                     value_stack.push(Value::I32(lhs & rhs));
                 }
+
                 Instr::I32Ior => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.ior: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
                     value_stack.push(Value::I32(lhs | rhs));
                 }
+
                 Instr::I32Xor => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.xor: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
                     value_stack.push(Value::I32(lhs ^ rhs));
                 }
+
                 Instr::I32Shl => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.shl: not enough operands");
-                    };
-                    value_stack.push(Value::I32(lhs.wrapping_shl(rhs as u32)));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(lhs.wrapping_shl(rhs as u32));
                 }
+
                 Instr::I32ShrS => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.shrS: not enough operands");
-                    };
-                    value_stack.push(Value::I32(lhs.wrapping_shr(rhs as u32)));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(lhs.wrapping_shr(rhs as u32));
                 }
+
                 Instr::I32ShrU => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.shrU: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
                     let lhs = lhs as u32;
-                    value_stack.push(Value::I32(lhs.wrapping_shr(rhs as u32) as i32));
+                    value_stack.push::<i32>(lhs.wrapping_shr(rhs as u32) as i32);
                 }
+
                 Instr::I32Rol => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.rol: not enough operands");
-                    };
-                    value_stack.push(Value::I32(lhs.rotate_left(rhs as u32)));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(lhs.rotate_left(rhs as u32));
                 }
+
                 Instr::I32Ror => {
-                    let (Some(Value::I32(rhs)), Some(Value::I32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i32.ror: not enough operands");
-                    };
-                    value_stack.push(Value::I32(lhs.rotate_right(rhs as u32)));
+                    let rhs = value_stack.pop::<i32>();
+                    let lhs = value_stack.pop::<i32>();
+                    value_stack.push::<i32>(lhs.rotate_right(rhs as u32));
                 }
 
                 Instr::I64Clz => {
-                    let Some(Value::I64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.clz: not enough operands");
-                    };
-                    value_stack.push(Value::I64(op.leading_zeros() as i64));
+                    let op = value_stack.pop::<i64>();
+                    value_stack.push::<i64>(op.leading_zeros() as i64);
                 }
 
                 Instr::I64Ctz => {
-                    let Some(Value::I64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.ctz: not enough operands");
-                    };
-                    value_stack.push(Value::I64(op.trailing_zeros() as i64));
+                    let op = value_stack.pop::<i64>();
+                    value_stack.push::<i64>(op.trailing_zeros() as i64);
                 }
 
                 Instr::I64Popcnt => {
-                    let Some(Value::I64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.ctz: not enough operands");
-                    };
-                    value_stack.push(Value::I64(op.count_ones() as i64));
+                    let op = value_stack.pop::<i64>();
+                    value_stack.push::<i64>(op.count_ones() as i64);
                 }
 
                 Instr::I64Add => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.add: not enough operands");
-                    };
-                    value_stack.push(Value::I64(lhs.wrapping_add(rhs)));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i64>(lhs.wrapping_add(rhs));
                 }
 
                 Instr::I64Sub => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.sub: not enough operands {:?}", value_stack);
-                    };
-                    value_stack.push(Value::I64(lhs.wrapping_sub(rhs)));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i64>(lhs.wrapping_sub(rhs));
                 }
 
                 Instr::I64Mul => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.mul: not enough operands {:?}", value_stack);
-                    };
-                    value_stack.push(Value::I64(lhs.wrapping_mul(rhs)));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i64>(lhs.wrapping_mul(rhs));
                 }
+
                 Instr::I64DivS => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.divS: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
 
                     if rhs == 0 {
                         anyhow::bail!("i64.divS: integer divide by zero");
@@ -2572,14 +2280,12 @@ impl Machine {
                         anyhow::bail!("i32.divS: integer overflow");
                     };
 
-                    value_stack.push(Value::I64(result));
+                    value_stack.push::<i64>(result);
                 }
+
                 Instr::I64DivU => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.divU: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
 
                     let lhs = lhs as u64;
                     let rhs = rhs as u64;
@@ -2592,26 +2298,22 @@ impl Machine {
                         anyhow::bail!("i64.divU: integer overflow");
                     };
 
-                    value_stack.push(Value::I64(result as i64));
+                    value_stack.push::<i64>(result as i64);
                 }
+
                 Instr::I64RemS => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.remS: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
                     if rhs == 0 {
                         anyhow::bail!("i64.remS: integer divide by zero");
                     }
                     let result = lhs.wrapping_rem(rhs);
-                    value_stack.push(Value::I64(result));
+                    value_stack.push::<i64>(result);
                 }
+
                 Instr::I64RemU => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.remU: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
                     if rhs == 0 {
                         anyhow::bail!("i64.remS: integer divide by zero");
                     }
@@ -2619,286 +2321,223 @@ impl Machine {
                     let rhs = rhs as u64;
 
                     let result = lhs.wrapping_rem(rhs);
-                    value_stack.push(Value::I64(result as i64));
+                    value_stack.push::<i64>(result as i64);
                 }
+
                 Instr::I64And => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.and: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
                     value_stack.push(Value::I64(lhs & rhs));
                 }
+
                 Instr::I64Ior => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.ior: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
                     value_stack.push(Value::I64(lhs | rhs));
                 }
+
                 Instr::I64Xor => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.xor: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
                     value_stack.push(Value::I64(lhs ^ rhs));
                 }
-                Instr::I64Shl => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.shl: not enough operands");
-                    };
 
-                    value_stack.push(Value::I64(lhs.wrapping_shl(rhs as u32)));
+                Instr::I64Shl => {
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+
+                    value_stack.push::<i64>(lhs.wrapping_shl(rhs as u32));
                 }
+
                 Instr::I64ShrS => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.shrS: not enough operands");
-                    };
-                    value_stack.push(Value::I64(lhs.wrapping_shr(rhs as u32)));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i64>(lhs.wrapping_shr(rhs as u32));
                 }
+
                 Instr::I64ShrU => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.shrU: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
                     let lhs = lhs as u64;
-                    value_stack.push(Value::I64(lhs.wrapping_shr(rhs as u32) as i64));
+                    value_stack.push::<i64>(lhs.wrapping_shr(rhs as u32) as i64);
                 }
+
                 Instr::I64Rol => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.rol: not enough operands");
-                    };
-                    value_stack.push(Value::I64(lhs.rotate_left(rhs as u32)));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i64>(lhs.rotate_left(rhs as u32));
                 }
+
                 Instr::I64Ror => {
-                    let (Some(Value::I64(rhs)), Some(Value::I64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("i64.ror: not enough operands");
-                    };
-                    value_stack.push(Value::I64(lhs.rotate_right(rhs as u32)));
+                    let rhs = value_stack.pop::<i64>();
+                    let lhs = value_stack.pop::<i64>();
+                    value_stack.push::<i64>(lhs.rotate_right(rhs as u32));
                 }
 
                 Instr::F32Abs => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.abs: not enough operands");
-                    };
-                    value_stack.push(Value::F32(op.abs()));
+                    let op = value_stack.pop::<f32>();
+                    value_stack.push::<f32>(op.abs());
                 }
+
                 Instr::F32Neg => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.neg: not enough operands");
-                    };
+                    let op = value_stack.pop::<f32>();
                     value_stack.push(Value::F32(-op));
                 }
+
                 Instr::F32Ceil => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.ceil: not enough operands");
-                    };
-                    value_stack.push(Value::F32(op.ceil()));
+                    let op = value_stack.pop::<f32>();
+                    value_stack.push::<f32>(op.ceil());
                 }
+
                 Instr::F32Floor => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.floor: not enough operands");
-                    };
-                    value_stack.push(Value::F32(op.floor()));
+                    let op = value_stack.pop::<f32>();
+                    value_stack.push::<f32>(op.floor());
                 }
+
                 Instr::F32Trunc => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.trunc: not enough operands");
-                    };
-                    value_stack.push(Value::F32(op.trunc()));
+                    let op = value_stack.pop::<f32>();
+                    value_stack.push::<f32>(op.trunc());
                 }
+
                 Instr::F32NearestInt => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.nearest: not enough operands");
-                    };
-                    value_stack.push(Value::F32(nearestf32(op)));
+                    let op = value_stack.pop::<f32>();
+                    value_stack.push::<f32>(nearestf32(op));
                 }
+
                 Instr::F32Sqrt => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.sqrt: not enough operands");
-                    };
-                    value_stack.push(Value::F32(op.sqrt()));
+                    let op = value_stack.pop::<f32>();
+                    value_stack.push::<f32>(op.sqrt());
                 }
+
                 Instr::F32Add => {
-                    let (Some(Value::F32(rhs)), Some(Value::F32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f32.add: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<f32>();
+                    let lhs = value_stack.pop::<f32>();
 
                     value_stack.push(Value::F32(lhs + rhs));
                 }
+
                 Instr::F32Sub => {
-                    let (Some(Value::F32(rhs)), Some(Value::F32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f32.sub: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<f32>();
+                    let lhs = value_stack.pop::<f32>();
                     value_stack.push(Value::F32(lhs - rhs));
                 }
+
                 Instr::F32Mul => {
-                    let (Some(Value::F32(rhs)), Some(Value::F32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f32.mul: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<f32>();
+                    let lhs = value_stack.pop::<f32>();
                     value_stack.push(Value::F32(lhs * rhs));
                 }
+
                 Instr::F32Div => {
-                    let (Some(Value::F32(rhs)), Some(Value::F32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f32.div: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<f32>();
+                    let lhs = value_stack.pop::<f32>();
                     value_stack.push(Value::F32(lhs / rhs));
                 }
+
                 Instr::F32Min => {
-                    let (Some(Value::F32(rhs)), Some(Value::F32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f32.min: not enough operands");
-                    };
-                    value_stack.push(Value::F32(lhs.min(rhs)));
+                    let rhs = value_stack.pop::<f32>();
+                    let lhs = value_stack.pop::<f32>();
+                    value_stack.push::<f32>(lhs.min(rhs));
                 }
+
                 Instr::F32Max => {
-                    let (Some(Value::F32(rhs)), Some(Value::F32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f32.max: not enough operands");
-                    };
-                    value_stack.push(Value::F32(lhs.max(rhs)));
+                    let rhs = value_stack.pop::<f32>();
+                    let lhs = value_stack.pop::<f32>();
+                    value_stack.push::<f32>(lhs.max(rhs));
                 }
+
                 Instr::F32CopySign => {
-                    let (Some(Value::F32(rhs)), Some(Value::F32(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f32.copySign: not enough operands");
-                    };
-                    value_stack.push(Value::F32(lhs.copysign(rhs)));
+                    let rhs = value_stack.pop::<f32>();
+                    let lhs = value_stack.pop::<f32>();
+                    value_stack.push::<f32>(lhs.copysign(rhs));
                 }
+
                 Instr::F64Abs => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.abs: not enough operands");
-                    };
-                    value_stack.push(Value::F64(op.abs()));
+                    let op = value_stack.pop::<f64>();
+                    value_stack.push::<f64>(op.abs());
                 }
+
                 Instr::F64Neg => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.neg: not enough operands");
-                    };
+                    let op = value_stack.pop::<f64>();
                     value_stack.push(Value::F64(-op));
                 }
+
                 Instr::F64Ceil => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.ceil: not enough operands");
-                    };
-                    value_stack.push(Value::F64(op.ceil()));
+                    let op = value_stack.pop::<f64>();
+                    value_stack.push::<f64>(op.ceil());
                 }
+
                 Instr::F64Floor => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.floor: not enough operands");
-                    };
-                    value_stack.push(Value::F64(op.floor()));
+                    let op = value_stack.pop::<f64>();
+                    value_stack.push::<f64>(op.floor());
                 }
+
                 Instr::F64Trunc => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.trunc: not enough operands");
-                    };
-                    value_stack.push(Value::F64(op.trunc()));
+                    let op = value_stack.pop::<f64>();
+                    value_stack.push::<f64>(op.trunc());
                 }
+
                 Instr::F64NearestInt => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.nearest: not enough operands");
-                    };
-                    value_stack.push(Value::F64(nearestf64(op)));
+                    let op = value_stack.pop::<f64>();
+                    value_stack.push::<f64>(nearestf64(op));
                 }
+
                 Instr::F64Sqrt => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.sqrt: not enough operands");
-                    };
-                    value_stack.push(Value::F64(op.sqrt()));
+                    let op = value_stack.pop::<f64>();
+                    value_stack.push::<f64>(op.sqrt());
                 }
+
                 Instr::F64Add => {
-                    let (Some(Value::F64(rhs)), Some(Value::F64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f64.add: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<f64>();
+                    let lhs = value_stack.pop::<f64>();
                     value_stack.push(Value::F64(lhs + rhs));
                 }
+
                 Instr::F64Sub => {
-                    let (Some(Value::F64(rhs)), Some(Value::F64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f64.sub: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<f64>();
+                    let lhs = value_stack.pop::<f64>();
                     value_stack.push(Value::F64(lhs - rhs));
                 }
+
                 Instr::F64Mul => {
-                    let (Some(Value::F64(rhs)), Some(Value::F64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f64.mul: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<f64>();
+                    let lhs = value_stack.pop::<f64>();
                     value_stack.push(Value::F64(lhs * rhs));
                 }
+
                 Instr::F64Div => {
-                    let (Some(Value::F64(rhs)), Some(Value::F64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f64.div: not enough operands");
-                    };
+                    let rhs = value_stack.pop::<f64>();
+                    let lhs = value_stack.pop::<f64>();
                     value_stack.push(Value::F64(lhs / rhs));
                 }
-                Instr::F64Min => {
-                    let (Some(Value::F64(rhs)), Some(Value::F64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f64.min: not enough operands");
-                    };
-                    value_stack.push(Value::F64(lhs.min(rhs)));
-                }
-                Instr::F64Max => {
-                    let (Some(Value::F64(rhs)), Some(Value::F64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f64.max: not enough operands");
-                    };
-                    value_stack.push(Value::F64(lhs.max(rhs)));
-                }
-                Instr::F64CopySign => {
-                    let (Some(Value::F64(rhs)), Some(Value::F64(lhs))) =
-                        (value_stack.pop(), value_stack.pop())
-                    else {
-                        anyhow::bail!("f64.copySign: not enough operands");
-                    };
 
-                    value_stack.push(Value::F64(lhs.copysign(rhs)));
+                Instr::F64Min => {
+                    let rhs = value_stack.pop::<f64>();
+                    let lhs = value_stack.pop::<f64>();
+                    value_stack.push::<f64>(lhs.min(rhs));
+                }
+
+                Instr::F64Max => {
+                    let rhs = value_stack.pop::<f64>();
+                    let lhs = value_stack.pop::<f64>();
+                    value_stack.push::<f64>(lhs.max(rhs));
+                }
+
+                Instr::F64CopySign => {
+                    let rhs = value_stack.pop::<f64>();
+                    let lhs = value_stack.pop::<f64>();
+
+                    value_stack.push::<f64>(lhs.copysign(rhs));
                 }
 
                 Instr::I32ConvertI64 => {
-                    let Some(Value::I64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.wrap_i64: not enough operands");
-                    };
+                    let op = value_stack.pop::<i64>();
 
-                    value_stack.push(Value::I32(op as i32));
+                    value_stack.push::<i32>(op as i32);
                 }
 
                 Instr::I32SConvertF32 => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.trunc_f32_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<f32>();
 
                     if op.is_nan() {
                         anyhow::bail!("i32.trunc_f32_s: invalid conversion to integer");
@@ -2914,12 +2553,11 @@ impl Machine {
                         anyhow::bail!("i32.trunc_f32_s: integer overflow");
                     }
 
-                    value_stack.push(Value::I32(op as i32));
+                    value_stack.push::<i32>(op as i32);
                 }
+
                 Instr::I32UConvertF32 => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.trunc_f32_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<f32>();
 
                     if op.is_nan() {
                         anyhow::bail!("i32.trunc_f32_u: invalid conversion to integer");
@@ -2935,12 +2573,11 @@ impl Machine {
                         anyhow::bail!("i32.trunc_f32_u: integer overflow");
                     }
 
-                    value_stack.push(Value::I32(op as u32 as i32));
+                    value_stack.push::<i32>(op as u32 as i32);
                 }
+
                 Instr::I32SConvertF64 => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.trunc_f64_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<f64>();
 
                     if op.is_nan() {
                         anyhow::bail!("i32.trunc_f64_s: invalid conversion to integer");
@@ -2956,12 +2593,11 @@ impl Machine {
                         anyhow::bail!("i32.trunc_f64_s: integer overflow");
                     }
 
-                    value_stack.push(Value::I32(op as i32));
+                    value_stack.push::<i32>(op as i32);
                 }
+
                 Instr::I32UConvertF64 => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.trunc_f64_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<f64>();
 
                     if op.is_nan() {
                         anyhow::bail!("i32.trunc_f64_u: invalid conversion to integer");
@@ -2977,26 +2613,23 @@ impl Machine {
                         anyhow::bail!("i32.trunc_f64_u: integer overflow");
                     }
 
-                    value_stack.push(Value::I32(op as u32 as i32));
+                    value_stack.push::<i32>(op as u32 as i32);
                 }
+
                 Instr::I64SConvertI32 => {
-                    let Some(Value::I32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.extend_i32_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<i32>();
 
-                    value_stack.push(Value::I64(op as i64));
+                    value_stack.push::<i64>(op as i64);
                 }
+
                 Instr::I64UConvertI32 => {
-                    let Some(Value::I32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.extend_i32_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<i32>();
 
-                    value_stack.push(Value::I64(op as u32 as i64));
+                    value_stack.push::<i64>(op as u32 as i64);
                 }
+
                 Instr::I64SConvertF32 => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.trunc_f32_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<f32>();
 
                     if op.is_nan() {
                         anyhow::bail!("i64.trunc_f32_s: invalid conversion to integer");
@@ -3012,12 +2645,11 @@ impl Machine {
                         anyhow::bail!("i64.trunc_f32_s: integer overflow");
                     }
 
-                    value_stack.push(Value::I64(op as i64));
+                    value_stack.push::<i64>(op as i64);
                 }
+
                 Instr::I64UConvertF32 => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.trunc_f32_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<f32>();
 
                     if op.is_nan() {
                         anyhow::bail!("i64.trunc_f32_u: invalid conversion to integer");
@@ -3033,12 +2665,11 @@ impl Machine {
                         anyhow::bail!("i64.trunc_f32_u: integer overflow");
                     }
 
-                    value_stack.push(Value::I64(op as u64 as i64));
+                    value_stack.push::<i64>(op as u64 as i64);
                 }
+
                 Instr::I64SConvertF64 => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.trunc_f64_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<f64>();
 
                     if op.is_nan() {
                         anyhow::bail!("i64.trunc_f64_s: invalid conversion to integer");
@@ -3054,12 +2685,11 @@ impl Machine {
                         anyhow::bail!("i64.trunc_f64_s: integer overflow");
                     }
 
-                    value_stack.push(Value::I64(op as i64));
+                    value_stack.push::<i64>(op as i64);
                 }
+
                 Instr::I64UConvertF64 => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.trunc_f64_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<f64>();
 
                     if op.is_nan() {
                         anyhow::bail!("i64.trunc_f64_u: invalid conversion to integer");
@@ -3075,45 +2705,35 @@ impl Machine {
                         anyhow::bail!("i64.trunc_f64_u: integer overflow");
                     }
 
-                    value_stack.push(Value::I64(op as u64 as i64));
+                    value_stack.push::<i64>(op as u64 as i64);
                 }
 
                 Instr::F32SConvertI32 => {
-                    let Some(Value::I32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.convert_i32_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<i32>();
 
-                    value_stack.push(Value::F32(op as f32));
+                    value_stack.push::<f32>(op as f32);
                 }
 
                 Instr::F32UConvertI32 => {
-                    let Some(Value::I32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.convert_i32_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<i32>();
 
-                    value_stack.push(Value::F32(op as u32 as f32));
+                    value_stack.push::<f32>(op as u32 as f32);
                 }
 
                 Instr::F32SConvertI64 => {
-                    let Some(Value::I64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.convert_i64_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<i64>();
 
-                    value_stack.push(Value::F32(op as f32));
+                    value_stack.push::<f32>(op as f32);
                 }
 
                 Instr::F32UConvertI64 => {
-                    let Some(Value::I64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.convert_i64_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<i64>();
 
-                    value_stack.push(Value::F32(op as u64 as f32));
+                    value_stack.push::<f32>(op as u64 as f32);
                 }
 
                 Instr::F32ConvertF64 => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.demote_f64: not enough operands");
-                    };
+                    let op = value_stack.pop::<f64>();
 
                     let mut op = op as f32;
                     if op.is_nan() {
@@ -3125,41 +2745,35 @@ impl Machine {
                         });
                     }
 
-                    value_stack.push(Value::F32(op));
+                    value_stack.push::<f32>(op);
                 }
 
                 Instr::F64SConvertI32 => {
-                    let Some(Value::I32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.convert_i32_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<i32>();
 
-                    value_stack.push(Value::F64(op as f64));
+                    value_stack.push::<f64>(op as f64);
                 }
+
                 Instr::F64UConvertI32 => {
-                    let Some(Value::I32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.convert_i32_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<i32>();
 
-                    value_stack.push(Value::F64(op as u32 as f64));
+                    value_stack.push::<f64>(op as u32 as f64);
                 }
+
                 Instr::F64SConvertI64 => {
-                    let Some(Value::I64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.convert_i64_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<i64>();
 
-                    value_stack.push(Value::F64(op as f64));
+                    value_stack.push::<f64>(op as f64);
                 }
+
                 Instr::F64UConvertI64 => {
-                    let Some(Value::I64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.convert_i64_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<i64>();
 
-                    value_stack.push(Value::F64(op as u64 as f64));
+                    value_stack.push::<f64>(op as u64 as f64);
                 }
+
                 Instr::F64ConvertF32 => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.promote_f32: not enough operands");
-                    };
+                    let op = value_stack.pop::<f32>();
 
                     let mut op = op as f64;
                     if op.is_nan() {
@@ -3171,84 +2785,68 @@ impl Machine {
                         });
                     }
 
-                    value_stack.push(Value::F64(op));
+                    value_stack.push::<f64>(op);
                 }
+
                 Instr::I32ReinterpretF32 => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.TKTK: not enough operands");
-                    };
-                    value_stack.push(Value::I32(op.to_bits() as i32));
+                    let op = value_stack.pop::<f32>();
+                    value_stack.push::<i32>(op.to_bits() as i32);
                 }
 
                 Instr::I64ReinterpretF64 => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.TKTK: not enough operands");
-                    };
-                    value_stack.push(Value::I64(op.to_bits() as i64));
+                    let op = value_stack.pop::<f64>();
+                    value_stack.push::<i64>(op.to_bits() as i64);
                 }
 
                 Instr::F32ReinterpretI32 => {
-                    let Some(Value::I32(op)) = value_stack.pop() else {
-                        anyhow::bail!("f32.convert_i32_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<i32>();
 
-                    value_stack.push(Value::F32(f32::from_bits(op as u32)));
+                    value_stack.push::<f32>(f32::from_bits(op as u32));
                 }
 
                 Instr::F64ReinterpretI64 => {
-                    let Some(Value::I64(op)) = value_stack.pop() else {
-                        anyhow::bail!("f64.convert_i64_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<i64>();
 
-                    value_stack.push(Value::F64(f64::from_bits(op as u64)));
+                    value_stack.push::<f64>(f64::from_bits(op as u64));
                 }
 
                 Instr::I32SExtendI8 => {
-                    let Some(Value::I32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.extend8_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<i32>();
 
                     let op = (op & 0xff) as u8 as i8;
-                    value_stack.push(Value::I32(op as i32));
+                    value_stack.push::<i32>(op as i32);
                 }
 
                 Instr::I32SExtendI16 => {
-                    let Some(Value::I32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.extend16_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<i32>();
 
                     let op = (op & 0xffff) as u16 as i16;
-                    value_stack.push(Value::I32(op as i32));
+                    value_stack.push::<i32>(op as i32);
                 }
 
                 Instr::I64SExtendI8 => {
-                    let Some(Value::I64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.extend8_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<i64>();
 
                     let op = (op & 0xff) as u8 as i8;
-                    value_stack.push(Value::I64(op as i64));
+                    value_stack.push::<i64>(op as i64);
                 }
+
                 Instr::I64SExtendI16 => {
-                    let Some(Value::I64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.extend16_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<i64>();
 
                     let op = (op & 0xffff) as u16 as i16;
-                    value_stack.push(Value::I64(op as i64));
+                    value_stack.push::<i64>(op as i64);
                 }
+
                 Instr::I64SExtendI32 => {
-                    let Some(Value::I64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.extend32_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<i64>();
 
                     let op = (op & 0xffff_ffff) as u32 as i32;
-                    value_stack.push(Value::I64(op as i64));
+                    value_stack.push::<i64>(op as i64);
                 }
+
                 Instr::I32SConvertSatF32 => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.trunc_sat_f32_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<f32>();
 
                     let op = if op.is_nan() {
                         0i32
@@ -3259,13 +2857,11 @@ impl Machine {
                     } else {
                         op as i32
                     };
-                    value_stack.push(Value::I32(op));
+                    value_stack.push::<i32>(op);
                 }
 
                 Instr::I32UConvertSatF32 => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.trunc_sat_f32_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<f32>();
 
                     let op = if op.is_nan() {
                         0u32
@@ -3276,13 +2872,11 @@ impl Machine {
                     } else {
                         op as u32
                     };
-                    value_stack.push(Value::I32(op as i32));
+                    value_stack.push::<i32>(op as i32);
                 }
 
                 Instr::I32SConvertSatF64 => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.trunc_sat_f64_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<f64>();
 
                     let op = if op.is_nan() {
                         0i32
@@ -3293,13 +2887,11 @@ impl Machine {
                     } else {
                         op as i32
                     };
-                    value_stack.push(Value::I32(op));
+                    value_stack.push::<i32>(op);
                 }
 
                 Instr::I32UConvertSatF64 => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.trunc_sat_f64_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<f64>();
 
                     let op = if op.is_nan() {
                         0u32
@@ -3310,13 +2902,11 @@ impl Machine {
                     } else {
                         op as u32
                     };
-                    value_stack.push(Value::I32(op as i32));
+                    value_stack.push::<i32>(op as i32);
                 }
 
                 Instr::I64SConvertSatF32 => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.trunc_sat_f32_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<f32>();
 
                     let op = if op.is_nan() {
                         0i64
@@ -3327,13 +2917,11 @@ impl Machine {
                     } else {
                         op as i64
                     };
-                    value_stack.push(Value::I64(op));
+                    value_stack.push::<i64>(op);
                 }
 
                 Instr::I64UConvertSatF32 => {
-                    let Some(Value::F32(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.trunc_sat_f32_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<f32>();
 
                     let op = if op.is_nan() {
                         0u64
@@ -3344,13 +2932,11 @@ impl Machine {
                     } else {
                         op as u64
                     };
-                    value_stack.push(Value::I64(op as i64));
+                    value_stack.push::<i64>(op as i64);
                 }
 
                 Instr::I64SConvertSatF64 => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i64.trunc_sat_f32_s: not enough operands");
-                    };
+                    let op = value_stack.pop::<f64>();
 
                     let op = if op.is_nan() {
                         0i64
@@ -3361,13 +2947,11 @@ impl Machine {
                     } else {
                         op as i64
                     };
-                    value_stack.push(Value::I64(op));
+                    value_stack.push::<i64>(op);
                 }
 
                 Instr::I64UConvertSatF64 => {
-                    let Some(Value::F64(op)) = value_stack.pop() else {
-                        anyhow::bail!("i32.trunc_sat_f64_u: not enough operands");
-                    };
+                    let op = value_stack.pop::<f64>();
 
                     let op = if op.is_nan() {
                         0u64
@@ -3378,11 +2962,13 @@ impl Machine {
                     } else {
                         op as u64
                     };
-                    value_stack.push(Value::I64(op as i64));
+                    value_stack.push::<i64>(op as i64);
                 }
 
-                Instr::CallIntrinsic(_type_idx, idx) => {
+                Instr::CallIntrinsic(type_idx, idx) => {
                     let external_function = resources.external_functions[*idx].clone();
+                    let check_type = self.typedef(frame.guest_index, *type_idx);
+
                     let args =
                         locals.split_off(locals.len() - external_function.typedef.input_arity());
                     if args.len() < external_function.typedef.input_arity() {

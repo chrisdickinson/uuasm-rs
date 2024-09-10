@@ -3,6 +3,10 @@ use std::{
     marker::Sized,
 };
 
+use uuasm_ir::{NumType, RefType, ValType, VecType};
+
+use crate::value::RefValue;
+
 // Try to land each stack segment in 65355 bytes of memory (two pointers for
 // the linked list next/prev, plus the overhead of the bookkeeping in the struct.)
 const STACK_SEGMENT_PAGE_SIZE: usize =
@@ -17,6 +21,33 @@ fn cold() {}
 pub(crate) struct Stack<const N: usize> {
     stack: LinkedList<StackSegment<N>>,
     depth: u32,
+}
+
+pub(crate) enum StackValue {
+    I32(i32),
+    I64(i64),
+    F32(f32),
+    F64(f64),
+
+    // Box up i128 because it's infrequently used in block types / selects / etc
+    V128(Box<i128>),
+    RefFunc(RefValue),
+    RefExtern(RefValue),
+}
+
+impl PartialEq for StackValue {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::I32(l0), Self::I32(r0)) => l0 == r0,
+            (Self::I64(l0), Self::I64(r0)) => l0 == r0,
+            (Self::F32(l0), Self::F32(r0)) => l0 == r0,
+            (Self::F64(l0), Self::F64(r0)) => l0 == r0,
+            (Self::V128(l0), Self::V128(r0)) => l0 == r0,
+            (Self::RefFunc(l0), Self::RefFunc(r0)) => l0 == r0,
+            (Self::RefExtern(l0), Self::RefExtern(r0)) => l0 == r0,
+            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -53,7 +84,7 @@ impl<const N: usize> Stack<N> {
         segment.unwind(ptr);
     }
 
-    pub(crate) fn push<T: Sized + Copy + std::fmt::Debug>(&mut self, val: T) {
+    pub(crate) fn push<T: Sized + Copy>(&mut self, val: T) {
         let Some(head) = self.stack.front_mut() else {
             cold();
             self.stack.push_front(StackSegment::new());
@@ -84,6 +115,31 @@ impl<const N: usize> Stack<N> {
 
         self.stack.pop_front();
         self.pop()
+    }
+
+    pub(crate) fn push_value(&mut self, val: StackValue) {
+        match val {
+            StackValue::I32(xs) => self.push(xs),
+            StackValue::I64(xs) => self.push(xs),
+            StackValue::F32(xs) => self.push(xs),
+            StackValue::F64(xs) => self.push(xs),
+            StackValue::V128(xs) => self.push(*xs),
+            StackValue::RefFunc(xs) => self.push(xs),
+            StackValue::RefExtern(xs) => self.push(xs),
+        }
+    }
+
+    pub(crate) fn pop_valtype(&mut self, val_type: ValType) -> StackValue {
+        match val_type {
+            ValType::NumType(NumType::I32) => StackValue::I32(self.pop::<i32>()),
+            ValType::NumType(NumType::F32) => StackValue::F32(self.pop::<f32>()),
+            ValType::NumType(NumType::I64) => StackValue::I64(self.pop::<i64>()),
+            ValType::NumType(NumType::F64) => StackValue::F64(self.pop::<f64>()),
+            ValType::VecType(VecType::V128) => StackValue::V128(Box::new(self.pop::<i128>())),
+            ValType::RefType(RefType::FuncRef) => StackValue::RefFunc(self.pop::<RefValue>()),
+            ValType::RefType(RefType::ExternRef) => StackValue::RefExtern(self.pop::<RefValue>()),
+            ValType::Never => unreachable!(),
+        }
     }
 }
 
