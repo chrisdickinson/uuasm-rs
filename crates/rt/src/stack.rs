@@ -5,20 +5,34 @@ use std::{
 
 use uuasm_ir::{NumType, RefType, ValType, VecType};
 
-use crate::value::RefValue;
+use crate::{value::RefValue, Value};
 
 // Try to land each stack segment in 65355 bytes of memory (two pointers for
 // the linked list next/prev, plus the overhead of the bookkeeping in the struct.)
 const STACK_SEGMENT_PAGE_SIZE: usize =
     0x10000 - (size_of::<StackSegment<0>>() + (size_of::<*const ()>() * 2));
 
-pub(crate) type DefaultStack = Stack<STACK_SEGMENT_PAGE_SIZE>;
+pub(crate) type DefaultStack = SegmentedStack<STACK_SEGMENT_PAGE_SIZE>;
 
 #[inline]
 #[cold]
 fn cold() {}
 
-pub(crate) struct Stack<const N: usize> {
+pub(crate) trait Stack {
+    type Fence;
+
+    fn write_at_fence<T: Sized + Copy>(&mut self, fence: &Self::Fence, val: T);
+    fn read_at_fence<T: Sized + Copy>(&self, fence: &Self::Fence) -> T;
+    fn pop<T: Sized + Copy>(&mut self) -> T;
+    fn push<T: Sized + Copy>(&mut self, val: T);
+    fn push_value(&mut self, val: StackValue);
+    fn pop_valtype(&mut self, val_type: ValType) -> StackValue;
+
+    fn fence(&self) -> Self::Fence;
+    fn unwind(&mut self, fence: Self::Fence);
+}
+
+pub(crate) struct SegmentedStack<const N: usize> {
     stack: LinkedList<StackSegment<N>>,
     depth: u32,
 }
@@ -35,17 +49,16 @@ pub(crate) enum StackValue {
     RefExtern(RefValue),
 }
 
-impl PartialEq for StackValue {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::I32(l0), Self::I32(r0)) => l0 == r0,
-            (Self::I64(l0), Self::I64(r0)) => l0 == r0,
-            (Self::F32(l0), Self::F32(r0)) => l0 == r0,
-            (Self::F64(l0), Self::F64(r0)) => l0 == r0,
-            (Self::V128(l0), Self::V128(r0)) => l0 == r0,
-            (Self::RefFunc(l0), Self::RefFunc(r0)) => l0 == r0,
-            (Self::RefExtern(l0), Self::RefExtern(r0)) => l0 == r0,
-            _ => core::mem::discriminant(self) == core::mem::discriminant(other),
+impl From<Value> for StackValue {
+    fn from(value: Value) -> Self {
+        match value {
+            Value::I32(xs) => StackValue::I32(xs),
+            Value::I64(xs) => StackValue::I64(xs),
+            Value::F32(xs) => StackValue::F32(xs),
+            Value::F64(xs) => StackValue::F64(xs),
+            Value::V128(xs) => StackValue::V128(Box::new(xs)),
+            Value::RefNull => StackValue::RefFunc(None),
+            _ => panic!("cannot coerce that value into stack value"),
         }
     }
 }
@@ -56,22 +69,26 @@ pub(crate) struct Fence(u32, u16);
 // TODO: we need a way to unwind without having to re-specify the exact types
 // (e.g., in the case of "br" instructions)
 
-impl<const N: usize> Stack<N> {
+impl<const N: usize> SegmentedStack<N> {
     pub(crate) fn new() -> Self {
         Self {
             stack: LinkedList::new(),
             depth: 0,
         }
     }
+}
 
-    pub(crate) fn begin(&self) -> Fence {
+impl<const N: usize> Stack for SegmentedStack<N> {
+    type Fence = Fence;
+
+    fn fence(&self) -> Fence {
         Fence(
             self.depth,
             self.stack.front().map(|xs| xs.ptr).unwrap_or_default(),
         )
     }
 
-    pub(crate) fn unwind(&mut self, fence: Fence) {
+    fn unwind(&mut self, fence: Fence) {
         let Fence(depth, ptr) = fence;
         for _ in depth..self.depth {
             let _ = self.stack.pop_front();
@@ -84,7 +101,7 @@ impl<const N: usize> Stack<N> {
         segment.unwind(ptr);
     }
 
-    pub(crate) fn push<T: Sized + Copy>(&mut self, val: T) {
+    fn push<T: Sized + Copy>(&mut self, val: T) {
         let Some(head) = self.stack.front_mut() else {
             cold();
             self.stack.push_front(StackSegment::new());
@@ -101,7 +118,7 @@ impl<const N: usize> Stack<N> {
         head.push(val)
     }
 
-    pub(crate) fn pop<T: Sized + Copy>(&mut self) -> T {
+    fn pop<T: Sized + Copy>(&mut self) -> T {
         if let Some(head) = self.stack.front_mut() {
             if !head.is_empty() {
                 return head.pop();
@@ -117,7 +134,7 @@ impl<const N: usize> Stack<N> {
         self.pop()
     }
 
-    pub(crate) fn push_value(&mut self, val: StackValue) {
+    fn push_value(&mut self, val: StackValue) {
         match val {
             StackValue::I32(xs) => self.push(xs),
             StackValue::I64(xs) => self.push(xs),
@@ -129,7 +146,7 @@ impl<const N: usize> Stack<N> {
         }
     }
 
-    pub(crate) fn pop_valtype(&mut self, val_type: ValType) -> StackValue {
+    fn pop_valtype(&mut self, val_type: ValType) -> StackValue {
         match val_type {
             ValType::NumType(NumType::I32) => StackValue::I32(self.pop::<i32>()),
             ValType::NumType(NumType::F32) => StackValue::F32(self.pop::<f32>()),
@@ -140,6 +157,26 @@ impl<const N: usize> Stack<N> {
             ValType::RefType(RefType::ExternRef) => StackValue::RefExtern(self.pop::<RefValue>()),
             ValType::Never => unreachable!(),
         }
+    }
+
+    fn write_at_fence<T: Sized + Copy>(&mut self, fence: &Fence, val: T) {
+        let Fence(depth, ptr) = fence;
+        let Some(segment) = self.stack.iter_mut().nth(*depth as usize) else {
+            cold();
+            panic!("invalid fence");
+        };
+
+        segment.write_at(*ptr, val);
+    }
+
+    fn read_at_fence<T: Sized + Copy>(&self, fence: &Fence) -> T {
+        let Fence(depth, ptr) = fence;
+        let Some(segment) = self.stack.iter().nth(*depth as usize) else {
+            cold();
+            panic!("invalid fence");
+        };
+
+        segment.read_at(*ptr)
     }
 }
 
@@ -183,10 +220,6 @@ impl<const N: usize> StackSegment<N> {
         self.ptr = to;
     }
 
-    // TODO: pop_opaque(self, bytes) -> a series of slices + push_opaque(a series of slices)
-    //       this would be handy for grabbing the last N values of the stack during a br instr
-    //       and replacing them on the stack after rolling back to the br target
-
     pub(crate) fn push<T: Sized>(&mut self, val: T) {
         let size = size_of::<T>();
         let align = align_of::<T>();
@@ -221,6 +254,30 @@ impl<const N: usize> StackSegment<N> {
 
         let value = buf_ref.as_ptr() as *const T;
         unsafe { *value }
+    }
+
+    pub(crate) fn read_at<T: Sized + Copy>(&self, ptr: u16) -> T {
+        let size = size_of::<T>();
+
+        let ptr_lower = ptr - size as u16;
+        let buf_ref = &self.storage[(ptr_lower as usize)..(ptr as usize)];
+
+        let value = buf_ref.as_ptr() as *const T;
+        unsafe { *value }
+    }
+
+    pub(crate) fn write_at<T: Sized + Copy>(&mut self, ptr: u16, value: T) {
+        let valptr = std::ptr::from_ref(&value);
+        let count = size_of::<T>();
+        let ptr_lower = ptr - count as u16;
+
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                valptr,
+                self.storage[(ptr_lower as usize)..(ptr as usize)].as_mut_ptr() as *mut T,
+                1,
+            );
+        }
     }
 }
 
@@ -264,7 +321,7 @@ mod test {
 
     #[test]
     fn test_stack() -> Result<(), ()> {
-        let mut stack = Stack::<0x40>::new();
+        let mut stack = SegmentedStack::<0x40>::new();
         stack.push(13i32);
         stack.push(-1000000i32);
         stack.push(ExamplePointerInfo {
@@ -297,9 +354,9 @@ mod test {
 
     #[test]
     fn test_stack_unwind() -> Result<(), ()> {
-        let mut stack = Stack::<0x40>::new();
+        let mut stack = SegmentedStack::<0x40>::new();
         stack.push(13i32);
-        let fence = stack.begin();
+        let fence = stack.fence();
         stack.push(-1000000i32);
         stack.push(ExamplePointerInfo {
             module_idx: 0xffff_0000,
@@ -320,7 +377,7 @@ mod test {
 
     #[test]
     fn test_stack_unwind_mid_frame() -> Result<(), ()> {
-        let mut stack = Stack::<0x30>::new();
+        let mut stack = SegmentedStack::<0x30>::new();
         stack.push(13i32);
         stack.push(-1000000i32);
         stack.push(ExamplePointerInfo {
@@ -329,7 +386,7 @@ mod test {
         });
         stack.push(0x0800_8080i32);
         stack.push(1i64);
-        let fence = stack.begin();
+        let fence = stack.fence();
         stack.push(2i128);
         stack.push(0xdead_0000_beef_0000u64);
 

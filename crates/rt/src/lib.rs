@@ -5,6 +5,7 @@ pub(crate) mod function;
 pub(crate) mod global;
 pub(crate) mod imports;
 pub(crate) mod intern_map;
+pub(crate) mod locals;
 pub(crate) mod machine;
 pub(crate) mod memory;
 pub(crate) mod memory_region;
@@ -18,15 +19,17 @@ mod testsuite;
 #[cfg(test)]
 mod test_utils;
 
+use stack::StackValue;
 pub(crate) use value::Value;
 
 use uuasm_ir::{NumType, RefType, ValType, VecType};
 
 pub(crate) mod prelude {
-    use crate::Value;
+    use crate::{stack::StackValue, Value};
 
     pub(crate) trait ValTypeExtras {
         fn instantiate(&self) -> Value;
+        fn instantiate_stackvalue(&self) -> StackValue;
         fn validate(&self, value: &Value) -> anyhow::Result<()>;
     }
 }
@@ -45,6 +48,18 @@ impl prelude::ValTypeExtras for ValType {
         }
     }
 
+    fn instantiate_stackvalue(&self) -> StackValue {
+        match self {
+            ValType::NumType(NumType::I32) => StackValue::I32(Default::default()),
+            ValType::NumType(NumType::I64) => StackValue::I64(Default::default()),
+            ValType::NumType(NumType::F32) => StackValue::F32(Default::default()),
+            ValType::NumType(NumType::F64) => StackValue::F64(Default::default()),
+            ValType::VecType(VecType::V128) => StackValue::V128(Box::new(0)),
+            ValType::RefType(RefType::FuncRef) => StackValue::RefFunc(None),
+            ValType::RefType(RefType::ExternRef) => StackValue::RefFunc(None),
+            ValType::Never => unreachable!("cannot instantiate <never> value"),
+        }
+    }
     #[inline]
     fn validate(&self, value: &Value) -> anyhow::Result<()> {
         match (self, value) {

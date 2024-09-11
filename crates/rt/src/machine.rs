@@ -1,18 +1,27 @@
 use std::{
     collections::{HashMap, HashSet},
     mem,
-    ops::{Deref, DerefMut, Range},
+    ops::{Deref, DerefMut, Index, IndexMut, Range},
     sync::{Arc, Mutex},
 };
 
 use anyhow::Context;
+use smallvec::SmallVec;
 
-use crate::{memory_region::MemoryRegion, stack::DefaultStack, value::RefValue};
-use crate::{prelude::*, stack::Fence};
+use crate::{
+    locals::StackMapStack,
+    memory_region::MemoryRegion,
+    stack::{DefaultStack, StackValue},
+    value::RefValue,
+};
+use crate::{
+    prelude::*,
+    stack::{Fence, Stack},
+};
 use uuasm_ir::{
-    BlockType, ByteVec, Code, CodeIdx, Data, Elem, ElemMode, Export, ExportDesc, Expr, FuncIdx,
-    Global, GlobalIdx, Import, ImportDesc, Instr, MemIdx, Module, ModuleBuilder, ModuleIntoInner,
-    Name, ResultType, TableIdx, TableType, Type, TypeIdx,
+    BlockType, ByteVec, Code, CodeIdx, Data, Elem, ElemMode, Export, ExportDesc, Expr, Func,
+    FuncIdx, Global, GlobalIdx, Import, ImportDesc, Instr, MemIdx, Module, ModuleBuilder,
+    ModuleIntoInner, Name, RefType, ResultType, TableIdx, TableType, Type, TypeIdx,
 };
 
 use super::{
@@ -85,21 +94,43 @@ impl std::fmt::Debug for ExternalFunction {
 
 pub struct Table {
     kind: TableType,
-    values: Vec<Value>,
+    values: SmallVec<[RefValue; 4]>,
+}
+
+impl IndexMut<u32> for Table {
+    fn index_mut(&mut self, index: u32) -> &mut Self::Output {
+        &mut self.values[index as usize]
+    }
+}
+
+impl Index<Range<usize>> for Table {
+    type Output = [RefValue];
+
+    fn index(&self, index: Range<usize>) -> &Self::Output {
+        self.values.index(index)
+    }
+}
+
+impl IndexMut<Range<usize>> for Table {
+    fn index_mut(&mut self, index: Range<usize>) -> &mut [RefValue] {
+        self.values.index_mut(index)
+    }
+}
+
+impl Index<u32> for Table {
+    type Output = RefValue;
+
+    fn index(&self, index: u32) -> &Self::Output {
+        unsafe { self.values.get_unchecked(index as usize) }
+    }
 }
 
 impl Table {
-    pub fn get(&self, idx: usize) -> Option<&Value> {
-        self.values.get(idx)
-    }
-    pub fn get_mut(&mut self, idx: usize) -> Option<&mut Value> {
-        self.values.get_mut(idx)
-    }
     pub fn len(&self) -> usize {
         self.values.len()
     }
 
-    fn grow(&mut self, delta: i32, fill: Value) -> i32 {
+    fn grow(&mut self, delta: i32, fill: RefValue) -> i32 {
         let len = self.values.len();
 
         let new_size = len.saturating_add(delta as usize);
@@ -109,34 +140,6 @@ impl Table {
         }
         self.values.resize(new_size, fill);
         len as i32
-    }
-}
-
-impl std::ops::Index<usize> for Table {
-    type Output = Value;
-
-    fn index(&self, index: usize) -> &Self::Output {
-        self.values.index(index)
-    }
-}
-
-impl std::ops::Index<Range<usize>> for Table {
-    type Output = [Value];
-
-    fn index(&self, index: Range<usize>) -> &Self::Output {
-        self.values.index(index)
-    }
-}
-
-impl std::ops::IndexMut<usize> for Table {
-    fn index_mut(&mut self, index: usize) -> &mut Value {
-        self.values.index_mut(index)
-    }
-}
-
-impl std::ops::IndexMut<Range<usize>> for Table {
-    fn index_mut(&mut self, index: Range<usize>) -> &mut [Value] {
-        self.values.index_mut(index)
     }
 }
 
@@ -325,7 +328,7 @@ impl Machine {
         tables.extend(IntoIterator::into_iter(table_section).map(|tabletype| {
             let table_instance_idx = resources.table_instances.len();
             resources.table_instances.push(Table {
-                values: vec![Value::RefNull; tabletype.1.min() as usize],
+                values: (0..tabletype.1.min()).map(|_| None).collect(),
                 kind: tabletype,
             });
             TableInst::new(tabletype, table_instance_idx)
@@ -775,20 +778,21 @@ impl Machine {
                 .with_context(|| format!("bad argument at {}", idx))?;
         }
 
-        let code = self.code(module_idx, function.codeidx());
-        let locals = &code.0.locals;
-
-        let mut locals: Vec<Value> = args
-            .iter()
-            .cloned()
-            .chain(
-                locals
-                    .iter()
-                    .flat_map(|xs| (0..xs.0).map(|_| xs.1.instantiate())),
-            )
-            .collect();
+        let Code(Func {
+            locals: local_defs,
+            expr: Expr(instrs),
+        }) = self.code(module_idx, function.codeidx());
 
         let mut value_stack = DefaultStack::new();
+        let mut locals = StackMapStack::new();
+
+        for arg in args {
+            value_stack.push_value((*arg).into());
+        }
+
+        for local in local_defs {
+            value_stack.push_value(local.1.instantiate_stackvalue());
+        }
 
         let mut frames = Vec::<Frame<'_>>::new();
         let mut frame = Frame {
@@ -796,12 +800,12 @@ impl Machine {
             name: "init",
             pc: 0,
             return_unwind_count: 0,
-            instrs: code.0.expr.0.as_slice(),
-            jump_to: Some(code.0.expr.0.len()),
+            instrs,
+            jump_to: Some(instrs.len()),
             locals_base_offset: 0,
             block_type: BlockType::TypeIndex(*function.typeidx()),
             guest_index: module_idx,
-            fence: value_stack.begin(),
+            fence: value_stack.fence(),
         };
 
         #[cfg(any())]
@@ -844,7 +848,7 @@ impl Machine {
                         #[cfg(test)]
                         name: "block",
                         pc: 0,
-                        fence: value_stack.begin(),
+                        fence: value_stack.fence(),
                         return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
                         jump_to: Some(blockinstrs.len()),
@@ -867,7 +871,7 @@ impl Machine {
                         return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
                         jump_to: Some(0),
-                        fence: value_stack.begin(),
+                        fence: value_stack.fence(),
                         block_type: *block_type,
                         locals_base_offset: frame.locals_base_offset,
                         guest_index: frame.guest_index,
@@ -890,7 +894,7 @@ impl Machine {
                         return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
                         jump_to: Some(blockinstrs.len()),
-                        fence: value_stack.begin(),
+                        fence: value_stack.fence(),
                         block_type: *block_type,
                         locals_base_offset: frame.locals_base_offset,
                         guest_index: frame.guest_index,
@@ -917,7 +921,7 @@ impl Machine {
                         return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
                         jump_to: Some(blockinstrs.len()),
-                        fence: value_stack.begin(),
+                        fence: value_stack.fence(),
                         block_type: *block_type,
                         locals_base_offset: frame.locals_base_offset,
                         guest_index: frame.guest_index,
@@ -1162,7 +1166,7 @@ impl Machine {
                         jump_to: None,
                         locals_base_offset,
                         block_type: BlockType::TypeIndex(*function.typeidx()),
-                        fence: value_stack.begin(),
+                        fence: value_stack.fence(),
                         guest_index: module_idx,
                     };
                     frame.pc += 1;
@@ -1257,7 +1261,7 @@ impl Machine {
                         jump_to: None,
                         locals_base_offset,
                         block_type: BlockType::TypeIndex(*function.typeidx()),
-                        fence: value_stack.begin(),
+                        fence: value_stack.fence(),
                         guest_index: module_idx,
                     };
                     frame.pc += 1;
