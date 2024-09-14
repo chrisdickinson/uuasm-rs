@@ -12,7 +12,7 @@ use crate::{value::RefValue, Value};
 const STACK_SEGMENT_PAGE_SIZE: usize =
     0x10000 - (size_of::<StackSegment<0>>() + (size_of::<*const ()>() * 2));
 
-pub(crate) type DefaultStack = SegmentedStack<STACK_SEGMENT_PAGE_SIZE>;
+pub(crate) type PageSizedStack = SegmentedStack<STACK_SEGMENT_PAGE_SIZE>;
 
 #[inline]
 #[cold]
@@ -37,6 +37,7 @@ pub(crate) struct SegmentedStack<const N: usize> {
     depth: u32,
 }
 
+#[derive(Clone)]
 pub(crate) enum StackValue {
     I32(i32),
     I64(i64),
@@ -47,6 +48,32 @@ pub(crate) enum StackValue {
     V128(Box<i128>),
     RefFunc(RefValue),
     RefExtern(RefValue),
+}
+
+impl StackValue {
+    pub fn as_i32(&self) -> Option<i32> {
+        if let Self::I32(v) = self {
+            Some(*v)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_func_ref(&self) -> Option<RefValue> {
+        if let Self::RefFunc(v) = self {
+            Some(*v)
+        } else {
+            None
+        }
+    }
+
+    pub fn as_extern_ref(&self) -> Option<RefValue> {
+        if let Self::RefExtern(v) = self {
+            Some(*v)
+        } else {
+            None
+        }
+    }
 }
 
 impl From<Value> for StackValue {

@@ -9,6 +9,17 @@ If you're looking for a industry-strength Wasm runtime, look at
 
 A semi-regularly updated dev log.
 
+### 2024 Sep 09
+
+Well, writing a new stack was easier than expected. Integrating it, however...
+
+Something I am noodling on: locals are kind of a copy-on-write view of a
+value stack (extending the existing stack with a number of non-parameter locals.)
+On write those values can be copied, but until that point they can be read off
+of the same stack as everything else.
+
+
+
 ### 2024 Sep 08
 
 Ok. The time has come to fix our representation of values, and that means

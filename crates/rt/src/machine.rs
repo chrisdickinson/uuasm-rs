@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     mem,
+    num::NonZeroU64,
     ops::{Deref, DerefMut, Index, IndexMut, Range},
     sync::{Arc, Mutex},
 };
@@ -11,7 +12,7 @@ use smallvec::SmallVec;
 use crate::{
     locals::StackMapStack,
     memory_region::MemoryRegion,
-    stack::{DefaultStack, StackValue},
+    stack::{PageSizedStack, StackValue},
     value::RefValue,
 };
 use crate::{
@@ -20,8 +21,9 @@ use crate::{
 };
 use uuasm_ir::{
     BlockType, ByteVec, Code, CodeIdx, Data, Elem, ElemMode, Export, ExportDesc, Expr, Func,
-    FuncIdx, Global, GlobalIdx, Import, ImportDesc, Instr, MemIdx, Module, ModuleBuilder,
-    ModuleIntoInner, Name, RefType, ResultType, TableIdx, TableType, Type, TypeIdx,
+    FuncIdx, Global, GlobalIdx, Import, ImportDesc, Instr, LabelIdx, LocalIdx, MemIdx, Module,
+    ModuleBuilder, ModuleIntoInner, Name, RefType, ResultType, TableIdx, TableType, Type, TypeIdx,
+    ValType,
 };
 
 use super::{
@@ -47,7 +49,7 @@ trait ElemValue {
         module_idx: usize,
         machine: &Machine,
         resources: &mut Resources,
-    ) -> anyhow::Result<Value>;
+    ) -> anyhow::Result<StackValue>;
 }
 
 impl ElemValue for Elem {
@@ -57,7 +59,7 @@ impl ElemValue for Elem {
         module_idx: usize,
         machine: &Machine,
         resources: &mut Resources,
-    ) -> anyhow::Result<Value> {
+    ) -> anyhow::Result<StackValue> {
         machine.compute_constant_expr(module_idx, self.exprs[idx].0.as_slice(), resources)
     }
 }
@@ -68,11 +70,18 @@ struct Frame<'a> {
     name: &'static str,
     pc: usize,
     fence: Fence,
+
+    // how far are we from the call frame?
     return_unwind_count: usize,
+
+    // what instructions are we operating on?
     instrs: &'a [Instr],
-    jump_to: Option<usize>,
-    block_type: BlockType,
-    locals_base_offset: usize,
+
+    jump_to_start_of_instrs: bool,
+
+    params: SmallVec<[ValType; 8]>,
+    results: SmallVec<[ValType; 8]>,
+
     guest_index: GuestIndex,
 }
 
@@ -143,9 +152,11 @@ impl Table {
     }
 }
 
+// Really, this per-"execution" data is a store
 pub(crate) struct Resources {
+    // TODO: turn this into a Stack
+    global_values: Vec<StackValue>,
     memory_regions: Vec<MemoryRegion>,
-    global_values: Vec<Value>,
     table_instances: Vec<Table>,
 
     dropped_elements: HashSet<(usize, usize)>,
@@ -153,6 +164,8 @@ pub(crate) struct Resources {
     external_functions: Vec<ExternalFunction>,
 }
 
+// and this should be the thing that holds platonic information about
+// modules
 pub(crate) struct Machine {
     initialized: HashSet<usize>,
 
@@ -342,7 +355,9 @@ impl Machine {
                 .enumerate()
                 .map(|(idx, global)| {
                     let Global(global_type, Expr(instrs)) = global;
-                    resources.global_values.push(global_type.0.instantiate());
+                    resources
+                        .global_values
+                        .push(global_type.0.instantiate_stackvalue());
                     GlobalInst::new(
                         global_type,
                         global_base_offset + idx,
@@ -374,7 +389,7 @@ impl Machine {
     ) -> anyhow::Result<Self> {
         let resources = Arc::new(Mutex::new(Resources {
             memory_regions: Vec::with_capacity(4),
-            global_values: Vec::with_capacity(4),
+            global_values: Vec::new(),
             table_instances: Vec::with_capacity(4),
             dropped_data: HashSet::new(),
             dropped_elements: HashSet::new(),
@@ -510,6 +525,7 @@ impl Machine {
             let Some((global_idx, instrs)) = global.initdata() else {
                 continue;
             };
+
             resources.global_values[global_idx] =
                 self.compute_constant_expr(at_idx, instrs, &mut *resources)?;
         }
@@ -519,8 +535,9 @@ impl Machine {
                 Data::Active(data, memory_idx, expr) => {
                     let memoffset = self.compute_constant_expr(at_idx, &expr.0, &mut *resources)?;
                     let memoffset = memoffset
-                        .as_usize()
-                        .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
+                        .as_i32()
+                        .ok_or_else(|| anyhow::anyhow!("expected i32"))?
+                        as u32 as usize;
 
                     let memoryidx = self.memory(at_idx, *memory_idx);
                     let memory = resources
@@ -528,7 +545,7 @@ impl Machine {
                         .get_mut(memoryidx)
                         .ok_or_else(|| anyhow::anyhow!("no such memory"))?;
 
-                    memory.grow_to_fit(&data.0, memoffset)?;
+                    memory.grow_to_fit(&data.0, memoffset as usize)?;
 
                     if memoffset.saturating_add(data.0.len()) > memory.len() {
                         anyhow::bail!("out of bounds memory access")
@@ -565,8 +582,9 @@ impl Machine {
             };
             let offset = self.compute_constant_expr(at_idx, &offset.0, &mut *resources)?;
             let offset = offset
-                .as_usize()
-                .ok_or_else(|| anyhow::anyhow!("expected i32 or i64"))?;
+                .as_i32()
+                .ok_or_else(|| anyhow::anyhow!("expected i32"))? as u32
+                as usize;
 
             let values = elem
                 .exprs
@@ -580,8 +598,22 @@ impl Machine {
                 .get_mut(tableidx)
                 .ok_or_else(|| anyhow::anyhow!("no such table"))?;
 
-            for (idx, xs) in values.iter().enumerate() {
-                table[idx + offset] = *xs;
+            match elem.kind {
+                RefType::FuncRef => {
+                    for (idx, xs) in values.iter().enumerate() {
+                        table[(idx + offset) as u32] = xs
+                            .as_func_ref()
+                            .ok_or_else(|| anyhow::anyhow!("expected ref.func"))?;
+                    }
+                }
+
+                RefType::ExternRef => {
+                    for (idx, xs) in values.iter().enumerate() {
+                        table[(idx + offset) as u32] = xs
+                            .as_extern_ref()
+                            .ok_or_else(|| anyhow::anyhow!("expected ref.extern"))?;
+                    }
+                }
             }
         }
 
@@ -783,7 +815,7 @@ impl Machine {
             expr: Expr(instrs),
         }) = self.code(module_idx, function.codeidx());
 
-        let mut value_stack = DefaultStack::new();
+        let mut value_stack = PageSizedStack::new();
         let mut locals = StackMapStack::new();
 
         for arg in args {
@@ -812,6 +844,31 @@ impl Machine {
         eprintln!("call {funcname} = = = = = = = = = = = = = = = = = = = = =");
         loop {
             if frame.pc >= frame.instrs.len() {
+                // we're exiting a block normally. due to validation, the only values left on the
+                // stack are the ones that are supposed to be there. HOWEVER, we may be returning
+                // to a callsite, in which case we need to .unwind() the local stack as well. (So
+                // do that!!)
+                //
+                // TKTK: maybe we need separate arrays for "program counter", "return frame
+                // length", etc? or we could store return count etc in the stack after the locals
+                //
+                // scratch space here:
+                //
+                // - locals must be unwound after calls
+                // - globals must be unwound after cross module calls (assuming that's how we
+                //   implement globals)
+                // - otherwise we can leave the value stack as-is
+                // - however if we return we can handle the unwinding there (should we?)
+                // - if we br to a block we'll pop values corresponding to the types, then
+                //   unwind to the block fence
+                //      - it'd be interesting to annotate blocks with "is br target" in validation
+                //        but maybe we wait until we have more info via benchmarks
+                //
+                // So. Which problem are we solving first? Are we solving br, return, or "ran out
+                // of instrs" first? Or are we solving globals? Which problem is most fundamental?
+                //
+                // Globals seem more fundamental. Therefore.
+
                 match frame.block_type {
                     BlockType::Empty => {}
                     BlockType::Val(val_type) => {
@@ -933,11 +990,11 @@ impl Machine {
                     continue;
                 }
 
-                Instr::Br(idx) => {
+                Instr::Br(LabelIdx(idx)) => {
                     // look at the arity of the target block type. preserve that many values from
                     // the stack.
-                    if idx.0 > 0 {
-                        frames.truncate(frames.len() - (idx.0 - 1) as usize);
+                    if *idx > 0 {
+                        frames.truncate(frames.len() - (idx - 1) as usize);
                         frame = frames
                             .pop()
                             .ok_or_else(|| anyhow::anyhow!("stack underflow"))?;
@@ -947,6 +1004,7 @@ impl Machine {
                         anyhow::bail!("invalid jump target");
                     };
                     frame.pc = jump_to;
+
                     let to_preserve = match frame.block_type {
                         BlockType::Empty => 0,
                         BlockType::Val(_) => {
@@ -956,6 +1014,7 @@ impl Machine {
                                 1
                             }
                         }
+
                         BlockType::TypeIndex(type_idx) => {
                             let Some(ty) = self.typedef(frame.guest_index, type_idx) else {
                                 anyhow::bail!("could not resolve blocktype");
@@ -1121,41 +1180,13 @@ impl Machine {
                         .function(module_idx, *func_idx)
                         .ok_or_else(|| anyhow::anyhow!("missing function"))?;
 
-                    let typedef = self
+                    let Type(params, results) = self
                         .typedef(module_idx, *function.typeidx())
                         .ok_or_else(|| anyhow::anyhow!("missing typedef"))?;
 
                     let code = self.code(module_idx, function.codeidx());
 
-                    let param_types = &*typedef.0 .0;
-                    if value_stack.len() < param_types.len() {
-                        anyhow::bail!(
-                            "not enough arguments to call func idx={}; expected {} args",
-                            func_idx.0,
-                            param_types.len()
-                        );
-                    }
-
-                    let args = value_stack.split_off(value_stack.len() - param_types.len());
-
-                    let locals_base_offset = locals.len();
-                    let locals_count = code.0.locals.iter().fold(0, |lhs, rhs| lhs + rhs.0);
-                    locals.reserve(locals_count as usize);
-
-                    for (idx, (param_type, value)) in
-                        param_types.iter().zip(args.iter()).enumerate()
-                    {
-                        param_type
-                            .validate(value)
-                            .with_context(|| format!("bad argument at {}", idx))?;
-                        locals.push(*value);
-                    }
-
-                    for local in code.0.locals.iter() {
-                        for _ in 0..local.0 {
-                            locals.push(local.1.instantiate());
-                        }
-                    }
+                    locals.begin_call(&mut value_stack, params, &code.0.locals);
 
                     let new_frame = Frame {
                         #[cfg(test)]
@@ -1163,12 +1194,12 @@ impl Machine {
                         pc: 0,
                         return_unwind_count: 0,
                         instrs: &code.0.expr.0,
-                        jump_to: None,
-                        locals_base_offset,
+                        jump_to: NonZeroU64::new(0),
                         block_type: BlockType::TypeIndex(*function.typeidx()),
                         fence: value_stack.fence(),
                         guest_index: module_idx,
                     };
+
                     frame.pc += 1;
                     let old_frame = frame;
                     frames.push(old_frame);
@@ -1308,61 +1339,63 @@ impl Machine {
                     value_stack.push_value(if test != 0 { val2 } else { val1 })
                 }
 
-                Instr::LocalGet(idx) => {
-                    let Some(v) = locals.get(idx.0 as usize + frame.locals_base_offset) else {
-                        anyhow::bail!(
-                            "local.get out of range {} + {} > {}",
-                            idx.0 as usize,
-                            frame.locals_base_offset,
-                            locals.len()
-                        )
-                    };
-
-                    value_stack.push(*v);
+                Instr::LocalGet(LocalIdx(idx)) => {
+                    locals.get(&value_stack, *idx);
                 }
 
-                Instr::LocalSet(idx) => {
-                    locals[idx.0 as usize + frame.locals_base_offset] = value_stack
-                        .pop()
-                        .ok_or_else(|| anyhow::anyhow!("ran out of stack"))?;
+                Instr::LocalSet(LocalIdx(idx)) => {
+                    locals.set(&mut value_stack, *idx);
                 }
 
-                Instr::LocalTee(idx) => {
-                    locals[idx.0 as usize + frame.locals_base_offset] = *value_stack
-                        .last()
-                        .ok_or_else(|| anyhow::anyhow!("ran out of stack"))?;
+                Instr::LocalTee(LocalIdx(idx)) => {
+                    locals.tee(&mut value_stack, *idx);
                 }
 
                 Instr::GlobalGet(global_idx) => {
                     let global_value_idx = self.global(frame.guest_index, *global_idx);
 
-                    // TODO: respect base globals offset
-                    let Some(value) = resources.global_values.get(global_value_idx) else {
-                        anyhow::bail!("global idx out of range");
-                    };
+                    let value = unsafe { resources.global_values.get_unchecked(global_value_idx) };
 
-                    value_stack.push(*value);
+                    value_stack.push_value(*value);
                 }
 
                 Instr::GlobalSet(global_idx) => {
                     let global_value_idx = self.global(frame.guest_index, *global_idx);
-                    let Some(value) = resources.global_values.get_mut(global_value_idx) else {
-                        anyhow::bail!("global idx out of range");
-                    };
+                    let value =
+                        unsafe { resources.global_values.get_unchecked_mut(global_value_idx) };
 
-                    let Some(v) = value_stack.pop() else {
-                        anyhow::bail!("drop out of range")
-                    };
-
-                    *value = v;
+                    match value {
+                        StackValue::I32(value) => {
+                            *value = value_stack.pop();
+                        }
+                        StackValue::I64(value) => {
+                            *value = value_stack.pop();
+                        }
+                        StackValue::F32(value) => {
+                            *value = value_stack.pop();
+                        }
+                        StackValue::F64(value) => {
+                            *value = value_stack.pop();
+                        }
+                        StackValue::V128(value) => {
+                            let value = value.as_mut();
+                            *value = value_stack.pop::<i128>();
+                        }
+                        StackValue::RefFunc(value) => {
+                            *value = value_stack.pop();
+                        }
+                        StackValue::RefExtern(value) => {
+                            *value = value_stack.pop();
+                        }
+                    }
                 }
 
                 Instr::TableGet(table_idx) => {
                     let table_idx = self.table(frame.guest_index, *table_idx);
-                    let offset = value_stack.pop::<i32>() as usize;
+                    let offset = value_stack.pop::<i32>() as u32;
 
                     let table = &resources.table_instances[table_idx];
-                    if offset >= table.len() {
+                    if offset >= table.len() as u32 {
                         anyhow::bail!("out of bounds table access");
                     }
                     value_stack.push(table[offset]);
@@ -1371,10 +1404,10 @@ impl Machine {
                 Instr::TableSet(table_idx) => {
                     let table_idx = self.table(frame.guest_index, *table_idx);
                     let value = value_stack.pop::<RefValue>();
-                    let offset = value_stack.pop::<i32>() as usize;
+                    let offset = value_stack.pop::<i32>() as u32;
 
                     let table = &mut resources.table_instances[table_idx];
-                    if offset >= table.len() {
+                    if offset >= table.len() as u32 {
                         anyhow::bail!("out of bounds table access");
                     }
 
@@ -3012,23 +3045,25 @@ impl Machine {
         module_idx: GuestIndex,
         instrs: &[Instr],
         resources: &mut Resources,
-    ) -> anyhow::Result<Value> {
+    ) -> anyhow::Result<StackValue> {
         Ok(match instrs.first() {
-            Some(Instr::F32Const(c)) => Value::F32(*c),
-            Some(Instr::F64Const(c)) => Value::F64(*c),
-            Some(Instr::I32Const(c)) => Value::I32(*c),
-            Some(Instr::I64Const(c)) => Value::I64(*c),
+            Some(Instr::F32Const(c)) => StackValue::F32(*c),
+            Some(Instr::F64Const(c)) => StackValue::F64(*c),
+            Some(Instr::I32Const(c)) => StackValue::I32(*c),
+            Some(Instr::I64Const(c)) => StackValue::I64(*c),
             Some(Instr::GlobalGet(c)) => {
                 let globalidx = self.global(module_idx, *c);
                 resources
                     .global_values
                     .get(globalidx)
-                    .cloned()
                     .ok_or_else(|| anyhow::anyhow!("uninitialized global"))?
+                    .clone()
             }
 
-            Some(Instr::RefNull(_c)) => Value::RefNull,
-            Some(Instr::RefFunc(c)) => Value::RefFunc(*c),
+            Some(Instr::RefNull(_c)) => StackValue::RefFunc(None),
+            Some(Instr::RefFunc(FuncIdx(c))) => StackValue::RefFunc(NonZeroU64::new(
+                (module_idx as u64 & 0xffff_ffff) << 32 | (*c as u64),
+            )),
             _ => anyhow::bail!("unsupported instruction"),
         })
     }

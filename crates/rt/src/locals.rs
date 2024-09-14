@@ -1,7 +1,7 @@
-use std::collections::LinkedList;
+use std::{collections::LinkedList, iter::repeat};
 
 use smallvec::SmallVec;
-use uuasm_ir::{NumType, RefType, ResultType, ValType, VecType};
+use uuasm_ir::{Local, NumType, RefType, ResultType, ValType, VecType};
 
 use crate::{
     prelude::ValTypeExtras,
@@ -24,7 +24,7 @@ impl<T: Stack> StackMapStack<T> {
         &mut self,
         storage: &mut T,
         ResultType(param_types): &ResultType,
-        defaults: &[ValType],
+        locals: &[Local],
     ) {
         let stack_values: SmallVec<[StackValue; 8]> = param_types
             .iter()
@@ -37,11 +37,9 @@ impl<T: Stack> StackMapStack<T> {
             .into_iter()
             .enumerate()
             .map(|(idx, value)| (unsafe { *param_types.get_unchecked(idx) }, value))
-            .chain(
-                defaults
-                    .iter()
-                    .map(|val_type| (*val_type, val_type.instantiate_stackvalue())),
-            )
+            .chain(locals.iter().flat_map(|Local(count, val_type)| {
+                repeat((*val_type, val_type.instantiate_stackvalue())).take(*count as usize)
+            }))
             .map(|(val_type, value)| {
                 storage.push_value(value);
                 (val_type, storage.fence())
