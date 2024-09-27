@@ -1,3 +1,6 @@
 [submodule "vendor/testsuite"]
 	path = vendor/testsuite
 	url = https://github.com/WebAssembly/testsuite
+[submodule "vendor/wasm-r3"]
+	path = vendor/wasm-r3
+	url = git@github.com:sola-st/wasm-r3
