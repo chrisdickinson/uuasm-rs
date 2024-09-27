@@ -133,10 +133,10 @@ for command in data["commands"]:
                     expected = ",".join(map(to_value, expected))
 
                     field = repr(field)[1:-1]
-                    field = re.sub("\\\\u([a-fA-F0-9]{2,4})", "\\\\u{\\1}", field)
-                    field = re.sub("\\\\U([a-fA-F0-9]+)", lambda m: re.sub("^0+", "", m.group(1)), field)
-                    field = re.sub("\\\\'", "'", field)
-                    field = re.sub("\"", "\\\\\"", field)
+                    field = re.sub(r"\\u([a-fA-F0-9]{2,4})", r"\\u{\1}", field)
+                    field = re.sub(r"\\U([a-fA-F0-9]+)", lambda m: re.sub("^0+", "", m.group(1)), field)
+                    field = re.sub(r"\\'", "'", field)
+                    field = re.sub(r"\"", r"\\\"", field)
 
                     if re.search(r"\\x[89a-f]", field) is not None:
                         eprintln(f"skipping invocation \"{source_filename}\"; line {line}: field is invalid unicode...")

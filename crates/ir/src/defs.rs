@@ -192,7 +192,8 @@ pub enum Instr {
     RefFunc(FuncIdx),
 
     // Parametric Instructions
-    Drop,
+    DropEmpty,
+    Drop(ValType),
     SelectEmpty,
     Select(Box<[ValType]>),
 
@@ -247,8 +248,8 @@ pub enum Instr {
     // Numeric Instructions
     I32Const(i32),
     I64Const(i64),
-    F32Const(f32),
-    F64Const(f64),
+    F32Const(u32),
+    F64Const(u64),
     I32Eqz,
     I32Eq,
     I32Ne,

@@ -49,7 +49,6 @@ pub enum AnyParser<T: IR> {
     ExportDesc(ExportDescParser<T>),
     Expr(ExprParser<T>),
     LocalList(Repeated<T, LocalParser<T>>),
-    ExprList(Repeated<T, ExprParser<T>>),
     Func(FuncParser<T>),
     Global(GlobalParser<T>),
     Local(LocalParser<T>),
@@ -136,7 +135,6 @@ repeated_impls!(Import);
 repeated_impls!(TypeIdx, FunctionSection);
 repeated_impls!(TableType, TableSection);
 repeated_impls!(Local, LocalList);
-repeated_impls!(Expr, ExprList);
 repeated_impls!(Export);
 repeated_impls!(Global);
 repeated_impls!(Code);
@@ -220,7 +218,6 @@ pub enum AnyProduction<T: IR> {
     Global(<GlobalParser<T> as Parse<T>>::Production),
     Local(<LocalParser<T> as Parse<T>>::Production),
     LocalList(<Repeated<T, LocalParser<T>> as Parse<T>>::Production),
-    ExprList(<Repeated<T, ExprParser<T>> as Parse<T>>::Production),
 
     Name(<NameParser as Parse<T>>::Production),
     Limits(<LimitsParser as Parse<T>>::Production),
@@ -302,7 +299,6 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::ArgTable(p) => p.advance(irgen, window),
             AnyParser::ArgRefNull(p) => p.advance(irgen, window),
             AnyParser::ByteVec(p) => p.advance(irgen, window),
-            AnyParser::ExprList(p) => p.advance(irgen, window),
             AnyParser::CustomSection(p) => p.advance(irgen, window),
         }
     }
@@ -358,7 +354,6 @@ impl<T: IR> Parse<T> for AnyParser<T> {
             AnyParser::ArgTable(p) => AnyProduction::ArgTable(p.production(irgen)?),
             AnyParser::ArgRefNull(p) => AnyProduction::ArgRefNull(p.production(irgen)?),
             AnyParser::ByteVec(p) => AnyProduction::ByteVec(p.production(irgen)?),
-            AnyParser::ExprList(p) => AnyProduction::ExprList(p.production(irgen)?),
             AnyParser::CustomSection(p) => AnyProduction::CustomSection(p.production(irgen)?),
         })
     }
@@ -393,7 +388,6 @@ impl<T: IR> std::fmt::Debug for AnyParser<T> {
             Self::ExportDesc(_) => f.debug_tuple("ExportDesc").finish(),
             Self::Expr(_) => f.debug_tuple("Expr").finish(),
             Self::LocalList(_) => f.debug_tuple("LocalList").finish(),
-            Self::ExprList(_) => f.debug_tuple("ExprList").finish(),
             Self::Func(_) => f.debug_tuple("Func").finish(),
             Self::Global(_) => f.debug_tuple("Global").finish(),
             Self::Local(_) => f.debug_tuple("Local").finish(),

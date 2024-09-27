@@ -1,9 +1,10 @@
 use std::{
     collections::{HashMap, LinkedList},
     marker::Sized,
+    num::NonZeroU64,
 };
 
-use uuasm_ir::{NumType, RefType, ValType, VecType};
+use uuasm_ir::{FuncIdx, NumType, RefType, ValType, VecType};
 
 use crate::{value::RefValue, Value};
 
@@ -18,13 +19,24 @@ pub(crate) type PageSizedStack = SegmentedStack<STACK_SEGMENT_PAGE_SIZE>;
 #[cold]
 fn cold() {}
 
+pub trait Pushable {}
+
+impl Pushable for i32 {}
+impl Pushable for i64 {}
+impl Pushable for u32 {}
+impl Pushable for u64 {}
+impl Pushable for f32 {}
+impl Pushable for f64 {}
+impl Pushable for i128 {}
+impl Pushable for RefValue {}
+
 pub(crate) trait Stack {
     type Fence;
 
     fn write_at_fence<T: Sized + Copy>(&mut self, fence: &Self::Fence, val: T);
     fn read_at_fence<T: Sized + Copy>(&self, fence: &Self::Fence) -> T;
     fn pop<T: Sized + Copy>(&mut self) -> T;
-    fn push<T: Sized + Copy>(&mut self, val: T);
+    fn push<T: Sized + Copy + Pushable>(&mut self, val: T);
     fn push_value(&mut self, val: StackValue);
     fn pop_valtype(&mut self, val_type: ValType) -> StackValue;
 
@@ -41,8 +53,8 @@ pub(crate) struct SegmentedStack<const N: usize> {
 pub(crate) enum StackValue {
     I32(i32),
     I64(i64),
-    F32(f32),
-    F64(f64),
+    F32(u32),
+    F64(u64),
 
     // Box up i128 because it's infrequently used in block types / selects / etc
     V128(Box<i128>),
@@ -59,17 +71,9 @@ impl StackValue {
         }
     }
 
-    pub fn as_func_ref(&self) -> Option<RefValue> {
-        if let Self::RefFunc(v) = self {
-            Some(*v)
-        } else {
-            None
-        }
-    }
-
-    pub fn as_extern_ref(&self) -> Option<RefValue> {
-        if let Self::RefExtern(v) = self {
-            Some(*v)
+    pub fn as_ref_value(&self) -> RefValue {
+        if let Self::RefFunc(v) | Self::RefExtern(v) = self {
+            *v
         } else {
             None
         }
@@ -81,16 +85,33 @@ impl From<Value> for StackValue {
         match value {
             Value::I32(xs) => StackValue::I32(xs),
             Value::I64(xs) => StackValue::I64(xs),
-            Value::F32(xs) => StackValue::F32(xs),
-            Value::F64(xs) => StackValue::F64(xs),
+            Value::F32(xs) => StackValue::F32(xs.to_bits()),
+            Value::F64(xs) => StackValue::F64(xs.to_bits()),
             Value::V128(xs) => StackValue::V128(Box::new(xs)),
             Value::RefNull => StackValue::RefFunc(None),
+            Value::RefExtern(xs) => StackValue::RefExtern(NonZeroU64::new(xs as u64 + 1)),
             _ => panic!("cannot coerce that value into stack value"),
         }
     }
 }
 
-#[derive(Debug)]
+impl From<StackValue> for Value {
+    fn from(value: StackValue) -> Self {
+        match value {
+            StackValue::I32(xs) => Self::I32(xs),
+            StackValue::I64(xs) => Self::I64(xs),
+            StackValue::F32(xs) => Self::F32(f32::from_bits(xs)),
+            StackValue::F64(xs) => Self::F64(f64::from_bits(xs)),
+            StackValue::V128(xs) => Self::V128(*xs),
+            StackValue::RefFunc(None) => Self::RefNull,
+            StackValue::RefExtern(None) => Self::RefNull,
+            StackValue::RefFunc(Some(xs)) => Self::RefFunc(FuncIdx(xs.get() as u32)),
+            StackValue::RefExtern(Some(xs)) => Self::RefExtern(xs.get() as u32 - 1),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
 pub(crate) struct Fence(u32, u16);
 
 // TODO: we need a way to unwind without having to re-specify the exact types
@@ -122,13 +143,15 @@ impl<const N: usize> Stack for SegmentedStack<N> {
         }
 
         let Some(segment) = self.stack.front_mut() else {
-            cold();
-            unreachable!("received invalid fence");
+            if depth == 0 && ptr == 0 {
+                return;
+            }
+            panic!("received invalid fence");
         };
         segment.unwind(ptr);
     }
 
-    fn push<T: Sized + Copy>(&mut self, val: T) {
+    fn push<T: Sized + Copy + Pushable>(&mut self, val: T) {
         let Some(head) = self.stack.front_mut() else {
             cold();
             self.stack.push_front(StackSegment::new());
@@ -176,9 +199,9 @@ impl<const N: usize> Stack for SegmentedStack<N> {
     fn pop_valtype(&mut self, val_type: ValType) -> StackValue {
         match val_type {
             ValType::NumType(NumType::I32) => StackValue::I32(self.pop::<i32>()),
-            ValType::NumType(NumType::F32) => StackValue::F32(self.pop::<f32>()),
+            ValType::NumType(NumType::F32) => StackValue::F32(self.pop::<u32>()),
             ValType::NumType(NumType::I64) => StackValue::I64(self.pop::<i64>()),
-            ValType::NumType(NumType::F64) => StackValue::F64(self.pop::<f64>()),
+            ValType::NumType(NumType::F64) => StackValue::F64(self.pop::<u64>()),
             ValType::VecType(VecType::V128) => StackValue::V128(Box::new(self.pop::<i128>())),
             ValType::RefType(RefType::FuncRef) => StackValue::RefFunc(self.pop::<RefValue>()),
             ValType::RefType(RefType::ExternRef) => StackValue::RefExtern(self.pop::<RefValue>()),
@@ -247,12 +270,18 @@ impl<const N: usize> StackSegment<N> {
         self.ptr = to;
     }
 
-    pub(crate) fn push<T: Sized>(&mut self, val: T) {
+    pub(crate) fn push<T: Sized + Pushable>(&mut self, val: T) {
         let size = size_of::<T>();
         let align = align_of::<T>();
 
         let misalignment = unsafe { self.storage.as_ptr().add(self.ptr as usize) as usize } % align;
         let adjustment = align - misalignment;
+        #[cfg(any())]
+        eprintln!(
+            "push: {:x?} size={size} align={align} misalignment={misalignment}; typename={}",
+            unsafe { self.storage.as_ptr().add(self.ptr as usize) },
+            std::any::type_name::<T>(),
+        );
 
         self.ptr += adjustment as u16;
 
@@ -272,8 +301,17 @@ impl<const N: usize> StackSegment<N> {
 
     pub(crate) fn pop<T: Sized + Copy>(&mut self) -> T {
         let size = size_of::<T>();
-
         let padding = self.alignments.remove(&self.ptr).unwrap_or_default();
+        #[cfg(any())]
+        eprintln!(
+            "pop: {:x?} size={size} padding={padding}; typename={}",
+            unsafe {
+                self.storage
+                    .as_ptr()
+                    .add(self.ptr as usize - size - padding as usize)
+            },
+            std::any::type_name::<T>(),
+        );
 
         let ptr = self.ptr;
         self.ptr -= size as u16 + padding as u16;
@@ -316,6 +354,7 @@ mod test {
         module_idx: u32,
         func_idx: u32,
     }
+    impl Pushable for ExamplePointerInfo {}
 
     #[test]
     fn test_stack_segment() -> Result<(), ()> {

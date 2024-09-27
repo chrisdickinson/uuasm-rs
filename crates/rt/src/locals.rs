@@ -1,7 +1,7 @@
 use std::{collections::LinkedList, iter::repeat};
 
 use smallvec::SmallVec;
-use uuasm_ir::{Local, NumType, RefType, ResultType, ValType, VecType};
+use uuasm_ir::{Local, NumType, RefType, ValType, VecType};
 
 use crate::{
     prelude::ValTypeExtras,
@@ -23,7 +23,7 @@ impl<T: Stack> StackMapStack<T> {
     pub(crate) fn begin_call(
         &mut self,
         storage: &mut T,
-        ResultType(param_types): &ResultType,
+        param_types: &[ValType],
         locals: &[Local],
     ) {
         let stack_values: SmallVec<[StackValue; 8]> = param_types
@@ -35,6 +35,7 @@ impl<T: Stack> StackMapStack<T> {
         let first_fence = storage.fence();
         let locals: Box<_> = stack_values
             .into_iter()
+            .rev()
             .enumerate()
             .map(|(idx, value)| (unsafe { *param_types.get_unchecked(idx) }, value))
             .chain(locals.iter().flat_map(|Local(count, val_type)| {
@@ -52,16 +53,17 @@ impl<T: Stack> StackMapStack<T> {
         })
     }
 
-    pub(crate) fn end_call(&mut self, storage: &mut T, ResultType(return_types): &ResultType) {
+    pub(crate) fn end_call(&mut self, storage: &mut T, return_types: &[ValType]) {
         let Some(map) = self.storage.pop_front() else {
             panic!("empty stack");
         };
         let stack_values: SmallVec<[StackValue; 8]> = return_types
             .iter()
+            .rev()
             .map(|val_type| storage.pop_valtype(*val_type))
             .collect();
         storage.unwind(map.first_fence);
-        for stack_value in stack_values {
+        for stack_value in stack_values.into_iter().rev() {
             storage.push_value(stack_value);
         }
     }

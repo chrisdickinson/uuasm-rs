@@ -57,6 +57,7 @@ pub enum ElemParser<T: IR> {
     ParseMode(u8, ElementMode<T>),
     ParseElemKind(u8, T::ElemMode, Option<u32>),
     ParseRefType(u8, T::ElemMode, Option<T::RefType>),
+    ParseRefTypeExpr(u8, T::ElemMode, Option<T::RefType>, usize, Vec<T::Expr>),
 
     Ready(T::Elem),
 }
@@ -108,7 +109,7 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                         );
                         continue 'restart;
                     } else {
-                        let mode = if flags & 0b010 == 0 {
+                        let mode = if flags & 0b010 != 0 {
                             ElementMode::Declarative
                         } else {
                             ElementMode::Passive
@@ -203,9 +204,9 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                         .map_err(IRError)?;
 
                     Advancement::YieldTo(
-                        AnyParser::ExprList(Default::default()),
+                        AnyParser::LEBU32(Default::default()),
                         |irgen, last_state, this_state| {
-                            let AnyParser::ExprList(parser) = last_state else {
+                            let AnyParser::LEBU32(parser) = last_state else {
                                 unreachable!();
                             };
                             let AnyParser::Elem(Self::ParseRefType(flags, mode, kind)) = this_state
@@ -213,14 +214,60 @@ impl<T: IR> Parse<T> for ElemParser<T> {
                                 unreachable!();
                             };
 
-                            let expr_list = parser.production(irgen)?;
-                            let elem = irgen
-                                .make_elem_from_exprs(kind, mode, expr_list, flags)
-                                .map_err(IRError)?;
-                            Ok(AnyParser::Elem(Self::Ready(elem)))
+                            let expr_list_count = parser.production(irgen)? as usize;
+
+                            if expr_list_count == 0 {
+                                let elem = irgen
+                                    .make_elem_from_exprs(kind, mode, Box::new([]), flags)
+                                    .map_err(IRError)?;
+                                return Ok(AnyParser::Elem(Self::Ready(elem)));
+                            }
+
+                            irgen.start_elem_expr(kind.as_ref()).map_err(IRError)?;
+
+                            Ok(AnyParser::Elem(Self::ParseRefTypeExpr(
+                                flags,
+                                mode,
+                                kind,
+                                expr_list_count,
+                                Vec::with_capacity(expr_list_count),
+                            )))
                         },
                     )
                 }
+
+                Self::ParseRefTypeExpr(_, _, _, _, _) => Advancement::YieldTo(
+                    AnyParser::Expr(Default::default()),
+                    |irgen, last_state, this_state| {
+                        let AnyParser::Expr(parser) = last_state else {
+                            unreachable!();
+                        };
+                        let AnyParser::Elem(Self::ParseRefTypeExpr(
+                            flags,
+                            mode,
+                            kind,
+                            count,
+                            mut items,
+                        )) = this_state
+                        else {
+                            unreachable!();
+                        };
+
+                        let expr_list = parser.production(irgen)?;
+                        irgen.check_elem_expr().map_err(IRError)?;
+                        items.push(expr_list);
+                        if items.len() == count {
+                            let elem = irgen
+                                .make_elem_from_exprs(kind, mode, items.into_boxed_slice(), flags)
+                                .map_err(IRError)?;
+                            return Ok(AnyParser::Elem(Self::Ready(elem)));
+                        }
+                        irgen.start_elem_expr(kind.as_ref()).map_err(IRError)?;
+                        Ok(AnyParser::Elem(Self::ParseRefTypeExpr(
+                            flags, mode, kind, count, items,
+                        )))
+                    },
+                ),
 
                 Self::Ready(_) => Advancement::Ready,
             });

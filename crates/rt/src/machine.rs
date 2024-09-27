@@ -7,7 +7,7 @@ use std::{
 };
 
 use anyhow::Context;
-use smallvec::SmallVec;
+use smallvec::{smallvec, SmallVec};
 
 use crate::{
     locals::StackMapStack,
@@ -20,10 +20,10 @@ use crate::{
     stack::{Fence, Stack},
 };
 use uuasm_ir::{
-    BlockType, ByteVec, Code, CodeIdx, Data, Elem, ElemMode, Export, ExportDesc, Expr, Func,
-    FuncIdx, Global, GlobalIdx, Import, ImportDesc, Instr, LabelIdx, LocalIdx, MemIdx, Module,
-    ModuleBuilder, ModuleIntoInner, Name, RefType, ResultType, TableIdx, TableType, Type, TypeIdx,
-    ValType,
+    BlockType, ByteVec, Code, CodeIdx, Data, Elem, ElemIdx, ElemMode, Export, ExportDesc, Expr,
+    Func, FuncIdx, Global, GlobalIdx, Import, ImportDesc, Instr, LabelIdx, LocalIdx, MemIdx,
+    Module, ModuleBuilder, ModuleIntoInner, Name, RefType, ResultType, TableIdx, TableType, Type,
+    TypeIdx, ValType,
 };
 
 use super::{
@@ -79,8 +79,8 @@ struct Frame<'a> {
 
     jump_to_start_of_instrs: bool,
 
-    params: SmallVec<[ValType; 8]>,
-    results: SmallVec<[ValType; 8]>,
+    params: SmallVec<[ValType; 2]>,
+    results: SmallVec<[ValType; 2]>,
 
     guest_index: GuestIndex,
 }
@@ -532,7 +532,7 @@ impl Machine {
 
         for (data_idx, data) in self.data[at_idx].iter().enumerate() {
             match data {
-                Data::Active(data, memory_idx, expr) => {
+                Data::Active(ByteVec(data), memory_idx, expr) => {
                     let memoffset = self.compute_constant_expr(at_idx, &expr.0, &mut *resources)?;
                     let memoffset = memoffset
                         .as_i32()
@@ -545,13 +545,15 @@ impl Machine {
                         .get_mut(memoryidx)
                         .ok_or_else(|| anyhow::anyhow!("no such memory"))?;
 
-                    memory.grow_to_fit(&data.0, memoffset as usize)?;
-
-                    if memoffset.saturating_add(data.0.len()) > memory.len() {
+                    if memory.grow_to_fit(data, memoffset).is_err() {
                         anyhow::bail!("out of bounds memory access")
                     }
 
-                    memory.copy_data(&data.0, memoffset);
+                    if memoffset.saturating_add(data.len()) > memory.len() {
+                        anyhow::bail!("out of bounds memory access")
+                    }
+
+                    memory.copy_data(data, memoffset);
                     resources.dropped_data.insert((at_idx, data_idx));
                 }
                 Data::Passive(_) => continue,
@@ -560,19 +562,23 @@ impl Machine {
 
         let mut active_elems = Vec::new();
         for (elem_idx, elem) in self.elements[at_idx].iter_mut().enumerate() {
-            let ElemMode::Active { .. } = &elem.mode else {
+            if !matches!(&elem.mode, ElemMode::Active { .. } | ElemMode::Declarative) {
                 continue;
-            };
+            }
 
             let mut empty = Elem {
                 mode: ElemMode::Passive,
                 kind: elem.kind,
-                exprs: elem.exprs.clone(),
+                exprs: Box::new([]),
                 flags: elem.flags,
             };
 
             resources.dropped_elements.insert((at_idx, elem_idx));
             mem::swap(elem, &mut empty);
+
+            if !matches!(&empty.mode, ElemMode::Active { .. }) {
+                continue;
+            }
             active_elems.push(empty);
         }
 
@@ -598,22 +604,12 @@ impl Machine {
                 .get_mut(tableidx)
                 .ok_or_else(|| anyhow::anyhow!("no such table"))?;
 
-            match elem.kind {
-                RefType::FuncRef => {
-                    for (idx, xs) in values.iter().enumerate() {
-                        table[(idx + offset) as u32] = xs
-                            .as_func_ref()
-                            .ok_or_else(|| anyhow::anyhow!("expected ref.func"))?;
-                    }
-                }
+            if values.len() + offset > table.len() {
+                anyhow::bail!("out of bounds table access");
+            }
 
-                RefType::ExternRef => {
-                    for (idx, xs) in values.iter().enumerate() {
-                        table[(idx + offset) as u32] = xs
-                            .as_extern_ref()
-                            .ok_or_else(|| anyhow::anyhow!("expected ref.extern"))?;
-                    }
-                }
+            for (idx, xs) in values.iter().enumerate() {
+                table[(idx + offset) as u32] = xs.as_ref_value();
             }
         }
 
@@ -767,6 +763,8 @@ impl Machine {
             anyhow::bail!("export {funcname} is not a function");
         };
 
+        #[cfg(all())]
+        eprintln!("call {modname} {funcname} = = = = = = = = = = = = = = = = = = = = =");
         self.call_funcidx(mod_indices.as_slice(), (*module_idx, *func_idx), args)
     }
 
@@ -791,23 +789,28 @@ impl Machine {
             .function(module_idx, func_idx)
             .ok_or_else(|| anyhow::anyhow!("missing final module"))?;
 
-        let typedef = self
+        let Type(ResultType(params), ResultType(results)) = self
             .typedef(module_idx, *function.typeidx())
             .ok_or_else(|| anyhow::anyhow!("missing typedef"))?;
 
-        let param_types = &*typedef.0 .0;
-        if args.len() < param_types.len() {
-            anyhow::bail!("not enough arguments; expected {} args", param_types.len());
+        if args.len() < params.len() {
+            anyhow::bail!("not enough arguments; expected {} args", params.len());
         }
 
-        if args.len() > param_types.len() {
-            anyhow::bail!("too many arguments; expected {} args", param_types.len());
+        if args.len() > params.len() {
+            anyhow::bail!("too many arguments; expected {} args", params.len());
         }
 
-        for (idx, (param_type, value)) in param_types.iter().zip(args.iter()).enumerate() {
+        let mut value_stack = PageSizedStack::new();
+        let mut locals = StackMapStack::new();
+
+        for (idx, (param_type, value)) in params.iter().zip(args.iter()).enumerate() {
             param_type
                 .validate(value)
                 .with_context(|| format!("bad argument at {}", idx))?;
+
+            let value: StackValue = (*value).into();
+            value_stack.push_value(value);
         }
 
         let Code(Func {
@@ -815,16 +818,7 @@ impl Machine {
             expr: Expr(instrs),
         }) = self.code(module_idx, function.codeidx());
 
-        let mut value_stack = PageSizedStack::new();
-        let mut locals = StackMapStack::new();
-
-        for arg in args {
-            value_stack.push_value((*arg).into());
-        }
-
-        for local in local_defs {
-            value_stack.push_value(local.1.instantiate_stackvalue());
-        }
+        locals.begin_call(&mut value_stack, params, local_defs);
 
         let mut frames = Vec::<Frame<'_>>::new();
         let mut frame = Frame {
@@ -833,15 +827,15 @@ impl Machine {
             pc: 0,
             return_unwind_count: 0,
             instrs,
-            jump_to: Some(instrs.len()),
-            locals_base_offset: 0,
-            block_type: BlockType::TypeIndex(*function.typeidx()),
             guest_index: module_idx,
             fence: value_stack.fence(),
+            params: params.iter().copied().collect(),
+            results: results.iter().copied().collect(),
+            jump_to_start_of_instrs: false,
         };
 
-        #[cfg(any())]
-        eprintln!("call {funcname} = = = = = = = = = = = = = = = = = = = = =");
+        #[cfg(all())]
+        eprintln!("call = = = = = = = = = = = = = = = = = = = = =");
         loop {
             if frame.pc >= frame.instrs.len() {
                 // we're exiting a block normally. due to validation, the only values left on the
@@ -869,25 +863,12 @@ impl Machine {
                 //
                 // Globals seem more fundamental. Therefore.
 
-                match frame.block_type {
-                    BlockType::Empty => {}
-                    BlockType::Val(val_type) => {
-                        value_stack.pop_valtype(val_type);
-                    }
-                    BlockType::TypeIndex(type_idx) => {
-                        let Some(Type(_, ResultType(val_types))) =
-                            self.typedef(frame.guest_index, type_idx)
-                        else {
-                            anyhow::bail!("could not resolve blocktype");
-                        };
-
-                        for val_type in val_types.iter().rev() {
-                            value_stack.pop_valtype(*val_type);
-                        }
-                    }
-                };
-
-                locals.shrink_to(frame.locals_base_offset);
+                if frame.return_unwind_count == 0 {
+                    locals.end_call(&mut value_stack, &frame.results);
+                } else {
+                    // idk if we even have to unwind??
+                    // value_stack.unwind(frame.fence);
+                }
 
                 let Some(new_frame) = frames.pop() else { break };
 
@@ -900,7 +881,6 @@ impl Machine {
                 Instr::Nop => {}
 
                 Instr::Block(block_type, blockinstrs) => {
-                    let locals_base_offset = frame.locals_base_offset;
                     let new_frame = Frame {
                         #[cfg(test)]
                         name: "block",
@@ -908,10 +888,30 @@ impl Machine {
                         fence: value_stack.fence(),
                         return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
-                        jump_to: Some(blockinstrs.len()),
-                        block_type: *block_type,
-                        locals_base_offset,
+                        jump_to_start_of_instrs: false,
                         guest_index: frame.guest_index,
+                        params: match block_type {
+                            BlockType::Empty => SmallVec::new(),
+                            BlockType::Val(val_type) => smallvec![*val_type],
+                            BlockType::TypeIndex(TypeIdx(type_idx)) => self.types
+                                [frame.guest_index][*type_idx as usize]
+                                .0
+                                 .0
+                                .iter()
+                                .copied()
+                                .collect(),
+                        },
+                        results: match block_type {
+                            BlockType::Empty => SmallVec::new(),
+                            BlockType::Val(val_type) => smallvec![*val_type],
+                            BlockType::TypeIndex(TypeIdx(type_idx)) => self.types
+                                [frame.guest_index][*type_idx as usize]
+                                .1
+                                 .0
+                                .iter()
+                                .copied()
+                                .collect(),
+                        },
                     };
                     frame.pc += 1;
                     let old_frame = frame;
@@ -927,11 +927,31 @@ impl Machine {
                         pc: 0,
                         return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
-                        jump_to: Some(0),
+                        jump_to_start_of_instrs: true,
                         fence: value_stack.fence(),
-                        block_type: *block_type,
-                        locals_base_offset: frame.locals_base_offset,
                         guest_index: frame.guest_index,
+                        params: match block_type {
+                            BlockType::Empty => SmallVec::new(),
+                            BlockType::Val(val_type) => smallvec![*val_type],
+                            BlockType::TypeIndex(TypeIdx(type_idx)) => self.types
+                                [frame.guest_index][*type_idx as usize]
+                                .0
+                                 .0
+                                .iter()
+                                .copied()
+                                .collect(),
+                        },
+                        results: match block_type {
+                            BlockType::Empty => SmallVec::new(),
+                            BlockType::Val(val_type) => smallvec![*val_type],
+                            BlockType::TypeIndex(TypeIdx(type_idx)) => self.types
+                                [frame.guest_index][*type_idx as usize]
+                                .1
+                                 .0
+                                .iter()
+                                .copied()
+                                .collect(),
+                        },
                     };
                     frame.pc += 1;
                     let old_frame = frame;
@@ -950,11 +970,31 @@ impl Machine {
                         pc: 0,
                         return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
-                        jump_to: Some(blockinstrs.len()),
+                        jump_to_start_of_instrs: false,
                         fence: value_stack.fence(),
-                        block_type: *block_type,
-                        locals_base_offset: frame.locals_base_offset,
                         guest_index: frame.guest_index,
+                        params: match block_type {
+                            BlockType::Empty => SmallVec::new(),
+                            BlockType::Val(val_type) => smallvec![*val_type],
+                            BlockType::TypeIndex(TypeIdx(type_idx)) => self.types
+                                [frame.guest_index][*type_idx as usize]
+                                .0
+                                 .0
+                                .iter()
+                                .copied()
+                                .collect(),
+                        },
+                        results: match block_type {
+                            BlockType::Empty => SmallVec::new(),
+                            BlockType::Val(val_type) => smallvec![*val_type],
+                            BlockType::TypeIndex(TypeIdx(type_idx)) => self.types
+                                [frame.guest_index][*type_idx as usize]
+                                .1
+                                 .0
+                                .iter()
+                                .copied()
+                                .collect(),
+                        },
                     };
                     frame.pc += 1;
                     let old_frame = frame;
@@ -977,11 +1017,31 @@ impl Machine {
                         pc: 0,
                         return_unwind_count: frame.return_unwind_count + 1,
                         instrs: blockinstrs,
-                        jump_to: Some(blockinstrs.len()),
+                        jump_to_start_of_instrs: false,
                         fence: value_stack.fence(),
-                        block_type: *block_type,
-                        locals_base_offset: frame.locals_base_offset,
                         guest_index: frame.guest_index,
+                        params: match block_type {
+                            BlockType::Empty => SmallVec::new(),
+                            BlockType::Val(val_type) => smallvec![*val_type],
+                            BlockType::TypeIndex(TypeIdx(type_idx)) => self.types
+                                [frame.guest_index][*type_idx as usize]
+                                .0
+                                 .0
+                                .iter()
+                                .copied()
+                                .collect(),
+                        },
+                        results: match block_type {
+                            BlockType::Empty => SmallVec::new(),
+                            BlockType::Val(val_type) => smallvec![*val_type],
+                            BlockType::TypeIndex(TypeIdx(type_idx)) => self.types
+                                [frame.guest_index][*type_idx as usize]
+                                .1
+                                 .0
+                                .iter()
+                                .copied()
+                                .collect(),
+                        },
                     };
                     frame.pc += 1;
                     let old_frame = frame;
@@ -1000,140 +1060,106 @@ impl Machine {
                             .ok_or_else(|| anyhow::anyhow!("stack underflow"))?;
                     }
 
-                    let Some(jump_to) = frame.jump_to else {
-                        anyhow::bail!("invalid jump target");
-                    };
-                    frame.pc = jump_to;
-
-                    let to_preserve = match frame.block_type {
-                        BlockType::Empty => 0,
-                        BlockType::Val(_) => {
-                            if jump_to == 0 {
-                                0
-                            } else {
-                                1
-                            }
-                        }
-
-                        BlockType::TypeIndex(type_idx) => {
-                            let Some(ty) = self.typedef(frame.guest_index, type_idx) else {
-                                anyhow::bail!("could not resolve blocktype");
-                            };
-                            (if jump_to == 0 { &ty.0 } else { &ty.1 }).0.len()
-                        }
+                    frame.pc = if frame.jump_to_start_of_instrs {
+                        0
+                    } else {
+                        frame.instrs.len()
                     };
 
-                    if value_stack.len() < to_preserve {
-                        anyhow::bail!(
-                            "block expected at least {} value{} on stack",
-                            to_preserve,
-                            if to_preserve == 1 { "" } else { "s" }
-                        );
-                    }
+                    let types = if frame.jump_to_start_of_instrs {
+                        &frame.params
+                    } else {
+                        &frame.results
+                    };
 
-                    let vs = value_stack.split_off(value_stack.len() - to_preserve);
+                    let values: SmallVec<[StackValue; 2]> = types
+                        .iter()
+                        .rev()
+                        .map(|vt| value_stack.pop_valtype(*vt))
+                        .collect();
                     value_stack.unwind(frame.fence);
-                    value_stack.extend_from_slice(vs.as_slice());
+                    for value in values.into_iter().rev() {
+                        value_stack.push_value(value);
+                    }
 
                     continue;
                 }
 
-                Instr::BrIf(idx) => {
+                Instr::BrIf(LabelIdx(idx)) => {
                     let test = value_stack.pop::<i32>();
                     if test != 0 {
-                        if idx.0 > 0 {
-                            frames.truncate(frames.len() - (idx.0 - 1) as usize);
+                        if *idx > 0 {
+                            frames.truncate(frames.len() - (idx - 1) as usize);
                             frame = frames
                                 .pop()
                                 .ok_or_else(|| anyhow::anyhow!("stack underflow"))?;
                         }
 
-                        let Some(jump_to) = frame.jump_to else {
-                            anyhow::bail!("invalid jump target");
-                        };
-                        frame.pc = jump_to;
-                        let to_preserve = match frame.block_type {
-                            BlockType::Empty => 0,
-                            BlockType::Val(_) => {
-                                if jump_to == 0 {
-                                    0
-                                } else {
-                                    1
-                                }
-                            }
-                            BlockType::TypeIndex(type_idx) => {
-                                let Some(ty) = self.typedef(frame.guest_index, type_idx) else {
-                                    anyhow::bail!("could not resolve blocktype");
-                                };
-                                (if jump_to == 0 { &ty.0 } else { &ty.1 }).0.len()
-                            }
+                        frame.pc = if frame.jump_to_start_of_instrs {
+                            0
+                        } else {
+                            frame.instrs.len()
                         };
 
-                        if value_stack.len() < to_preserve {
-                            anyhow::bail!(
-                                "block expected at least {} value{} on stack",
-                                to_preserve,
-                                if to_preserve == 1 { "" } else { "s" }
-                            );
-                        }
+                        let types = if frame.jump_to_start_of_instrs {
+                            &frame.params
+                        } else {
+                            &frame.results
+                        };
 
-                        let vs = value_stack.split_off(value_stack.len() - to_preserve);
+                        let values: SmallVec<[StackValue; 2]> = types
+                            .iter()
+                            .rev()
+                            .map(|vt| value_stack.pop_valtype(*vt))
+                            .collect();
                         value_stack.unwind(frame.fence);
-                        value_stack.extend_from_slice(vs.as_slice());
+                        for value in values.into_iter().rev() {
+                            value_stack.push_value(value);
+                        }
 
                         continue;
                     }
                 }
 
-                Instr::BrTable(labels, alternate) => {
+                Instr::BrTable(labels, LabelIdx(alternate)) => {
                     let test = value_stack.pop::<i32>();
 
                     let v = test as usize;
                     let idx = if v >= labels.len() {
-                        alternate.0
+                        *alternate
                     } else {
-                        labels[v].0
-                    } as usize;
+                        let LabelIdx(idx) = labels[v];
+                        idx
+                    };
 
                     if idx > 0 {
-                        frames.truncate(frames.len() - (idx - 1));
+                        frames.truncate(frames.len() - (idx - 1) as usize);
                         frame = frames
                             .pop()
                             .ok_or_else(|| anyhow::anyhow!("stack underflow"))?;
                     }
 
-                    let Some(jump_to) = frame.jump_to else {
-                        anyhow::bail!("invalid jump target");
-                    };
-                    frame.pc = jump_to;
-                    let to_preserve = match frame.block_type {
-                        BlockType::Empty => 0,
-                        BlockType::Val(_) => {
-                            if jump_to == 0 {
-                                0
-                            } else {
-                                1
-                            }
-                        }
-                        BlockType::TypeIndex(type_idx) => {
-                            let Some(ty) = self.typedef(frame.guest_index, type_idx) else {
-                                anyhow::bail!("could not resolve blocktype");
-                            };
-                            (if jump_to == 0 { &ty.0 } else { &ty.1 }).0.len()
-                        }
+                    frame.pc = if frame.jump_to_start_of_instrs {
+                        0
+                    } else {
+                        frame.instrs.len()
                     };
 
-                    if value_stack.len() < to_preserve {
-                        anyhow::bail!(
-                            "block expected at least {} value{} on stack",
-                            to_preserve,
-                            if to_preserve == 1 { "" } else { "s" }
-                        );
-                    }
+                    let types = if frame.jump_to_start_of_instrs {
+                        &frame.params
+                    } else {
+                        &frame.results
+                    };
 
-                    let vs = value_stack.split_off(value_stack.len() - to_preserve);
+                    let values: SmallVec<[StackValue; 2]> = types
+                        .iter()
+                        .rev()
+                        .map(|vt| value_stack.pop_valtype(*vt))
+                        .collect();
                     value_stack.unwind(frame.fence);
-                    value_stack.extend_from_slice(vs.as_slice());
+                    for value in values.into_iter().rev() {
+                        value_stack.push_value(value);
+                    }
 
                     continue;
                 }
@@ -1148,29 +1174,6 @@ impl Machine {
                     }
 
                     frame.pc = frame.instrs.len();
-                    let to_preserve = match frame.block_type {
-                        BlockType::Empty => 0,
-                        BlockType::Val(_) => 1,
-                        BlockType::TypeIndex(type_idx) => {
-                            let Some(ty) = self.typedef(frame.guest_index, type_idx) else {
-                                anyhow::bail!("could not resolve blocktype");
-                            };
-
-                            ty.1 .0.len()
-                        }
-                    };
-
-                    if value_stack.len() < to_preserve {
-                        anyhow::bail!(
-                            "block expected at least {} value{} on stack",
-                            to_preserve,
-                            if to_preserve == 1 { "" } else { "s" }
-                        );
-                    }
-
-                    let vs = value_stack.split_off(value_stack.len() - to_preserve);
-                    value_stack.unwind(frame.fence);
-                    value_stack.extend_from_slice(vs.as_slice());
                     continue;
                 }
 
@@ -1180,7 +1183,7 @@ impl Machine {
                         .function(module_idx, *func_idx)
                         .ok_or_else(|| anyhow::anyhow!("missing function"))?;
 
-                    let Type(params, results) = self
+                    let Type(ResultType(params), ResultType(results)) = self
                         .typedef(module_idx, *function.typeidx())
                         .ok_or_else(|| anyhow::anyhow!("missing typedef"))?;
 
@@ -1194,10 +1197,11 @@ impl Machine {
                         pc: 0,
                         return_unwind_count: 0,
                         instrs: &code.0.expr.0,
-                        jump_to: NonZeroU64::new(0),
-                        block_type: BlockType::TypeIndex(*function.typeidx()),
+                        jump_to_start_of_instrs: false,
                         fence: value_stack.fence(),
                         guest_index: module_idx,
+                        params: params.iter().copied().collect(),
+                        results: results.iter().copied().collect(),
                     };
 
                     frame.pc += 1;
@@ -1207,94 +1211,61 @@ impl Machine {
                     continue;
                 }
 
-                Instr::CallIndirect(type_idx, table_idx) => {
+                Instr::CallIndirect(TypeIdx(decl_type_idx), table_idx) => {
                     let table_instance_idx = self.table(frame.guest_index, *table_idx);
-                    let check_type = self.typedef(frame.guest_index, *type_idx);
+                    let Type(ResultType(decl_params), ResultType(decl_results)) = self
+                        .typedef(module_idx, TypeIdx(*decl_type_idx))
+                        .ok_or_else(|| anyhow::anyhow!("missing typedef"))?;
 
                     let table = &resources.table_instances[table_instance_idx];
 
                     let idx = value_stack.pop::<i32>();
 
-                    // let TableType(_reftype, _limits) = &table.r#type;
+                    if idx as usize >= table.len() {
+                        anyhow::bail!("undefined element {idx}");
+                    }
 
-                    let Some(v) = table.get(idx as usize) else {
-                        anyhow::bail!("undefined element: table index out of range");
-                    };
-
-                    #[cfg(any())]
-                    eprintln!(
-                        "{idx:?} {v:?} tbl={table_instance_idx:?} values={:?}",
-                        &table.values
-                    );
-                    if let Value::RefNull = &v {
+                    let Some(v) = table[idx as u32] else {
                         anyhow::bail!("uninitialized element {idx}");
                     };
 
-                    // TKTK: tomorrow-chris, RefFunc _might_ point at a function from another
-                    // instance. (E.g., we could initialize a table in module A using module B,
-                    // with pointers into module B's functions.) It might be that tables need to
-                    // track the GuestIndex along with the ref value.
-                    let Value::RefFunc(v) = v else {
-                        anyhow::bail!("expected reffunc value, got {:?}", v);
-                    };
+                    let v = v.get();
+                    let module_idx = (v >> 32) as u32 - 1;
+                    let function_idx = v as u32;
 
-                    let module_idx = frame.guest_index;
                     let (module_idx, function) = self
-                        .function(module_idx, *v)
+                        .function(module_idx as usize, FuncIdx(function_idx))
                         .ok_or_else(|| anyhow::anyhow!("missing function"))?;
 
-                    let typedef = self
-                        .typedef(module_idx, *function.typeidx())
+                    let TypeIdx(func_type_idx) = *function.typeidx();
+                    let Type(ResultType(params), ResultType(results)) = self
+                        .typedef(module_idx, TypeIdx(func_type_idx))
                         .ok_or_else(|| anyhow::anyhow!("missing typedef"))?;
 
-                    if check_type != Some(typedef) {
+                    eprintln!("decl({decl_type_idx}) = ({decl_params:?}) -> ({decl_results:?}); real({func_type_idx}) = ({params:?}) -> ({results:?})");
+
+                    if func_type_idx != *decl_type_idx
+                        && (decl_params != params || decl_results != results)
+                    {
                         anyhow::bail!("indirect call type mismatch");
                     }
-
                     let code = self.code(module_idx, function.codeidx());
 
-                    let param_types = &*typedef.0 .0;
-                    if value_stack.len() < param_types.len() {
-                        anyhow::bail!(
-                            "not enough arguments to call func idx={}; expected {} args",
-                            v.0,
-                            param_types.len()
-                        );
-                    }
-
-                    let args = value_stack.split_off(value_stack.len() - param_types.len());
-
-                    let locals_base_offset = locals.len();
-                    let locals_count = code.0.locals.iter().fold(0, |lhs, rhs| lhs + rhs.0);
-                    locals.reserve(locals_count as usize);
-
-                    for (idx, (param_type, value)) in
-                        param_types.iter().zip(args.iter()).enumerate()
-                    {
-                        param_type
-                            .validate(value)
-                            .with_context(|| format!("bad argument at {}", idx))?;
-                        locals.push(*value);
-                    }
-
-                    for local in code.0.locals.iter() {
-                        for _ in 0..local.0 {
-                            locals.push(local.1.instantiate());
-                        }
-                    }
+                    locals.begin_call(&mut value_stack, params, &code.0.locals);
 
                     let new_frame = Frame {
                         #[cfg(test)]
-                        name: "CallIndirect",
+                        name: "Call",
                         pc: 0,
                         return_unwind_count: 0,
                         instrs: &code.0.expr.0,
-                        jump_to: None,
-                        locals_base_offset,
-                        block_type: BlockType::TypeIndex(*function.typeidx()),
+                        jump_to_start_of_instrs: false,
                         fence: value_stack.fence(),
                         guest_index: module_idx,
+                        params: params.iter().copied().collect(),
+                        results: results.iter().copied().collect(),
                     };
+
                     frame.pc += 1;
                     let old_frame = frame;
                     frames.push(old_frame);
@@ -1302,19 +1273,25 @@ impl Machine {
                     continue;
                 }
 
-                Instr::RefNull(_ref_type) => value_stack.push(Value::RefNull),
+                Instr::RefNull(_ref_type) => value_stack.push(None),
                 Instr::RefIsNull => {
                     let v = value_stack.pop::<RefValue>();
 
                     value_stack.push::<i32>(if v.is_none() { 1 } else { 0 });
                 }
 
-                Instr::RefFunc(func_idx) => value_stack.push(Value::RefFunc(*func_idx)),
+                Instr::RefFunc(FuncIdx(func_idx)) => value_stack.push(NonZeroU64::new(
+                    (frame.guest_index as u64 + 1) << 32 | (*func_idx as u64),
+                )),
 
-                Instr::Drop => {
-                    let Some(_) = value_stack.pop() else {
-                        anyhow::bail!("drop out of range")
-                    };
+                Instr::DropEmpty => {
+                    // XXX(chrisdickinson): we don't know FOR SURE that these are 4-byte values
+                    // being dropped. Validation should turn this instruction into a typed Drop.
+                    value_stack.pop::<i32>();
+                }
+
+                Instr::Drop(val_type) => {
+                    value_stack.pop_valtype(*val_type);
                 }
 
                 // need to annotate with type!!
@@ -1325,22 +1302,23 @@ impl Machine {
                     // That said, the validator rewrites all incoming SelectEmpty instructions to
                     // Select(operands) so the chances of hitting this path are pretty low.
                     let test = value_stack.pop::<i32>();
-                    let val2 = value_stack.pop::<i32>();
                     let val1 = value_stack.pop::<i32>();
+                    let val2 = value_stack.pop::<i32>();
 
                     value_stack.push(if test != 0 { val2 } else { val1 })
                 }
 
                 Instr::Select(operands) => {
                     let test = value_stack.pop::<i32>();
-                    let val2 = value_stack.pop_valtype(operands[0]);
                     let val1 = value_stack.pop_valtype(operands[0]);
+                    let val2 = value_stack.pop_valtype(operands[0]);
 
                     value_stack.push_value(if test != 0 { val2 } else { val1 })
                 }
 
                 Instr::LocalGet(LocalIdx(idx)) => {
-                    locals.get(&value_stack, *idx);
+                    let value = locals.get(&value_stack, *idx);
+                    value_stack.push_value(value);
                 }
 
                 Instr::LocalSet(LocalIdx(idx)) => {
@@ -1356,7 +1334,7 @@ impl Machine {
 
                     let value = unsafe { resources.global_values.get_unchecked(global_value_idx) };
 
-                    value_stack.push_value(*value);
+                    value_stack.push_value(value.clone());
                 }
 
                 Instr::GlobalSet(global_idx) => {
@@ -1414,13 +1392,13 @@ impl Machine {
                     table[offset] = value;
                 }
 
-                Instr::TableInit(elem_idx, table_idx) => {
+                Instr::TableInit(ElemIdx(elem_idx), table_idx) => {
                     let guest_index = frame.guest_index;
 
                     let Some(elem) = self
                         .elements
                         .get(guest_index)
-                        .and_then(|xs| xs.get(elem_idx.0 as usize))
+                        .and_then(|xs| xs.get(*elem_idx as usize))
                     else {
                         anyhow::bail!("element idx out of range");
                     };
@@ -1433,7 +1411,7 @@ impl Machine {
 
                     let elem_len = if resources
                         .dropped_elements
-                        .contains(&(frame.guest_index, elem_idx.0 as usize))
+                        .contains(&(frame.guest_index, *elem_idx as usize))
                     {
                         0
                     } else {
@@ -1447,7 +1425,7 @@ impl Machine {
                         anyhow::bail!("out of bounds table access");
                     }
 
-                    let v: Box<[Value]> = (srcaddr..srcaddr + count)
+                    let v: Box<[StackValue]> = (srcaddr..srcaddr + count)
                         .map(|idx| elem.value(idx, guest_index, self, &mut *resources))
                         .collect::<anyhow::Result<_>>()?;
 
@@ -1460,7 +1438,11 @@ impl Machine {
                     }
 
                     for (src_idx, dst_idx) in (0..count).zip(destaddr..destaddr + count) {
-                        table[dst_idx] = v[src_idx];
+                        table[dst_idx as u32] = match v[src_idx] {
+                            StackValue::RefFunc(xs) => xs,
+                            StackValue::RefExtern(xs) => xs,
+                            _ => continue,
+                        };
                     }
                 }
 
@@ -1504,11 +1486,11 @@ impl Machine {
                     }
 
                     let values = (srcaddr..srcaddr + count)
-                        .map(|src_idx| resources.table_instances[from_table_idx][src_idx])
+                        .map(|src_idx| resources.table_instances[from_table_idx][src_idx as u32])
                         .collect::<Box<[_]>>();
 
                     for (src_idx, dst_idx) in (0..count).zip(destaddr..destaddr + count) {
-                        resources.table_instances[to_table_idx][dst_idx] = values[src_idx];
+                        resources.table_instances[to_table_idx][dst_idx as u32] = values[src_idx];
                     }
                 }
 
@@ -1526,7 +1508,7 @@ impl Machine {
 
                 Instr::TableSize(table_idx) => {
                     let table_idx = self.table(frame.guest_index, *table_idx);
-                    value_stack.push(Value::I32(resources.table_instances[table_idx].len() as i32));
+                    value_stack.push(resources.table_instances[table_idx].len() as i32);
                 }
 
                 Instr::TableFill(table_idx) => {
@@ -1594,7 +1576,7 @@ impl Machine {
                     let v = value_stack.pop::<u32>();
                     let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load::<1>(offset)?;
-                    value_stack.push(Value::I32((arr[0] as i8) as i32));
+                    value_stack.push((arr[0] as i8) as i32);
                 }
 
                 Instr::I32Load8U(mem) => {
@@ -1604,7 +1586,7 @@ impl Machine {
                     let v = value_stack.pop::<u32>();
                     let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load::<1>(offset)?;
-                    value_stack.push(Value::I32(arr[0] as u32 as i32));
+                    value_stack.push(arr[0] as u32 as i32);
                 }
 
                 Instr::I32Load16S(mem) => {
@@ -1634,7 +1616,7 @@ impl Machine {
                     let v = value_stack.pop::<u32>();
                     let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load::<1>(offset)?;
-                    value_stack.push(Value::I64((arr[0] as i8) as i64));
+                    value_stack.push((arr[0] as i8) as i64);
                 }
 
                 Instr::I64Load8U(mem) => {
@@ -1644,7 +1626,7 @@ impl Machine {
                     let v = value_stack.pop::<u32>();
                     let offset = mem.offset().saturating_add(v as usize);
                     let arr = memory_region.load::<1>(offset)?;
-                    value_stack.push(Value::I64(arr[0] as u64 as i64));
+                    value_stack.push(arr[0] as u64 as i64);
                 }
 
                 Instr::I64Load16S(mem) => {
@@ -1713,7 +1695,7 @@ impl Machine {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
-                    let v = value_stack.pop::<f32>();
+                    let v = f32::from_bits(value_stack.pop::<u32>());
                     let t = value_stack.pop::<i32>();
 
                     let offset = mem.offset().saturating_add(t as usize);
@@ -1724,7 +1706,7 @@ impl Machine {
                     let memory_idx = self.memory(frame.guest_index, MemIdx(mem.memidx() as u32));
                     let memory_region = &mut resources.memory_regions[memory_idx];
 
-                    let v = value_stack.pop::<f64>();
+                    let v = f64::from_bits(value_stack.pop::<u64>());
                     let t = value_stack.pop::<i32>();
 
                     let offset = mem.offset().saturating_add(t as usize);
@@ -1907,7 +1889,7 @@ impl Machine {
                     let val = value_stack.pop::<i32>() as usize;
                     let offset = value_stack.pop::<i32>() as usize;
 
-                    memory_region.fill_data(val as u8, offset as usize, count as usize)?;
+                    memory_region.fill_data(val as u8, offset, count)?;
                 }
 
                 Instr::I32Const(v) => {
@@ -1940,7 +1922,7 @@ impl Machine {
                 Instr::I32Ne => {
                     let rhs = value_stack.pop::<i32>();
                     let lhs = value_stack.pop::<i32>();
-                    value_stack.push(Value::I32(if lhs != rhs { 1 } else { 0 }));
+                    value_stack.push(if lhs != rhs { 1 } else { 0 });
                 }
 
                 Instr::I32LtS => {
@@ -2005,7 +1987,7 @@ impl Machine {
                 Instr::I64Ne => {
                     let rhs = value_stack.pop::<i64>();
                     let lhs = value_stack.pop::<i64>();
-                    value_stack.push(Value::I32(if lhs != rhs { 1 } else { 0 }));
+                    value_stack.push(if lhs != rhs { 1 } else { 0 });
                 }
 
                 Instr::I64LtS => {
@@ -2057,74 +2039,74 @@ impl Machine {
                 }
 
                 Instr::F32Eq => {
-                    let rhs = value_stack.pop::<f32>();
-                    let lhs = value_stack.pop::<f32>();
+                    let rhs = f32::from_bits(value_stack.pop::<u32>());
+                    let lhs = f32::from_bits(value_stack.pop::<u32>());
                     value_stack.push::<i32>(if lhs == rhs { 1 } else { 0 });
                 }
 
                 Instr::F32Ne => {
-                    let rhs = value_stack.pop::<f32>();
-                    let lhs = value_stack.pop::<f32>();
-                    value_stack.push(Value::I32(if lhs != rhs { 1 } else { 0 }));
+                    let rhs = f32::from_bits(value_stack.pop::<u32>());
+                    let lhs = f32::from_bits(value_stack.pop::<u32>());
+                    value_stack.push(if lhs != rhs { 1 } else { 0 });
                 }
 
                 Instr::F32Lt => {
-                    let rhs = value_stack.pop::<f32>();
-                    let lhs = value_stack.pop::<f32>();
+                    let rhs = f32::from_bits(value_stack.pop::<u32>());
+                    let lhs = f32::from_bits(value_stack.pop::<u32>());
                     value_stack.push::<i32>(if lhs < rhs { 1 } else { 0 });
                 }
 
                 Instr::F32Gt => {
-                    let rhs = value_stack.pop::<f32>();
-                    let lhs = value_stack.pop::<f32>();
+                    let rhs = f32::from_bits(value_stack.pop::<u32>());
+                    let lhs = f32::from_bits(value_stack.pop::<u32>());
                     value_stack.push::<i32>(if lhs > rhs { 1 } else { 0 });
                 }
 
                 Instr::F32Le => {
-                    let rhs = value_stack.pop::<f32>();
-                    let lhs = value_stack.pop::<f32>();
+                    let rhs = f32::from_bits(value_stack.pop::<u32>());
+                    let lhs = f32::from_bits(value_stack.pop::<u32>());
                     value_stack.push::<i32>(if lhs <= rhs { 1 } else { 0 });
                 }
 
                 Instr::F32Ge => {
-                    let rhs = value_stack.pop::<f32>();
-                    let lhs = value_stack.pop::<f32>();
+                    let rhs = f32::from_bits(value_stack.pop::<u32>());
+                    let lhs = f32::from_bits(value_stack.pop::<u32>());
                     value_stack.push::<i32>(if lhs >= rhs { 1 } else { 0 });
                 }
 
                 Instr::F64Eq => {
-                    let rhs = value_stack.pop::<f64>();
-                    let lhs = value_stack.pop::<f64>();
+                    let rhs = f64::from_bits(value_stack.pop::<u64>());
+                    let lhs = f64::from_bits(value_stack.pop::<u64>());
                     value_stack.push::<i32>(if lhs == rhs { 1 } else { 0 });
                 }
 
                 Instr::F64Ne => {
-                    let rhs = value_stack.pop::<f64>();
-                    let lhs = value_stack.pop::<f64>();
-                    value_stack.push(Value::I32(if lhs != rhs { 1 } else { 0 }));
+                    let rhs = f64::from_bits(value_stack.pop::<u64>());
+                    let lhs = f64::from_bits(value_stack.pop::<u64>());
+                    value_stack.push(if lhs != rhs { 1 } else { 0 });
                 }
 
                 Instr::F64Lt => {
-                    let rhs = value_stack.pop::<f64>();
-                    let lhs = value_stack.pop::<f64>();
+                    let rhs = f64::from_bits(value_stack.pop::<u64>());
+                    let lhs = f64::from_bits(value_stack.pop::<u64>());
                     value_stack.push::<i32>(if lhs < rhs { 1 } else { 0 });
                 }
 
                 Instr::F64Gt => {
-                    let rhs = value_stack.pop::<f64>();
-                    let lhs = value_stack.pop::<f64>();
+                    let rhs = f64::from_bits(value_stack.pop::<u64>());
+                    let lhs = f64::from_bits(value_stack.pop::<u64>());
                     value_stack.push::<i32>(if lhs > rhs { 1 } else { 0 });
                 }
 
                 Instr::F64Le => {
-                    let rhs = value_stack.pop::<f64>();
-                    let lhs = value_stack.pop::<f64>();
+                    let rhs = f64::from_bits(value_stack.pop::<u64>());
+                    let lhs = f64::from_bits(value_stack.pop::<u64>());
                     value_stack.push::<i32>(if lhs <= rhs { 1 } else { 0 });
                 }
 
                 Instr::F64Ge => {
-                    let rhs = value_stack.pop::<f64>();
-                    let lhs = value_stack.pop::<f64>();
+                    let rhs = f64::from_bits(value_stack.pop::<u64>());
+                    let lhs = f64::from_bits(value_stack.pop::<u64>());
                     value_stack.push::<i32>(if lhs >= rhs { 1 } else { 0 });
                 }
 
@@ -2226,19 +2208,19 @@ impl Machine {
                 Instr::I32And => {
                     let rhs = value_stack.pop::<i32>();
                     let lhs = value_stack.pop::<i32>();
-                    value_stack.push(Value::I32(lhs & rhs));
+                    value_stack.push(lhs & rhs);
                 }
 
                 Instr::I32Ior => {
                     let rhs = value_stack.pop::<i32>();
                     let lhs = value_stack.pop::<i32>();
-                    value_stack.push(Value::I32(lhs | rhs));
+                    value_stack.push(lhs | rhs);
                 }
 
                 Instr::I32Xor => {
                     let rhs = value_stack.pop::<i32>();
                     let lhs = value_stack.pop::<i32>();
-                    value_stack.push(Value::I32(lhs ^ rhs));
+                    value_stack.push(lhs ^ rhs);
                 }
 
                 Instr::I32Shl => {
@@ -2364,19 +2346,19 @@ impl Machine {
                 Instr::I64And => {
                     let rhs = value_stack.pop::<i64>();
                     let lhs = value_stack.pop::<i64>();
-                    value_stack.push(Value::I64(lhs & rhs));
+                    value_stack.push(lhs & rhs);
                 }
 
                 Instr::I64Ior => {
                     let rhs = value_stack.pop::<i64>();
                     let lhs = value_stack.pop::<i64>();
-                    value_stack.push(Value::I64(lhs | rhs));
+                    value_stack.push(lhs | rhs);
                 }
 
                 Instr::I64Xor => {
                     let rhs = value_stack.pop::<i64>();
                     let lhs = value_stack.pop::<i64>();
-                    value_stack.push(Value::I64(lhs ^ rhs));
+                    value_stack.push(lhs ^ rhs);
                 }
 
                 Instr::I64Shl => {
@@ -2412,157 +2394,196 @@ impl Machine {
                 }
 
                 Instr::F32Abs => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
                     value_stack.push::<f32>(op.abs());
                 }
 
                 Instr::F32Neg => {
-                    let op = value_stack.pop::<f32>();
-                    value_stack.push(Value::F32(-op));
+                    let op = f32::from_bits(value_stack.pop::<u32>());
+                    value_stack.push(-op);
                 }
 
                 Instr::F32Ceil => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
                     value_stack.push::<f32>(op.ceil());
                 }
 
                 Instr::F32Floor => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
                     value_stack.push::<f32>(op.floor());
                 }
 
                 Instr::F32Trunc => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
                     value_stack.push::<f32>(op.trunc());
                 }
 
                 Instr::F32NearestInt => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
                     value_stack.push::<f32>(nearestf32(op));
                 }
 
                 Instr::F32Sqrt => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
                     value_stack.push::<f32>(op.sqrt());
                 }
 
                 Instr::F32Add => {
-                    let rhs = value_stack.pop::<f32>();
-                    let lhs = value_stack.pop::<f32>();
+                    let rhs = value_stack.pop::<u32>();
+                    let lhs = value_stack.pop::<u32>();
 
-                    value_stack.push(Value::F32(lhs + rhs));
+                    let rhs = f32::from_bits(rhs);
+                    let lhs = f32::from_bits(lhs);
+
+                    value_stack.push(lhs + rhs);
                 }
 
                 Instr::F32Sub => {
-                    let rhs = value_stack.pop::<f32>();
-                    let lhs = value_stack.pop::<f32>();
-                    value_stack.push(Value::F32(lhs - rhs));
+                    let rhs = f32::from_bits(value_stack.pop::<u32>());
+                    let lhs = f32::from_bits(value_stack.pop::<u32>());
+                    value_stack.push(lhs - rhs);
                 }
 
                 Instr::F32Mul => {
-                    let rhs = value_stack.pop::<f32>();
-                    let lhs = value_stack.pop::<f32>();
-                    value_stack.push(Value::F32(lhs * rhs));
+                    let rhs = f32::from_bits(value_stack.pop::<u32>());
+                    let lhs = f32::from_bits(value_stack.pop::<u32>());
+                    value_stack.push(lhs * rhs);
                 }
 
                 Instr::F32Div => {
-                    let rhs = value_stack.pop::<f32>();
-                    let lhs = value_stack.pop::<f32>();
-                    value_stack.push(Value::F32(lhs / rhs));
+                    let rhs = f32::from_bits(value_stack.pop::<u32>());
+                    let lhs = f32::from_bits(value_stack.pop::<u32>());
+                    value_stack.push(lhs / rhs);
                 }
 
                 Instr::F32Min => {
-                    let rhs = value_stack.pop::<f32>();
-                    let lhs = value_stack.pop::<f32>();
-                    value_stack.push::<f32>(lhs.min(rhs));
+                    let rhs = value_stack.pop::<u32>();
+                    let lhs = value_stack.pop::<u32>();
+
+                    if (lhs & 0x7fc0_0000) == 0x7fc0_0000 {
+                        value_stack.push::<u32>(lhs);
+                    } else if (rhs & 0x7fc0_0000) == 0x7fc0_0000 {
+                        value_stack.push::<u32>(rhs);
+                    } else {
+                        let rhs = f32::from_bits(rhs);
+                        let lhs = f32::from_bits(lhs);
+                        value_stack.push::<f32>(lhs.min(rhs));
+                    }
                 }
 
                 Instr::F32Max => {
-                    let rhs = value_stack.pop::<f32>();
-                    let lhs = value_stack.pop::<f32>();
-                    value_stack.push::<f32>(lhs.max(rhs));
+                    let rhs = value_stack.pop::<u32>();
+                    let lhs = value_stack.pop::<u32>();
+
+                    if (lhs & 0x7fc0_0000) == 0x7fc0_0000 {
+                        value_stack.push::<u32>(lhs);
+                    } else if (rhs & 0x7fc0_0000) == 0x7fc0_0000 {
+                        value_stack.push::<u32>(rhs);
+                    } else {
+                        let rhs = f32::from_bits(rhs);
+                        let lhs = f32::from_bits(lhs);
+                        value_stack.push::<f32>(lhs.max(rhs));
+                    }
                 }
 
                 Instr::F32CopySign => {
-                    let rhs = value_stack.pop::<f32>();
-                    let lhs = value_stack.pop::<f32>();
+                    let rhs = f32::from_bits(value_stack.pop::<u32>());
+                    let lhs = f32::from_bits(value_stack.pop::<u32>());
                     value_stack.push::<f32>(lhs.copysign(rhs));
                 }
 
                 Instr::F64Abs => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
                     value_stack.push::<f64>(op.abs());
                 }
 
                 Instr::F64Neg => {
-                    let op = value_stack.pop::<f64>();
-                    value_stack.push(Value::F64(-op));
+                    let op = f64::from_bits(value_stack.pop::<u64>());
+                    value_stack.push(-op);
                 }
 
                 Instr::F64Ceil => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
                     value_stack.push::<f64>(op.ceil());
                 }
 
                 Instr::F64Floor => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
                     value_stack.push::<f64>(op.floor());
                 }
 
                 Instr::F64Trunc => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
                     value_stack.push::<f64>(op.trunc());
                 }
 
                 Instr::F64NearestInt => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
                     value_stack.push::<f64>(nearestf64(op));
                 }
 
                 Instr::F64Sqrt => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
                     value_stack.push::<f64>(op.sqrt());
                 }
 
                 Instr::F64Add => {
-                    let rhs = value_stack.pop::<f64>();
-                    let lhs = value_stack.pop::<f64>();
-                    value_stack.push(Value::F64(lhs + rhs));
+                    let rhs = f64::from_bits(value_stack.pop::<u64>());
+                    let lhs = f64::from_bits(value_stack.pop::<u64>());
+                    value_stack.push(lhs + rhs);
                 }
 
                 Instr::F64Sub => {
-                    let rhs = value_stack.pop::<f64>();
-                    let lhs = value_stack.pop::<f64>();
-                    value_stack.push(Value::F64(lhs - rhs));
+                    let rhs = f64::from_bits(value_stack.pop::<u64>());
+                    let lhs = f64::from_bits(value_stack.pop::<u64>());
+                    value_stack.push(lhs - rhs);
                 }
 
                 Instr::F64Mul => {
-                    let rhs = value_stack.pop::<f64>();
-                    let lhs = value_stack.pop::<f64>();
-                    value_stack.push(Value::F64(lhs * rhs));
+                    let rhs = f64::from_bits(value_stack.pop::<u64>());
+                    let lhs = f64::from_bits(value_stack.pop::<u64>());
+                    value_stack.push(lhs * rhs);
                 }
 
                 Instr::F64Div => {
-                    let rhs = value_stack.pop::<f64>();
-                    let lhs = value_stack.pop::<f64>();
-                    value_stack.push(Value::F64(lhs / rhs));
+                    let rhs = f64::from_bits(value_stack.pop::<u64>());
+                    let lhs = f64::from_bits(value_stack.pop::<u64>());
+                    value_stack.push(lhs / rhs);
                 }
 
                 Instr::F64Min => {
-                    let rhs = value_stack.pop::<f64>();
-                    let lhs = value_stack.pop::<f64>();
-                    value_stack.push::<f64>(lhs.min(rhs));
+                    let rhs = value_stack.pop::<u64>();
+                    let lhs = value_stack.pop::<u64>();
+
+                    if (lhs & 0x7ff8_0000_0000_0000) == 0x7ff8_0000_0000_0000 {
+                        value_stack.push::<u64>(lhs);
+                    } else if (rhs & 0x7ff8_0000_0000_0000) == 0x7ff8_0000_0000_0000 {
+                        value_stack.push::<u64>(rhs);
+                    } else {
+                        let rhs = f64::from_bits(rhs);
+                        let lhs = f64::from_bits(lhs);
+                        value_stack.push::<f64>(lhs.min(rhs));
+                    }
                 }
 
                 Instr::F64Max => {
-                    let rhs = value_stack.pop::<f64>();
-                    let lhs = value_stack.pop::<f64>();
-                    value_stack.push::<f64>(lhs.max(rhs));
+                    let rhs = value_stack.pop::<u64>();
+                    let lhs = value_stack.pop::<u64>();
+
+                    if (lhs & 0x7ff8_0000_0000_0000) == 0x7ff8_0000_0000_0000 {
+                        value_stack.push::<u64>(lhs);
+                    } else if (rhs & 0x7ff8_0000_0000_0000) == 0x7ff8_0000_0000_0000 {
+                        value_stack.push::<u64>(rhs);
+                    } else {
+                        let rhs = f64::from_bits(rhs);
+                        let lhs = f64::from_bits(lhs);
+                        value_stack.push::<f64>(lhs.max(rhs));
+                    }
                 }
 
                 Instr::F64CopySign => {
-                    let rhs = value_stack.pop::<f64>();
-                    let lhs = value_stack.pop::<f64>();
+                    let rhs = f64::from_bits(value_stack.pop::<u64>());
+                    let lhs = f64::from_bits(value_stack.pop::<u64>());
 
                     value_stack.push::<f64>(lhs.copysign(rhs));
                 }
@@ -2574,7 +2595,7 @@ impl Machine {
                 }
 
                 Instr::I32SConvertF32 => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
 
                     if op.is_nan() {
                         anyhow::bail!("i32.trunc_f32_s: invalid conversion to integer");
@@ -2594,7 +2615,7 @@ impl Machine {
                 }
 
                 Instr::I32UConvertF32 => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
 
                     if op.is_nan() {
                         anyhow::bail!("i32.trunc_f32_u: invalid conversion to integer");
@@ -2614,7 +2635,7 @@ impl Machine {
                 }
 
                 Instr::I32SConvertF64 => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
 
                     if op.is_nan() {
                         anyhow::bail!("i32.trunc_f64_s: invalid conversion to integer");
@@ -2634,7 +2655,7 @@ impl Machine {
                 }
 
                 Instr::I32UConvertF64 => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
 
                     if op.is_nan() {
                         anyhow::bail!("i32.trunc_f64_u: invalid conversion to integer");
@@ -2666,7 +2687,7 @@ impl Machine {
                 }
 
                 Instr::I64SConvertF32 => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
 
                     if op.is_nan() {
                         anyhow::bail!("i64.trunc_f32_s: invalid conversion to integer");
@@ -2686,7 +2707,7 @@ impl Machine {
                 }
 
                 Instr::I64UConvertF32 => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
 
                     if op.is_nan() {
                         anyhow::bail!("i64.trunc_f32_u: invalid conversion to integer");
@@ -2706,7 +2727,7 @@ impl Machine {
                 }
 
                 Instr::I64SConvertF64 => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
 
                     if op.is_nan() {
                         anyhow::bail!("i64.trunc_f64_s: invalid conversion to integer");
@@ -2726,7 +2747,7 @@ impl Machine {
                 }
 
                 Instr::I64UConvertF64 => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
 
                     if op.is_nan() {
                         anyhow::bail!("i64.trunc_f64_u: invalid conversion to integer");
@@ -2770,7 +2791,7 @@ impl Machine {
                 }
 
                 Instr::F32ConvertF64 => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
 
                     let mut op = op as f32;
                     if op.is_nan() {
@@ -2782,7 +2803,7 @@ impl Machine {
                         });
                     }
 
-                    value_stack.push::<f32>(op);
+                    value_stack.push::<u32>(op.to_bits());
                 }
 
                 Instr::F64SConvertI32 => {
@@ -2810,7 +2831,7 @@ impl Machine {
                 }
 
                 Instr::F64ConvertF32 => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
 
                     let mut op = op as f64;
                     if op.is_nan() {
@@ -2822,16 +2843,16 @@ impl Machine {
                         });
                     }
 
-                    value_stack.push::<f64>(op);
+                    value_stack.push::<u64>(op.to_bits());
                 }
 
                 Instr::I32ReinterpretF32 => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
                     value_stack.push::<i32>(op.to_bits() as i32);
                 }
 
                 Instr::I64ReinterpretF64 => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
                     value_stack.push::<i64>(op.to_bits() as i64);
                 }
 
@@ -2883,7 +2904,7 @@ impl Machine {
                 }
 
                 Instr::I32SConvertSatF32 => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
 
                     let op = if op.is_nan() {
                         0i32
@@ -2898,7 +2919,7 @@ impl Machine {
                 }
 
                 Instr::I32UConvertSatF32 => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
 
                     let op = if op.is_nan() {
                         0u32
@@ -2913,7 +2934,7 @@ impl Machine {
                 }
 
                 Instr::I32SConvertSatF64 => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
 
                     let op = if op.is_nan() {
                         0i32
@@ -2928,7 +2949,7 @@ impl Machine {
                 }
 
                 Instr::I32UConvertSatF64 => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
 
                     let op = if op.is_nan() {
                         0u32
@@ -2943,7 +2964,7 @@ impl Machine {
                 }
 
                 Instr::I64SConvertSatF32 => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
 
                     let op = if op.is_nan() {
                         0i64
@@ -2958,7 +2979,7 @@ impl Machine {
                 }
 
                 Instr::I64UConvertSatF32 => {
-                    let op = value_stack.pop::<f32>();
+                    let op = f32::from_bits(value_stack.pop::<u32>());
 
                     let op = if op.is_nan() {
                         0u64
@@ -2973,7 +2994,7 @@ impl Machine {
                 }
 
                 Instr::I64SConvertSatF64 => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
 
                     let op = if op.is_nan() {
                         0i64
@@ -2988,7 +3009,7 @@ impl Machine {
                 }
 
                 Instr::I64UConvertSatF64 => {
-                    let op = value_stack.pop::<f64>();
+                    let op = f64::from_bits(value_stack.pop::<u64>());
 
                     let op = if op.is_nan() {
                         0u64
@@ -3002,43 +3023,44 @@ impl Machine {
                     value_stack.push::<i64>(op as i64);
                 }
 
-                Instr::CallIntrinsic(type_idx, idx) => {
+                Instr::CallIntrinsic(TypeIdx(type_idx), idx) => {
                     let external_function = resources.external_functions[*idx].clone();
-                    let check_type = self.typedef(frame.guest_index, *type_idx);
+                    let Type(ResultType(params), ResultType(results)) =
+                        &self.types[frame.guest_index][*type_idx as usize];
 
-                    let args =
-                        locals.split_off(locals.len() - external_function.typedef.input_arity());
-                    if args.len() < external_function.typedef.input_arity() {
-                        anyhow::bail!("locals underflowed while calling intrinsic")
-                    }
+                    let args: Vec<Value> = params
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, _)| locals.get(&value_stack, idx as u32).into())
+                        .collect();
 
-                    let result_base = value_stack.len();
-                    value_stack.resize(
-                        result_base + external_function.typedef.output_arity(),
-                        Value::RefNull,
-                    );
+                    let mut results = Vec::with_capacity(results.len());
 
                     drop(resource_lock);
-                    (external_function.func)(args.as_slice(), &mut value_stack[result_base..])?;
+                    (external_function.func)(args.as_slice(), &mut results)?;
 
                     resource_lock = self
                         .resources
                         .try_lock()
                         .map_err(|_| anyhow::anyhow!("failed to lock resources"))?;
                     resources = resource_lock.deref_mut();
+
+                    for result in results {
+                        value_stack.push_value(result.into());
+                    }
                 }
             }
             frame.pc += 1;
         }
 
-        Ok(value_stack)
+        let mut output = Vec::with_capacity(results.len());
+        for vt in results.iter().rev() {
+            let next = value_stack.pop_valtype(*vt).into();
+            output.push(next);
+        }
+        output.reverse();
+        Ok(output)
     }
-
-    /*pub(crate) fn exports(&self) -> impl Iterator<Item = (&str, &ExportDesc)> {
-        self.exports
-            .iter()
-            .filter_map(|(xs, desc)| Some((self.internmap.idx(*xs)?, desc)))
-    }*/
 
     fn compute_constant_expr(
         &self,
@@ -3060,9 +3082,10 @@ impl Machine {
                     .clone()
             }
 
-            Some(Instr::RefNull(_c)) => StackValue::RefFunc(None),
+            Some(Instr::RefNull(RefType::FuncRef)) => StackValue::RefFunc(None),
+            Some(Instr::RefNull(RefType::ExternRef)) => StackValue::RefExtern(None),
             Some(Instr::RefFunc(FuncIdx(c))) => StackValue::RefFunc(NonZeroU64::new(
-                (module_idx as u64 & 0xffff_ffff) << 32 | (*c as u64),
+                ((module_idx as u64 + 1) & 0xffff_ffff) << 32 | (*c as u64),
             )),
             _ => anyhow::bail!("unsupported instruction"),
         })

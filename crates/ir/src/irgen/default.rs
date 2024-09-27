@@ -1,6 +1,6 @@
 use crate::{
     defs::*,
-    typechecker::{BlockKind, TypeChecker, TypeError},
+    typechecker::{BlockKind, TypeChecker, TypeError, Val},
     IR,
 };
 use thiserror::Error;
@@ -910,7 +910,7 @@ impl IR for DefaultIRGenerator {
     ) -> Result<(), Self::Error> {
         instrs.push(self.trace(match (code, subcode) {
             (0x42, 0) => Instr::I64Const(arg0 as i64),
-            (0x44, 0) => Instr::F64Const(f64::from_bits(arg0)),
+            (0x44, 0) => Instr::F64Const(arg0),
             _ => return Err(DefaultIRGeneratorError::InvalidInstruction(code, subcode)),
         })?);
         Ok(())
@@ -990,7 +990,7 @@ impl IR for DefaultIRGenerator {
         let instr = match (code, subcode) {
             (0x10, 0) => Instr::Call(self.make_func_index(arg0)?),
             (0x41, 0) => Instr::I32Const(arg0 as i32),
-            (0x43, 0) => Instr::F32Const(f32::from_bits(arg0)),
+            (0x43, 0) => Instr::F32Const(arg0),
             (0x20, 0) => Instr::LocalGet(self.make_local_index(arg0)?),
             (0x21, 0) => Instr::LocalSet(self.make_local_index(arg0)?),
             (0x22, 0) => Instr::LocalTee(self.make_local_index(arg0)?),
@@ -1044,7 +1044,7 @@ impl IR for DefaultIRGenerator {
             (0x00, 0) => Instr::Unreachable,
             (0x01, 0) => Instr::Nop,
             (0xd1, 0) => Instr::RefIsNull,
-            (0x1a, 0) => Instr::Drop,
+            (0x1a, 0) => Instr::DropEmpty,
             (0x1b, 0) => Instr::SelectEmpty,
             (0x0f, 0) => Instr::Return,
             (0x45, 0) => Instr::I32Eqz,
@@ -1242,6 +1242,21 @@ impl IR for DefaultIRGenerator {
             return Err(DefaultIRGeneratorError::InvalidRefType(kind as u8));
         }
 
+        if let Self::ElemMode::Active {
+            table_idx: TableIdx(table_idx),
+            ..
+        } = &mode
+        {
+            let TableType(ref_type, _) = &self.table_types[*table_idx as usize];
+            if *ref_type != RefType::FuncRef {
+                return Err(TypeError::TypeMismatch {
+                    received: Val::Typed(ValType::RefType(RefType::FuncRef)),
+                    expected: Val::Typed(ValType::RefType(*ref_type)),
+                }
+                .into());
+            }
+        }
+
         self.elem_types.push(RefType::FuncRef);
         Ok(Elem {
             mode,
@@ -1260,29 +1275,43 @@ impl IR for DefaultIRGenerator {
     ) -> Result<Self::Elem, Self::Error> {
         self.type_checker.clear();
         let kind = kind.unwrap_or(RefType::FuncRef);
-
         self.elem_types.push(kind);
 
-        eprintln!("got {kind:?}");
-        // TODO: evaluate the constexpr. Arguably the internal representation of elements
-        // should be a list of function indices instead of exprs.
-        if let RefType::FuncRef = kind {
-            eprintln!("checking the element values");
-            for expr in exprs.iter() {
-                for instr in expr.0.iter() {
-                    match instr {
-                        Instr::I32Const(val) => self.make_func_index(*val as u32)?,
-                        _ => continue,
-                    };
+        if let Self::ElemMode::Active {
+            table_idx: TableIdx(table_idx),
+            ..
+        } = &mode
+        {
+            let TableType(ref_type, _) = &self.table_types[*table_idx as usize];
+            if *ref_type != kind {
+                return Err(TypeError::TypeMismatch {
+                    received: Val::Typed(ValType::RefType(kind)),
+                    expected: Val::Typed(ValType::RefType(*ref_type)),
                 }
+                .into());
             }
         }
+
         Ok(Elem {
             mode,
             kind,
             exprs,
             flags,
         })
+    }
+
+    fn start_elem_expr(&mut self, kind: Option<&Self::RefType>) -> Result<(), Self::Error> {
+        self.type_checker.push_ctrl(
+            BlockKind::ConstantExpression,
+            Box::new([]),
+            Box::new([ValType::RefType(kind.cloned().unwrap_or(RefType::FuncRef))]),
+        );
+        Ok(())
+    }
+
+    fn check_elem_expr(&mut self) -> Result<(), Self::Error> {
+        self.type_checker.pop_ctrl()?;
+        Ok(())
     }
 
     fn make_elem_mode_passive(&mut self) -> Result<Self::ElemMode, Self::Error> {

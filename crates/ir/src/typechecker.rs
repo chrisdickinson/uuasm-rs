@@ -422,9 +422,15 @@ impl TypeChecker {
                 self.unreachable()?;
             }
 
-            Instr::Drop => {
-                self.pop_val(None)?;
+            Instr::DropEmpty => {
+                let v = self.pop_val(None)?;
+
+                if let Val::Typed(vt) = v {
+                    return Ok(Instr::Drop(vt));
+                }
             }
+
+            Instr::Drop(_) => unreachable!(),
 
             Instr::Return => {
                 let Some(frame) = self.ctrls.iter().last() else {

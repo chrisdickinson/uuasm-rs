@@ -514,7 +514,7 @@ fn parametric_instrs<'a, E: Debug + ParseError<Span<'a>>>(
 ) -> nom::IResult<Span<'a>, Instr, E> {
     use nom::{branch::alt, bytes::complete::tag, combinator::map, sequence::preceded};
     alt((
-        map(tag([0x1a]), |_| Instr::Drop),
+        map(tag([0x1a]), |_| Instr::DropEmpty),
         map(tag([0x1b]), |_| Instr::SelectEmpty),
         map(
             preceded(tag([0x1c]), Vec::<ValType>::from_wasm_bytes),
@@ -696,8 +696,12 @@ fn numeric_instrs<'a, E: Debug + ParseError<Span<'a>>>(
         alt((
             map(preceded(tag([0x41]), i32::from_wasm_bytes), Instr::I32Const),
             map(preceded(tag([0x42]), i64::from_wasm_bytes), Instr::I64Const),
-            map(preceded(tag([0x43]), f32::from_wasm_bytes), Instr::F32Const),
-            map(preceded(tag([0x44]), f64::from_wasm_bytes), Instr::F64Const),
+            map(preceded(tag([0x43]), f32::from_wasm_bytes), |xs| {
+                Instr::F32Const(xs.to_bits())
+            }),
+            map(preceded(tag([0x44]), f64::from_wasm_bytes), |xs| {
+                Instr::F64Const(xs.to_bits())
+            }),
         )),
         alt((
             map(tag([0x45]), |_| Instr::I32Eqz),

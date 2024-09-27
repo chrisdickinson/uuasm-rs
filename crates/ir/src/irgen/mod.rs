@@ -135,6 +135,14 @@ pub trait IR {
         flags: u8,
     ) -> Result<Self::Elem, Self::Error>;
 
+    fn start_elem_expr(&mut self, _kind: Option<&Self::RefType>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn check_elem_expr(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
     fn make_elem_mode_passive(&mut self) -> Result<Self::ElemMode, Self::Error>;
     fn make_elem_mode_declarative(&mut self) -> Result<Self::ElemMode, Self::Error>;
     fn make_elem_mode_active(
