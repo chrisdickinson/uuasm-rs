@@ -3034,7 +3034,7 @@ impl Machine {
                         .map(|(idx, _)| locals.get(&value_stack, idx as u32).into())
                         .collect();
 
-                    let mut results = Vec::with_capacity(results.len());
+                    let mut results = vec![Value::RefNull; results.len()];
 
                     drop(resource_lock);
                     (external_function.func)(args.as_slice(), &mut results)?;

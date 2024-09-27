@@ -132,15 +132,11 @@ for command in data["commands"]:
                     args = ",".join(map(to_value, args))
                     expected = ",".join(map(to_value, expected))
 
-                    field = repr(field)[1:-1]
-                    field = re.sub(r"\\u([a-fA-F0-9]{2,4})", r"\\u{\1}", field)
-                    field = re.sub(r"\\U([a-fA-F0-9]+)", lambda m: re.sub("^0+", "", m.group(1)), field)
-                    field = re.sub(r"\\'", "'", field)
-                    field = re.sub(r"\"", r"\\\"", field)
-
-                    if re.search(r"\\x[89a-f]", field) is not None:
-                        eprintln(f"skipping invocation \"{source_filename}\"; line {line}: field is invalid unicode...")
-                        continue
+                    if source_filename == "vendor/testsuite/names.wast":
+                        field = [*bytearray(str.encode(field))]
+                        field = f"std::str::from_utf8(&{field})?"
+                    else:
+                        field = f"r#\"{field}\"#"
 
                     modname = "None"
                     if command["action"].get("module", None):
@@ -150,7 +146,7 @@ for command in data["commands"]:
                         assert_return(
                             &mut state,
                             {modname},
-                            "{field}",
+                            {field},
                             &[{args}],
                             &[{expected}],
                             r#""{source_filename}"; line {line}"#
