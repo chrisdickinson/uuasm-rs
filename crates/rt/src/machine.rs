@@ -166,7 +166,7 @@ pub(crate) struct Resources {
 
 // and this should be the thing that holds platonic information about
 // modules
-pub(crate) struct Machine {
+pub struct Machine {
     initialized: HashSet<usize>,
 
     imports: Vec<Box<[Import]>>,
@@ -733,7 +733,7 @@ impl Machine {
         Ok(())
     }
 
-    pub(crate) fn call(
+    pub fn call(
         &mut self,
         modname: &str,
         funcname: &str,
@@ -763,7 +763,7 @@ impl Machine {
             anyhow::bail!("export {funcname} is not a function");
         };
 
-        #[cfg(all())]
+        #[cfg(any())]
         eprintln!("call {modname} {funcname} = = = = = = = = = = = = = = = = = = = = =");
         self.call_funcidx(mod_indices.as_slice(), (*module_idx, *func_idx), args)
     }
@@ -834,7 +834,7 @@ impl Machine {
             jump_to_start_of_instrs: false,
         };
 
-        #[cfg(all())]
+        #[cfg(any())]
         eprintln!("call = = = = = = = = = = = = = = = = = = = = =");
         loop {
             if frame.pc >= frame.instrs.len() {
@@ -1242,6 +1242,7 @@ impl Machine {
                         .typedef(module_idx, TypeIdx(func_type_idx))
                         .ok_or_else(|| anyhow::anyhow!("missing typedef"))?;
 
+                    #[cfg(any())]
                     eprintln!("decl({decl_type_idx}) = ({decl_params:?}) -> ({decl_results:?}); real({func_type_idx}) = ({params:?}) -> ({results:?})");
 
                     if func_type_idx != *decl_type_idx

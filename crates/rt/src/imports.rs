@@ -26,7 +26,7 @@ pub(crate) enum Extern {
 }
 
 #[derive(Debug, Default, Clone)]
-pub(crate) struct Imports {
+pub struct Imports {
     // borrow a page from wasmtime!
     pub(crate) guests: Vec<Module>,
     pub(crate) externs: HashMap<ExternKey, Extern>,
@@ -49,7 +49,7 @@ impl LookupImport for Imports {
 }
 
 impl Imports {
-    pub(crate) fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             ..Default::default()
         }
@@ -62,7 +62,7 @@ impl Imports {
         self.externs.insert(ExternKey(modname, name), ext);
     }
 
-    pub(crate) fn link_module(&mut self, modname: &str, module: Module) {
+    pub fn link_module(&mut self, modname: &str, module: Module) {
         let idx = self.guests.len();
         let modname_idx = self.internmap.insert(modname);
         self.modname_to_guest_idx
@@ -89,7 +89,7 @@ impl Imports {
         self.guests.push(module);
     }
 
-    pub(crate) fn link_hostfn(
+    pub fn link_hostfn(
         &mut self,
         modname: &str,
         funcname: &str,
@@ -126,7 +126,7 @@ impl Imports {
         });
     }
 
-    pub(crate) fn instantiate(self) -> anyhow::Result<Machine> {
+    pub fn instantiate(self) -> anyhow::Result<Machine> {
         Machine::new(
             self.guests,
             self.externs,

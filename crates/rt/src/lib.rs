@@ -13,6 +13,8 @@ pub(crate) mod stack;
 pub(crate) mod table;
 pub(crate) mod value;
 
+pub use imports::Imports;
+
 #[cfg(test)]
 mod testsuite;
 

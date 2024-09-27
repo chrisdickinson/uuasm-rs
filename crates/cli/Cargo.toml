@@ -1,0 +1,9 @@
+[package]
+name = "uuasm_cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+uuasm-ir = { workspace = true }
+uuasm-codec = { workspace = true }
+uuasm-rt = { workspace = true }
