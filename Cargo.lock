@@ -659,6 +659,7 @@ name = "uuasm-rt"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "criterion",
  "num",
  "serde_json",
  "smallvec",

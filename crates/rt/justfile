@@ -1,0 +1,3 @@
+bench:
+  cargo flamegraph --bench bench --root -- --bench
+
