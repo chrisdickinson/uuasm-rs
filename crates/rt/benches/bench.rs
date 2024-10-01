@@ -1,9 +1,8 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use uuasm_codec::parse;
 use uuasm_ir::DefaultIRGenerator;
 use uuasm_rt::Imports;
 
-const WASM: &[u8] = include_bytes!("../../../vendor/wasm-r3/benchmarks/factorial/factorial.wasm");
+const WASM: &[u8] = include_bytes!("../../../vendor/wasm-r3/benchmarks/jsc/jsc.wasm");
 
 pub fn basic(criterion: &mut Criterion) {
     let mut group = criterion.benchmark_group("basic");
@@ -13,14 +12,16 @@ pub fn basic(criterion: &mut Criterion) {
         "main",
         uuasm_codec::parse(DefaultIRGenerator::new(), WASM).unwrap(),
     );
-    let mut machine = imports.clone().instantiate().unwrap();
 
-    group.measurement_time(std::time::Duration::from_secs(10));
-    group.throughput(criterion::Throughput::Bytes(WASM.len() as u64));
+    group.sample_size(10);
     group.bench_function("instantiate_and_run", |bench| {
-        bench.iter(|| {
-            let _ = machine.call("main", "_start", &[]);
-        })
+        bench.iter_batched(
+            || imports.clone().instantiate().unwrap(),
+            |mut machine| {
+                let _ = machine.call("main", "_start", &[]);
+            },
+            criterion::BatchSize::PerIteration,
+        )
     });
 
     group.finish();
