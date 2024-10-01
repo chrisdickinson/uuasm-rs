@@ -1358,7 +1358,7 @@ impl Machine {
                         }
                         StackValue::V128(value) => {
                             let value = value.as_mut();
-                            *value = value_stack.pop::<i128>();
+                            *value = value_stack.pop::<[u8; 16]>();
                         }
                         StackValue::RefFunc(value) => {
                             *value = value_stack.pop();

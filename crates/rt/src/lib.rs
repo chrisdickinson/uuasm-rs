@@ -56,7 +56,7 @@ impl prelude::ValTypeExtras for ValType {
             ValType::NumType(NumType::I64) => StackValue::I64(Default::default()),
             ValType::NumType(NumType::F32) => StackValue::F32(Default::default()),
             ValType::NumType(NumType::F64) => StackValue::F64(Default::default()),
-            ValType::VecType(VecType::V128) => StackValue::V128(Box::new(0)),
+            ValType::VecType(VecType::V128) => StackValue::V128(Box::new([0; 16])),
             ValType::RefType(RefType::FuncRef) => StackValue::RefFunc(None),
             ValType::RefType(RefType::ExternRef) => StackValue::RefFunc(None),
             ValType::Never => unreachable!("cannot instantiate <never> value"),

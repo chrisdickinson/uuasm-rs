@@ -132,7 +132,7 @@ impl<T: Stack> StackMap<T> {
                 storage.write_at_fence(fence, value);
             }
             ValType::VecType(VecType::V128) => {
-                let value = storage.pop::<i128>();
+                let value = storage.pop::<[u8; 16]>();
                 storage.write_at_fence(fence, value);
             }
             ValType::RefType(RefType::FuncRef) => {
@@ -171,7 +171,7 @@ impl<T: Stack> StackMap<T> {
                 storage.push(value);
             }
             ValType::VecType(VecType::V128) => {
-                let value = storage.pop::<i128>();
+                let value = storage.pop::<[u8; 16]>();
                 storage.write_at_fence(fence, value);
                 storage.push(value);
             }
