@@ -9,6 +9,68 @@ If you're looking for a industry-strength Wasm runtime, look at
 
 A semi-regularly updated dev log.
 
+### 2024 Oct 02
+
+It's spooky season!
+
+And what could be spookier than ALL THE TESTS PASSING?
+
+<p align="center">
+<a href="https://hachyderm.io/@isntitvacant/113217263731100687">
+<img width="579" alt="Screenshot 2024-10-02 at 11 20 28 PM" src="https://github.com/user-attachments/assets/0a271bee-821f-4e25-89e2-47256069a66c" />
+</a>
+</p>
+
+Well, plenty of things. But we're at a really interesting turning point: we now
+have to pay down the debts we incurred getting to this point. Luckily, we can
+rely on Wasm-R3 to give us apples-to-apples pure-Wasm replays for benchmarking.
+(For more see [this post](https://hachyderm.io/@isntitvacant/113217274924347357).)
+
+I've been [doing][post-a] this [for][post-b] a [few days][post-c] now (I'm late to updating the dev log, _for shame_.)
+
+But here's where we stand today:
+
+[![Flamegraph of running "fib" benchmark](https://www.neversaw.us/scratch/uuasm-r3-fib-53d4e28.svg)](https://www.neversaw.us/scratch/uuasm-r3-fib-53d4e28.svg)
+
+This is a stack trace taken from running the `fib.wasm` replay. This takes
+about 6 minutes to generate on my M1 Pro Max (2021). Of the 88.5% of the time
+we spend in the `call_funcidx`
+_([ahem](https://hachyderm.io/@isntitvacant/113042852669091356))_; of that time
+we spend a little over half the time manipulating the stack. My current
+tack is to dial that data structure in as much as I can, focusing on the
+largest contributors to slowdown first. This has yielded some nice speedups
+already.
+
+However! There are a few big changes looming:
+
+- My instruction IR is massively inefficient. Considering that [in-place](https://arxiv.org/pdf/2205.01183)
+  interpretation is possible, I think we're likely to see speedups from refining
+  it.
+- My dispatch is pretty inefficient. We're in one big `for` loop with a `match`. I'd
+  like to experiment with tail call dispatch [per this blog post](https://pliniker.github.io/post/dispatchers/)
+  and/or treating the bytecode as table of function pointers.
+    - Being able to modify the table of function pointers would enable some pretty
+      interesting capabilities if I'm understanding [this talk from mraleph](https://www.youtube.com/watch?v=EaLboOUG9VQ).
+- My "store" implementation is straight-up wrong. I'm getting away with it for now, but
+  as soon as I start implementing a Real public interface with WASI support, I'll need
+  to have fixed it.
+- SIMD support.
+
+In the near-term I'm also thinking about further refining the value stack -- moving from
+rust's linked list to a flat `[u8; 0x10000]` with a `Box<*mut Stack>` pointer at the lowest
+position.
+
+One last thing on my mind: I want to track test results and performance
+progress a la [arewefastyet](https://arewefastyet.com/) and Porffor's [Test262
+status](https://porffor.dev/#test262_percent) displays. Having a display that
+lists Wasmtime, WAMR, Wasmer, Wazero, V8, et al's results alongside uuasm's
+would be motivational!
+
+[post-a]: https://hachyderm.io/@isntitvacant/113217303453707235
+[post-b]: https://hachyderm.io/@isntitvacant/113230646690094668
+[post-c]: https://hachyderm.io/@isntitvacant/113236481002453214
+
+
 ### 2024 Sep 09
 
 Well, writing a new stack was easier than expected. Integrating it, however...
