@@ -13,6 +13,20 @@ pub(crate) struct StackMapStack<T: Stack> {
     storage: LinkedList<StackMap<T>>,
 }
 
+fn size_of_typelist(types: &[ValType]) -> usize {
+    let mut size = 0;
+    for t in types {
+        size += match t {
+            ValType::NumType(NumType::I32 | NumType::F32) => 4,
+            ValType::NumType(NumType::I64 | NumType::F64) => 8,
+            ValType::VecType(_) => 16,
+            ValType::RefType(_) => size_of::<RefValue>(),
+            ValType::Never => 0,
+        }
+    }
+    size
+}
+
 impl<T: Stack> StackMapStack<T> {
     pub(crate) fn new() -> Self {
         Self {
@@ -33,7 +47,7 @@ impl<T: Stack> StackMapStack<T> {
             .collect();
 
         let first_fence = storage.fence();
-        let locals: Box<_> = stack_values
+        let locals: SmallVec<[(_, _); 8]> = stack_values
             .into_iter()
             .rev()
             .enumerate()
@@ -68,7 +82,7 @@ impl<T: Stack> StackMapStack<T> {
         }
     }
 
-    pub(crate) fn get(&self, storage: &T, idx: u32) -> StackValue {
+    pub(crate) fn get(&self, storage: &mut T, idx: u32) {
         let front = self.storage.front().unwrap();
         front.get(storage, idx)
     }
@@ -89,24 +103,25 @@ impl<T: Stack> StackMapStack<T> {
 // against the value stack
 struct StackMap<T: Stack> {
     /// A map of `local index` -> type and offset information.
-    locals: Box<[(ValType, T::Fence)]>,
+    locals: SmallVec<[(ValType, T::Fence); 8]>,
     first_fence: T::Fence,
 }
 
 impl<T: Stack> StackMap<T> {
-    fn get(&self, storage: &T, idx: u32) -> StackValue {
+    fn get(&self, storage: &mut T, idx: u32) {
         let (val_type, fence) = unsafe { self.locals.get_unchecked(idx as usize) };
         match val_type {
-            ValType::NumType(NumType::I32) => StackValue::I32(storage.read_at_fence(fence)),
-            ValType::NumType(NumType::F32) => StackValue::F32(storage.read_at_fence(fence)),
-            ValType::NumType(NumType::I64) => StackValue::I64(storage.read_at_fence(fence)),
-            ValType::NumType(NumType::F64) => StackValue::F64(storage.read_at_fence(fence)),
-            ValType::VecType(VecType::V128) => {
-                StackValue::V128(Box::new(storage.read_at_fence(fence)))
+            ValType::NumType(NumType::I32 | NumType::F32) => {
+                storage.push(storage.read_at_fence::<u32>(fence))
             }
-            ValType::RefType(RefType::FuncRef) => StackValue::RefFunc(storage.read_at_fence(fence)),
-            ValType::RefType(RefType::ExternRef) => {
-                StackValue::RefExtern(storage.read_at_fence(fence))
+            ValType::NumType(NumType::I64 | NumType::F64) => {
+                storage.push(storage.read_at_fence::<u64>(fence))
+            }
+            ValType::VecType(VecType::V128) => {
+                storage.push(storage.read_at_fence::<[u8; 16]>(fence))
+            }
+            ValType::RefType(RefType::FuncRef | RefType::ExternRef) => {
+                storage.push(storage.read_at_fence::<RefValue>(fence))
             }
             ValType::Never => unreachable!(),
         }

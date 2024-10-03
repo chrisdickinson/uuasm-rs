@@ -1318,8 +1318,7 @@ impl Machine {
                 }
 
                 Instr::LocalGet(LocalIdx(idx)) => {
-                    let value = locals.get(&value_stack, *idx);
-                    value_stack.push_value(value);
+                    locals.get(&mut value_stack, *idx);
                 }
 
                 Instr::LocalSet(LocalIdx(idx)) => {
@@ -3031,8 +3030,9 @@ impl Machine {
 
                     let args: Vec<Value> = params
                         .iter()
-                        .enumerate()
-                        .map(|(idx, _)| locals.get(&value_stack, idx as u32).into())
+                        .rev()
+                        .map(|valtype| value_stack.pop_valtype(*valtype).into())
+                        .rev()
                         .collect();
 
                     let mut results = vec![Value::RefNull; results.len()];

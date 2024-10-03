@@ -4,7 +4,7 @@ use uuasm_ir::{FuncIdx, NumType, RefType, ValType, VecType};
 
 use crate::{value::RefValue, Value};
 
-// Try to land each stack segment in 65355 bytes of memory (two pointers for
+// Try to land each stack segment in 65356 bytes of memory (two pointers for
 // the linked list next/prev, plus the overhead of the bookkeeping in the struct.)
 const STACK_SEGMENT_PAGE_SIZE: usize =
     0x10000 - (size_of::<StackSegment<0>>() + (size_of::<*const ()>() * 2));
