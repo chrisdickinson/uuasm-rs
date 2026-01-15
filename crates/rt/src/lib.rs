@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 #![allow(clippy::upper_case_acronyms)]
 
+pub(crate) mod engine;
 pub(crate) mod function;
 pub(crate) mod global;
 pub(crate) mod imports;
@@ -11,6 +12,7 @@ pub(crate) mod memory;
 pub(crate) mod memory_region;
 pub(crate) mod stack;
 pub(crate) mod table;
+pub(crate) mod typeregistry;
 pub(crate) mod value;
 
 pub use imports::Imports;

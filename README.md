@@ -9,6 +9,41 @@ If you're looking for a industry-strength Wasm runtime, look at
 
 A semi-regularly updated dev log.
 
+### 2025 Jan 24
+
+Okay. We're back. And we're ready to shuffle deckchairs on the Titanic.
+
+What are we shuffling? Today, there are two main interfaces to the `rt`
+library, `Imports` and `Machine`. You turn `Imports` into a machine after
+linking a bunch of parsed modules. This is approximately wrong. Here's where we
+should head:
+
+An `Engine` ties together all of the services needed by the overall system. It
+may, for example, hold memory plans, function code, data, etc on behalf of
+modules.
+
+An `Engine` should allow for the creation of a `Store`. The store collects
+references to all _concrete_ functions, memories, tables, etc. It represents
+multiple `Instances` linked together. Internally all imports and exports are
+resolved to their targets at rest.
+
+`Imports`, or a `Linker`, allow importing Wasm data into an engine. This is
+where modules are _named_, _linked_, and instantiated. `Linker`s should support
+nesting. Instantiating a `Linker` returns an `Instance`.
+
+An `Instance` allows host code to execute Wasm: it retains information from the
+`Linker` in order to provide access to exported items by name. When executed,
+this instantiates a `Machine`, which holds stack data & information about the
+state of retained resources, as well as executes Wasm code.
+
+So this is a useful direction to head. The other side of this is the parser machinery,
+which needs to be replaced (already, lol):
+
+- There's a simpler parser structure we could use here
+- Focus on making it easier to query incoming structures and rewrite them
+
+---
+
 ### 2024 Oct 02
 
 It's spooky season!

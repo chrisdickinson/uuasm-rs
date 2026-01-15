@@ -40,6 +40,7 @@ impl MemoryRegion {
         self.storage.as_mut_slice()
     }
 
+    #[inline]
     pub(crate) fn write<const U: usize>(&mut self, addr: usize, value: &[u8; U]) {
         self.storage[addr..addr.saturating_add(U)].copy_from_slice(value.as_slice());
     }

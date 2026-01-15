@@ -135,13 +135,9 @@ impl LEBConstants for i64 {
             } else {
                 result |= !0 << (shift + 7);
             }
-        } else {
-            if shift == 63 {
-                // we already stored data in the 64th bit
-                if last > 0 {
-                    return Err(LEBError::Overflow);
-                }
-            }
+        } else if shift == 63 && last > 0 {
+            // we already stored data in the 64th bit
+            return Err(LEBError::Overflow);
         }
         Ok(result)
     }

@@ -11,6 +11,8 @@ uuasm-ir = { workspace = true }
 uuasm-codec = { workspace = true }
 serde_json = "1.0.122"
 smallvec = "1.13.2"
+slotmap = "1.0.7"
+slab = "0.4.9"
 
 [dev-dependencies]
 criterion = "0.5.1"
