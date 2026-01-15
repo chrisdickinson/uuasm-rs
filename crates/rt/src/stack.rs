@@ -138,6 +138,7 @@ impl<const N: usize> Stack for SegmentedStack<N> {
         for _ in depth..self.depth {
             let _ = self.stack.pop_front();
         }
+        self.depth = depth;
 
         let Some(segment) = self.stack.front_mut() else {
             if depth == 0 && ptr == 0 {
@@ -257,7 +258,7 @@ impl<const N: usize> StackSegment<N> {
 
     pub(crate) fn fits<T: Sized + Copy>(&self) -> bool {
         let size = align8(size_of::<T>());
-        (self.ptr as usize + size) < N
+        (self.ptr as usize + size) <= N
     }
 
     pub(crate) fn unwind(&mut self, to: u16) {
